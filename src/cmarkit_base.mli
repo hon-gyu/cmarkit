@@ -249,6 +249,7 @@ val autolink_uri : string -> last:byte_pos -> start:byte_pos -> last option
 (** [autolink_uri s ~last ~start] matches an URI autolink starting at
     [start] in the range \[[start];[last]\] (assumed on the same line). *)
 
+(*
 (** {1:raw_html Raw HTML} *)
 
 val raw_html :
@@ -261,6 +262,7 @@ val raw_html :
     [last_line] the line where it stops [spans] the byte ranges of [s]
     that make up the raw HTML in reverse order and [last_byte] the
     last byte included in it (guaranteed to be on [last_line]). *)
+*)
 
 (** {1:link Links} *)
 
@@ -343,6 +345,7 @@ val fenced_code_block_continue :
     \[[start];[last]\] given the opening [open] which indicates the
     indent, fence char and number of fence chars. *)
 
+(*
 val html_block_start :
   string -> last:byte_pos -> start:byte_pos -> line_type
 (** [html_block_start s ~last ~start] matches the start of an HTML
@@ -354,6 +357,7 @@ val html_block_end :
   bool
 (** [html_block ~end_code s ~last ~start] is [true] if the HTML block
     end with [end_code] in the the range \[[start];[last]\] *)
+*)
 
 val ext_table_row : string -> last:byte_pos -> start:byte_pos -> line_type
 (** [ext_table s ~last ~start] matches a table row in the range

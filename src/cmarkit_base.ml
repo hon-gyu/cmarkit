@@ -696,7 +696,7 @@ let autolink_uri s ~last ~start  =
   if next > last || s.[start] <> '<' || not (Ascii.is_letter s.[next])
   then None else scheme s last 1 (next + 1)
 
-(* Raw HTML *)
+(* (* Raw HTML *)
 
 let tag_name s ~last ~start : last option =
   (* https://spec.commonmark.org/current/#tag-name *)
@@ -901,7 +901,7 @@ let raw_html ~next_line s lines ~line ~start =
       | c when Ascii.is_letter c -> declaration ~next_line s lines ~line ~start
       | _ -> None
       end
-  | c -> open_tag ~next_line s lines ~line ~start
+  | c -> open_tag ~next_line s lines ~line ~start *)
 
 (* Links *)
 
@@ -1159,7 +1159,7 @@ let fenced_code_block_continue ~fence:(fc, fcount) s ~last ~start =
   in
   if start > last then `Code else loop s start last start
 
-let html_start_cond_1_set =
+(* let html_start_cond_1_set =
   String_set.of_list ["pre"; "script"; "style"; "textarea"]
 
 let html_start_cond_6_set =
@@ -1272,7 +1272,7 @@ let html_block_end_cond_1 s ~last ~start =
 let html_block_end ~end_cond s ~last ~start = match end_cond with
 | `End_str str -> sub_includes ~affix:str s ~first:start ~last
 | `End_cond_1 -> html_block_end_cond_1 s ~last ~start
-| `End_blank | `End_blank_7 -> first_non_blank s ~last ~start = last + 1
+| `End_blank | `End_blank_7 -> first_non_blank s ~last ~start = last + 1 *)
 
 let ext_table_row s ~last ~start =
   if start > last || s.[start] <> '|' then Nomatch else
