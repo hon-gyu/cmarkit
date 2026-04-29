@@ -1400,14 +1400,14 @@ module Inline_struct = struct
         let t = autolink_token p line ~first:start ~last ~is_email:true in
         let toks = drop_until ~start:(last + 1) toks in
         Some (toks, line, t)
-    | None ->
-    match Match.raw_html ~next_line p.i toks ~line ~start with
+    | None -> None
+    (* match Match.raw_html ~next_line p.i toks ~line ~start with
     | None -> None
     | Some (toks, last_line, spans, last) ->
         let first = start and first_line = line in
         let t = raw_html_token p ~first ~last ~first_line ~last_line spans in
         let toks = drop_until ~start:(last + 1) toks in
-        Some (toks, last_line, t)
+        Some (toks, last_line, t) *)
 
   let label_of_rev_spans p ~key rev_spans =
     let meta =
@@ -2053,9 +2053,9 @@ module Block_struct = struct
 
   type heading = [ `Atx of atx | `Setext of setext ]
 
-  type html_block =
+  (* type html_block =
     { end_cond : Match.html_block_end_cond option;
-      html : line_span list }
+      html : line_span list } *)
 
   type paragraph = { maybe_ref : bool; lines : line_span list }
 
@@ -2064,7 +2064,7 @@ module Block_struct = struct
   | Blank_line of space_pad * line_span
   | Code_block of code_block
   | Heading of heading
-  | Html_block of html_block
+  (* | Html_block of html_block *)
   | List of list'
   | Linkref_def of Link_definition.t node
   | Paragraph of paragraph
@@ -2135,13 +2135,13 @@ module Block_struct = struct
     let fence = { indent; opening_fence; fence; info_string; closing_fence } in
     Code_block (`Fenced {fence; code = []})
 
-  let html_block p ~end_cond ~indent_start =
+  (* let html_block p ~end_cond ~indent_start =
     let first = indent_start and last = p.current_line_last_char in
     let end_cond = (* Check if the same line matches the end condition. *)
       if Match.html_block_end p.i ~end_cond ~last ~start:p.current_char
       then None (* We are already closed *) else Some end_cond
     in
-    Html_block { end_cond; html = [current_line_span p ~first ~last] }
+    Html_block { end_cond; html = [current_line_span p ~first ~last] } *)
 
   let paragraph p ~start =
     let last = p.current_line_last_char in
@@ -2319,11 +2319,11 @@ module Block_struct = struct
       Blank_line (0, l) :: Code_block (`Fenced { fenced with code }) :: bs
   | _ -> Code_block (`Fenced fenced) :: bs
 
-  let end_doc_close_html p h bs = match h.html with
+  (* let end_doc_close_html p h bs = match h.html with
   | l :: html when l.first > l.last (* empty line *) ->
       Blank_line (0, l) :: Html_block { end_cond = None; html } :: bs
   | _ ->
-      Html_block { h with end_cond = None } :: bs
+      Html_block { h with end_cond = None } :: bs *)
 
   let rec end_doc p = function
   | Block_quote (indent, marker, bq) :: bs ->
@@ -2332,7 +2332,7 @@ module Block_struct = struct
   | Paragraph par :: bs -> close_paragraph p par bs
   | Code_block (`Indented ls) :: bs -> close_indented_code_block p ls bs
   | Code_block (`Fenced f) :: bs -> end_doc_close_fenced_code_block p f bs
-  | Html_block html :: bs -> end_doc_close_html p html bs
+  (* | Html_block html :: bs -> end_doc_close_html p html bs *)
   | Ext_footnote (i, l, blocks) :: bs -> close_footnote p i l blocks bs
   | (Thematic_break _ | Heading _ | Blank_line _ | Linkref_def _
     | Ext_table _ ) :: _ | [] as bs -> bs
@@ -2387,8 +2387,8 @@ module Block_struct = struct
           if r <> Nomatch then r else
           Paragraph_line
       | '<' ->
-          let r = Match.html_block_start p.i ~last ~start in
-          if r <> Nomatch then r else
+          (* let r = Match.html_block_start p.i ~last ~start in
+          if r <> Nomatch then r else *)
           Paragraph_line
       | '|' when p.exts ->
           let r = Match.ext_table_row p.i ~last ~start in
@@ -2427,7 +2427,7 @@ module Block_struct = struct
       bs
   | Fenced_code_block_line (fence_first, fence_last, info) ->
       fenced_code_block p ~indent ~fence_first ~fence_last ~info :: bs
-  | Html_block_line end_cond -> html_block p ~end_cond ~indent_start :: bs
+  (* | Html_block_line end_cond -> html_block p ~end_cond ~indent_start :: bs *)
   | Paragraph_line -> paragraph p ~start:indent_start :: bs
   | Ext_table_row last -> table p ~indent ~last :: bs
   | Ext_footnote_label (rev_spans, last, key) ->
@@ -2494,7 +2494,7 @@ module Block_struct = struct
     let indent_start = p.current_char and indent = current_indent p in
     match match_line_type ~no_setext:false ~indent p with
     (* These can't interrupt paragraphs *)
-    | Html_block_line `End_blank_7
+    (* | Html_block_line `End_blank_7 *)
     | Indented_code_block_line
     | Ext_table_row _ | Ext_footnote_label _
     | Paragraph_line ->
@@ -2524,8 +2524,8 @@ module Block_struct = struct
     | Fenced_code_block_line (fence_first, fence_last, info) ->
         let bs = close_paragraph p par bs in
         fenced_code_block p ~indent ~fence_first ~fence_last ~info :: bs
-    | Html_block_line end_cond ->
-        html_block p ~end_cond ~indent_start :: (close_paragraph p par bs)
+    (* | Html_block_line end_cond ->
+        html_block p ~end_cond ~indent_start :: (close_paragraph p par bs) *)
     | Nomatch -> assert false
 
   let try_add_to_indented_code_block p ls bs =
@@ -2561,7 +2561,7 @@ module Block_struct = struct
           let fence = { b.fence with closing_fence = Some close } in
           Code_block (`Fenced { b with fence }) :: bs
 
-  let try_add_to_html_block p b bs = match b.end_cond with
+  (* let try_add_to_html_block p b bs = match b.end_cond with
   | None -> add_open_blocks p (Html_block { b with end_cond = None} :: bs)
   | Some end_cond ->
       let start = p.current_char and last = p.current_line_last_char in
@@ -2572,7 +2572,7 @@ module Block_struct = struct
       | `End_blank | `End_blank_7 ->
           blank_line p :: Html_block { b with end_cond = None } :: bs
       | _ ->
-          Html_block { end_cond = None; html = l :: b.html } :: bs
+          Html_block { end_cond = None; html = l :: b.html } :: bs *)
 
   let rec try_lazy_continuation p ~indent_start = function
   | Paragraph par :: bs -> Some (add_paragraph_line p ~indent_start par bs)
@@ -2689,7 +2689,7 @@ module Block_struct = struct
   | Code_block (`Indented ls) :: bs -> try_add_to_indented_code_block p ls bs
   | Code_block (`Fenced f) :: bs -> try_add_to_fenced_code_block p f bs
   | Block_quote (ind, marker, bq) :: bs -> try_add_to_block_quote p ind bq marker bs
-  | Html_block html :: bs -> try_add_to_html_block p html bs
+  (* | Html_block html :: bs -> try_add_to_html_block p html bs *)
   | Ext_table (ind, rows) :: bs -> try_add_to_table p ind rows bs
   | Ext_footnote (i, l, blocks) :: bs -> try_add_to_footnote p i l blocks bs
 
@@ -2825,13 +2825,13 @@ let block_struct_to_heading p = function
     in
     Block.Heading ({ layout = `Setext layout; level; inline; id }, meta)
 
-let block_struct_to_html_block p (b : Block_struct.html_block) =
+(* let block_struct_to_html_block p (b : Block_struct.html_block) =
   let last = List.hd b.html in
   let last_byte = last.last and last_line = last.line_pos in
   let lines = List.rev_map (clean_raw_span p) b.html in
   let start_loc = Meta.textloc (snd (List.hd lines)) in
   let meta = meta p (Textloc.set_last start_loc ~last_byte ~last_line) in
-  Block.Html_block (lines, meta)
+  Block.Html_block (lines, meta) *)
 
 let block_struct_to_paragraph p par =
   let layout, inline = Inline_struct.parse p par.Block_struct.lines in
@@ -2972,7 +2972,7 @@ and block_struct_to_block p = function
 | Block_struct.Thematic_break (i, br) -> block_struct_to_thematic_break p i br
 | Block_struct.Code_block cb -> block_struct_to_code_block p cb
 | Block_struct.Heading h -> block_struct_to_heading p h
-| Block_struct.Html_block html -> block_struct_to_html_block p html
+(* | Block_struct.Html_block html -> block_struct_to_html_block p html *)
 | Block_struct.Blank_line (pad, span) -> block_struct_to_blank_line p pad span
 | Block_struct.Linkref_def r -> Block.Link_reference_definition r
 | Block_struct.Ext_table (i, rows) -> block_struct_to_table p i rows

@@ -1028,7 +1028,7 @@ type line_type =
 | Blank_line
 | Block_quote_line of line_span (* loc of marker *)
 | Fenced_code_block_line of first * last * (first * last) option
-| Html_block_line of html_block_end_cond
+(* | Html_block_line of html_block_end_cond *)
 | Indented_code_block_line
 | List_marker_line of ([ `Ordered of int * char | `Unordered of char ] * last)
 | Paragraph_line
