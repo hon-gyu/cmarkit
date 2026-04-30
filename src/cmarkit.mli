@@ -979,7 +979,7 @@ module Block : sig
         (** Closing fence (if any). *) }
     (** The type for fenced code block layouts. *)
 
-    type layout = [ `Indented | `Fenced of fenced_layout ]
+    type layout = [ (* `Indented | *) `Fenced of fenced_layout ]
     (** The type for code block layouts. *)
 
     type t

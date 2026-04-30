@@ -293,10 +293,10 @@ let block_quote c bq  =
   C.block c (Block.Block_quote.block bq); pop_indent c
 
 let code_block c cb = match Block.Code_block.layout cb with
-| `Indented ->
+(* | `Indented ->
     newline c; push_indent c (`I 4); indent c;
     block_lines c (Block.Code_block.code cb);
-    pop_indent c
+    pop_indent c *)
 | `Fenced f ->
     let opening, closing = match fst f.opening_fence with
     | "" ->

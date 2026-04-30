@@ -488,7 +488,7 @@ module Block = struct
         opening_fence = Layout.empty;
         closing_fence = Some Layout.empty }
 
-    type layout = [ `Indented | `Fenced of fenced_layout ]
+    type layout = [ (* `Indented | *) `Fenced of fenced_layout ]
     type t =
       { layout : layout;
         info_string : string node option;
@@ -496,7 +496,7 @@ module Block = struct
 
     let make ?(layout = `Fenced default_fenced_layout) ?info_string code =
       let layout = match info_string, layout with
-      | Some _, `Indented -> `Fenced default_fenced_layout
+      (* | Some _, `Indented -> `Fenced default_fenced_layout *)
       | _, layout -> layout
       in
       { layout; info_string; code }
@@ -2036,7 +2036,7 @@ module Block_struct = struct
       code : (space_pad * line_span) list }
 
   type code_block =
-  [ `Indented of indented_code_line list | `Fenced of fenced_code_block ]
+  [ (* `Indented of indented_code_line list | *) `Fenced of fenced_code_block ]
 
   type atx =
     { indent : Layout.indent;
@@ -2117,10 +2117,10 @@ module Block_struct = struct
     let underline = indent, u, blanks in
     Heading (`Setext {level; heading_lines; underline})
 
-  let indented_code_block p = (* Has a side-effect on [p] *)
+  (* let indented_code_block p = (* Has a side-effect on [p] *)
     let pad, first = accept_code_indent p ~count:4 in
     let code = current_line_span p ~first ~last:p.current_line_last_char in
-    Code_block (`Indented [{pad; code; is_blank = false}])
+    Code_block (`Indented [{pad; code; is_blank = false}]) *)
 
   let fenced_code_block p ~indent ~fence_first ~fence_last ~info =
     let info_string, layout_last = match info with
@@ -2261,7 +2261,7 @@ module Block_struct = struct
 
   (* Closing blocks and finishing the document. *)
 
-  let close_indented_code_block p lines bs =
+  (* let close_indented_code_block p lines bs =
     (* Removes trailing blank lines and add them as blank lines *)
     let rec loop blanks lines bs = match lines with
     | { pad; code; is_blank = true} :: lines ->
@@ -2269,14 +2269,14 @@ module Block_struct = struct
     | [] -> (* likely assert (false) *) List.rev_append blanks bs
     | ls -> List.rev_append blanks ((Code_block (`Indented ls)) :: bs)
     in
-    loop [] lines bs
+    loop [] lines bs *)
 
   let close_paragraph p par bs =
     if not par.maybe_ref then Paragraph par :: bs else
     maybe_add_link_reference_definitions p par.lines bs
 
   let rec close_last_block p = function
-  | Code_block (`Indented ls) :: bs -> close_indented_code_block p ls bs
+  (* | Code_block (`Indented ls) :: bs -> close_indented_code_block p ls bs *)
   | Paragraph par :: bs -> close_paragraph p par bs
   | List l :: bs -> close_list p l bs
   | Ext_footnote (i, l, blocks) :: bs -> close_footnote p i l blocks bs
@@ -2330,7 +2330,7 @@ module Block_struct = struct
       Block_quote (indent, marker, end_doc p bq) :: bs
   | List list :: bs -> close_list p list bs
   | Paragraph par :: bs -> close_paragraph p par bs
-  | Code_block (`Indented ls) :: bs -> close_indented_code_block p ls bs
+  (* | Code_block (`Indented ls) :: bs -> close_indented_code_block p ls bs *)
   | Code_block (`Fenced f) :: bs -> end_doc_close_fenced_code_block p f bs
   (* | Html_block html :: bs -> end_doc_close_html p html bs *)
   | Ext_footnote (i, l, blocks) :: bs -> close_footnote p i l blocks bs
@@ -2528,7 +2528,7 @@ module Block_struct = struct
         html_block p ~end_cond ~indent_start :: (close_paragraph p par bs) *)
     | Nomatch -> assert false
 
-  let try_add_to_indented_code_block p ls bs =
+  (* let try_add_to_indented_code_block p ls bs =
     if current_indent p < 4 then
       if has_next_non_blank p
       then add_open_blocks p (close_indented_code_block p ls bs) else
@@ -2543,7 +2543,7 @@ module Block_struct = struct
     let last = p.current_line_last_char in
     let is_blank = only_blanks p in
     let l = { pad; code = current_line_span p ~first ~last; is_blank } in
-    Code_block (`Indented (l :: ls)) :: bs
+    Code_block (`Indented (l :: ls)) :: bs *)
 
   let try_add_to_fenced_code_block p f bs = match f with
   | { fence = { closing_fence = Some _; _}; _ } -> (* block is closed *)
@@ -2686,7 +2686,7 @@ module Block_struct = struct
   | ((Thematic_break _ | Heading _ | Blank_line _ | Linkref_def _) :: _)
   | [] as bs -> add_open_blocks p bs
   | List list :: bs -> try_add_to_list_item p list bs
-  | Code_block (`Indented ls) :: bs -> try_add_to_indented_code_block p ls bs
+  (* | Code_block (`Indented ls) :: bs -> try_add_to_indented_code_block p ls bs *)
   | Code_block (`Fenced f) :: bs -> try_add_to_fenced_code_block p f bs
   | Block_quote (ind, marker, bq) :: bs -> try_add_to_block_quote p ind bq marker bs
   (* | Html_block html :: bs -> try_add_to_html_block p html bs *)
@@ -2752,7 +2752,7 @@ let block_struct_to_blank_line p pad span =
   Block.Blank_line (clean_raw_span p ~pad span)
 
 let block_struct_to_code_block p = function
-| `Indented (ls : Block_struct.indented_code_line list) (* non-empty *) ->
+(* | `Indented (ls : Block_struct.indented_code_line list) (* non-empty *) ->
     let line p { Block_struct.pad; code; _} = clean_raw_span ~pad p code in
     let layout = `Indented and info_string = None in
     let last = (List.hd ls).code in
@@ -2762,7 +2762,7 @@ let block_struct_to_code_block p = function
       let start = Meta.textloc (snd (List.hd code)) in
       meta p (Textloc.set_last start ~last_byte ~last_line)
     in
-    Block.Code_block ({layout; info_string; code}, meta)
+    Block.Code_block ({layout; info_string; code}, meta) *)
 | `Fenced { Block_struct.fence; code = ls } ->
     let layout =
       let opening_fence = layout_clean_raw_span p fence.opening_fence in
