@@ -264,7 +264,7 @@ module Inline = struct
   module Link = struct
     type inline = t
 
-    type reference_layout = [ `Collapsed | `Full | `Shortcut ]
+    type reference_layout = [ `Collapsed | `Full (* | `Shortcut *) ]
     type reference =
     [ `Inline of Link_definition.t node
     | `Ref of reference_layout * Label.t * Label.t ]
@@ -1430,7 +1430,7 @@ module Inline_struct = struct
         | None -> Some None
         | Some def -> Some (Some (toks, line, `Ref (`Full, ref, def), last))
 
-  let try_shortcut_reflink p toks line ~image ~start (* is starting [ or ! *) =
+  (* let try_shortcut_reflink p toks line ~image ~start (* is starting [ or ! *) =
     (* https://spec.commonmark.org/current/#shortcut-reference-link *)
     let start = if image then start + 1 (* [ *) else start in
     match Match.link_label p.buf ~next_line p.i toks ~line ~start with
@@ -1440,7 +1440,7 @@ module Inline_struct = struct
         let toks = drop_stop_after_right_brack toks in
         match find_def_for_ref p ~image ref with
         | None -> None
-        | Some def -> Some (toks, line, `Ref (`Shortcut, ref, def), last)
+        | Some def -> Some (toks, line, `Ref (`Shortcut, ref, def), last) *)
 
   let try_collapsed_reflink p toks line ~image ~start (* is starting [ or ! *) =
     (* https://spec.commonmark.org/current/#collapsed-reference-link *)
@@ -1543,12 +1543,13 @@ module Inline_struct = struct
     =
     let next = text_last + 1 in
     let link =
-      if next > line.last
-      then try_shortcut_reflink p start_toks start_line ~image ~start else
+      (* if next > line.last
+      then try_shortcut_reflink p start_toks start_line ~image ~start else *)
       match p.i.[next] with
       | '(' ->
           (match try_inline_link_remainder p toks line ~image ~start:next with
-          | None -> try_shortcut_reflink p start_toks start_line ~image ~start
+          (* | None -> try_shortcut_reflink p start_toks start_line ~image ~start *)
+          | None -> None
           | Some _ as v -> v)
       | '[' ->
           let next' = next + 1 in
@@ -1556,12 +1557,14 @@ module Inline_struct = struct
           then try_collapsed_reflink p start_toks start_line ~image ~start else
           let r = try_full_reflink_remainder p toks line ~image ~start:next in
           begin match r with
-          | None -> try_shortcut_reflink p start_toks start_line ~image ~start
+          (* | None -> try_shortcut_reflink p start_toks start_line ~image ~start *)
+          | None -> None
           | Some None -> None (* Example 570 *)
           | Some (Some _ as v) -> v
           end
       | c ->
-          try_shortcut_reflink p start_toks start_line ~image ~start
+          (* try_shortcut_reflink p start_toks start_line ~image ~start *)
+          None
     in
     match link with
     | None -> None

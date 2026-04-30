@@ -734,7 +734,7 @@ module Inline : sig
     | `Full
       (** {{:https://spec.commonmark.org/0.31.2/#full-reference-link}
           Full reference link} *)
-    | `Shortcut
+    (* | `Shortcut *)
       (** {{:https://spec.commonmark.org/0.31.2/#shortcut-reference-link}
           Shortcut reference link} *) ]
     (** The type for reference link layouts. *)

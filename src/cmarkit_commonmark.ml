@@ -245,8 +245,8 @@ let link c l = match Inline.Link.reference l with
 | `Inline (ld, _) ->
     C.byte c '['; C.inline c (Inline.Link.text l); C.byte c ']';
     C.byte c '('; link_definition c ld; C.byte c ')'
-| `Ref (`Shortcut, label, _) ->
-    C.byte c '['; link_label_lines c (Label.text label); C.byte c ']';
+(* | `Ref (`Shortcut, label, _) ->
+    C.byte c '['; link_label_lines c (Label.text label); C.byte c ']'; *)
 | `Ref (`Collapsed, label, _) ->
     C.byte c '['; link_label_lines c (Label.text label); C.byte c ']';
     C.string c "[]"
