@@ -2342,7 +2342,7 @@ module Block_struct = struct
   let match_line_type ~no_setext ~indent p =
     (* Effects on [p]'s column advance *)
     if only_blanks p then Match.Blank_line else
-    if indent >= 4 then Indented_code_block_line else begin
+    (* if indent >= 4 then Indented_code_block_line else *) begin
       accept_cols ~count:indent p;
       if end_of_line p then Match.Blank_line else
       let start = p.current_char and last = p.current_line_last_char in
@@ -2417,7 +2417,7 @@ module Block_struct = struct
 
   let rec add_open_blocks_with_line_class p ~indent_start ~indent bs = function
   | Match.Blank_line -> blank_line p :: bs
-  | Indented_code_block_line -> indented_code_block p :: bs
+  (* | Indented_code_block_line -> indented_code_block p :: bs *)
   | Block_quote_line marker ->
       Block_quote (indent, marker, add_open_blocks p []) :: bs
   | Thematic_break_line last -> thematic_break p ~indent ~last :: bs
@@ -2495,7 +2495,7 @@ module Block_struct = struct
     match match_line_type ~no_setext:false ~indent p with
     (* These can't interrupt paragraphs *)
     (* | Html_block_line `End_blank_7 *)
-    | Indented_code_block_line
+    (* | Indented_code_block_line *)
     | Ext_table_row _ | Ext_footnote_label _
     | Paragraph_line ->
         add_paragraph_line p ~indent_start par bs
@@ -2606,7 +2606,7 @@ module Block_struct = struct
     match match_line_type ~indent ~no_setext:true p with
     | Block_quote_line _ ->
         Block_quote (indent_layout, marker, add_line p bq) :: bs
-    | (Indented_code_block_line (* Looks like a *) | Paragraph_line) as ltype ->
+    | ((* Indented_code_block_line (* Looks like a *) | *) Paragraph_line) as ltype ->
         begin match try_lazy_continuation p ~indent_start bq with
         | Some bq -> Block_quote (indent_layout, marker, bq) :: bs
         | None ->
@@ -2625,7 +2625,7 @@ module Block_struct = struct
     let indent_start = p.current_char and indent = current_indent p in
     if indent < fn_indent + 1 (* position of ^ *) then begin
       match match_line_type ~indent ~no_setext:true p with
-      | (Indented_code_block_line (* Looks like a *) | Paragraph_line) as lt ->
+      | ((* Indented_code_block_line (* Looks like a *) | *) Paragraph_line) as lt ->
           begin match try_lazy_continuation p ~indent_start blocks with
           | Some blocks -> Ext_footnote (fn_indent, label, blocks) :: bs
           | None ->
@@ -2665,7 +2665,7 @@ module Block_struct = struct
         let item = List.hd list.items and items = List.tl list.items in
         let item = { item with blocks = add_line p item.blocks } in
         List { list with items = item :: items; last_blank = true } :: bs
-    | Indented_code_block_line | Paragraph_line as ltype  ->
+    | (* Indented_code_block_line | *) Paragraph_line as ltype  ->
         let item = List.hd list.items and items = List.tl list.items in
         begin match try_lazy_continuation p ~indent_start item.blocks with
         | Some blocks ->
