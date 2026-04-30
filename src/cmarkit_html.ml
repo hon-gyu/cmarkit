@@ -499,4 +499,4 @@ let xhtml_renderer ?backend_blocks ~safe () =
   Cmarkit_renderer.make ~init_context ~inline ~block ~doc ()
 
 let of_doc ?backend_blocks ~safe d =
-  Cmarkit_renderer.doc_to_string (renderer ~safe ()) d
+  Cmarkit_renderer.doc_to_string (renderer ?backend_blocks ~safe ()) d

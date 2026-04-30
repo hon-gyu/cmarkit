@@ -45,7 +45,7 @@ val renderer : ?backend_blocks:bool -> safe:bool -> unit -> Cmarkit_renderer.t
        untrusted user inputs but you should rather post-process rendering
        outputs with a dedicated HTML sanitizer.}
     {- [backend_blocks], if [true], code blocks with language [=html]
-       are written verbatim in the output (iff [safe] is [true]) and
+       are written verbatim in the output (iff [safe] is [false]) and
        any other code block whose langage starts with [=] is
        dropped. Defaults to [false].}}
 
