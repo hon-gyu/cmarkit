@@ -1297,7 +1297,7 @@ module Inline_struct = struct
     let inline = Inline.Autolink ({ is_email; link }, meta) in
     Inline { start = first; inline; endline = line; next = last + 1 }
 
-  let raw_html_token p ~first ~last ~first_line ~last_line rev_spans =
+  (* let raw_html_token p ~first ~last ~first_line ~last_line rev_spans =
     let raw = raw_tight_block_lines p ~rev_spans in
     let textloc =
       let first = Meta.textloc (snd (snd (List.hd raw))) in
@@ -1306,7 +1306,7 @@ module Inline_struct = struct
       Textloc.set_last first ~last_byte ~last_line
     in
     let inline = Inline.Raw_html (raw, meta p textloc) in
-    Inline { start = first; inline; endline = last_line; next = last + 1 }
+    Inline { start = first; inline; endline = last_line; next = last + 1 } *)
 
   let link_token p ~first ~last ~first_line ~last_line ~image link =
     let textloc = textloc_of_lines p ~first ~last ~first_line ~last_line in
