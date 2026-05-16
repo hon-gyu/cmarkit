@@ -3,14 +3,14 @@
  (wrapped false)
  (modules
   cmarkit
-  cmarkit_base
   cmarkit_commonmark
-  cmarkit_data
-  cmarkit_data_html
-  cmarkit_data_uchar
   cmarkit_html
   cmarkit_latex
   cmarkit_renderer)
- (libraries qcheck)
- (preprocess (pps ppx_jane ppx_deriving_qcheck))
-)
+ (libraries cmarkit_data cmarkit_base qcheck)
+ (preprocess
+  (pps ppx_jane ppx_deriving_qcheck)))
+
+(library
+ (name cmarkit_data)
+ (modules cmarkit_data cmarkit_data_uchar cmarkit_data_html))
