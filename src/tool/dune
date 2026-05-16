@@ -1,0 +1,6 @@
+(library
+ (name omarkit_tool)
+ (wrapped false)
+ (libraries qcheck cmdliner omarkit unix)
+ (preprocess (pps ppx_jane ppx_deriving_qcheck))
+)
