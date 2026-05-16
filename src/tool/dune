@@ -1,6 +1,13 @@
 (library
  (name omarkit_tool)
  (wrapped false)
- (libraries qcheck cmdliner omarkit unix)
+ (libraries
+    cmdliner
+    unix
+    omarkit
+    cmarkit_renderer
+    cmarkit_latex
+    cmarkit_html
+    cmarkit_commonmark)
  (preprocess (pps ppx_jane ppx_deriving_qcheck))
 )

@@ -1,16 +1,23 @@
 (library
- (name omarkit)
- (wrapped false)
- (modules
-  cmarkit
-  cmarkit_commonmark
-  cmarkit_html
-  cmarkit_latex
-  cmarkit_renderer)
- (libraries cmarkit_data cmarkit_base qcheck)
- (preprocess
-  (pps ppx_jane ppx_deriving_qcheck)))
-
-(library
  (name cmarkit_data)
  (modules cmarkit_data cmarkit_data_uchar cmarkit_data_html))
+
+(library
+ (name cmarkit_renderer)
+ (modules cmarkit_renderer)
+ (libraries omarkit))
+
+(library
+ (name cmarkit_html)
+ (modules cmarkit_html)
+ (libraries omarkit cmarkit_renderer))
+
+(library
+ (name cmarkit_commonmark)
+ (modules cmarkit_commonmark)
+ (libraries omarkit cmarkit_renderer))
+
+(library
+ (name cmarkit_latex)
+ (modules cmarkit_latex)
+ (libraries omarkit cmarkit_renderer))

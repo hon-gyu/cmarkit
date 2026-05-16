@@ -1,0 +1,6 @@
+(library
+ (name omarkit)
+ (wrapped false)
+ (libraries cmarkit_data cmarkit_base qcheck)
+ (preprocess
+  (pps ppx_jane ppx_deriving_qcheck)))
