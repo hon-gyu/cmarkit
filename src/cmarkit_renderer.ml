@@ -8,7 +8,7 @@
 module Dict = Cmarkit_base.Dict
 
 type t =
-  { init_context : context -> Cmarkit.Doc.t -> unit;
+  { init_context : context -> Omarkit.Doc.t -> unit;
     inline : inline;
     block : block;
     doc : doc; }
@@ -17,11 +17,11 @@ and context =
   { renderer : t;
     mutable state : Dict.t;
     b : Buffer.t;
-    mutable doc : Cmarkit.Doc.t }
+    mutable doc : Omarkit.Doc.t }
 
-and inline = context -> Cmarkit.Inline.t -> bool
-and block = context -> Cmarkit.Block.t -> bool
-and doc = context -> Cmarkit.Doc.t -> bool
+and inline = context -> Omarkit.Inline.t -> bool
+and block = context -> Omarkit.Block.t -> bool
+and doc = context -> Omarkit.Doc.t -> bool
 
 let nop _ _ = ()
 let none _ _ = false
@@ -46,12 +46,12 @@ let doc r = r.doc
 module Context = struct
   type t = context
   let make renderer b =
-    { renderer; b; state = Dict.empty; doc = Cmarkit.Doc.empty }
+    { renderer; b; state = Dict.empty; doc = Omarkit.Doc.empty }
 
   let buffer c = c.b
   let renderer c = c.renderer
   let get_doc (c : context) = c.doc
-  let get_defs (c : context) = Cmarkit.Doc.defs c.doc
+  let get_defs (c : context) = Omarkit.Doc.defs c.doc
 
   module State = struct
     type 'a t = 'a Dict.key
@@ -65,9 +65,9 @@ module Context = struct
 
   let init c d = c.renderer.init_context c d
 
-  let invalid_inline _ = invalid_arg "Unknown Cmarkit.Inline.t case"
-  let invalid_block _ = invalid_arg "Unknown Cmarkit.Block.t case"
-  let unhandled_doc _ = invalid_arg "Unhandled Cmarkit.Doc.t"
+  let invalid_inline _ = invalid_arg "Unknown Omarkit.Inline.t case"
+  let invalid_block _ = invalid_arg "Unknown Omarkit.Block.t case"
+  let unhandled_doc _ = invalid_arg "Unhandled Omarkit.Doc.t"
 
   let byte r c = Buffer.add_char r.b c
   let utf_8_uchar r u = Buffer.add_utf_8_uchar r.b u
@@ -77,7 +77,7 @@ module Context = struct
   let doc (c : context) d =
     c.doc <- d; init c d;
     ignore (c.renderer.doc c d || unhandled_doc d);
-    c.doc <- Cmarkit.Doc.empty
+    c.doc <- Omarkit.Doc.empty
 end
 
 let doc_to_string r d =

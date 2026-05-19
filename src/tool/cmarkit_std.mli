@@ -21,7 +21,7 @@ module Log : sig
 end
 
 module Label_resolver : sig
-  val v : quiet:bool -> Cmarkit.Label.resolver
+  val v : quiet:bool -> Omarkit.Label.resolver
 end
 
 module Os : sig

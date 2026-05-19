@@ -16,7 +16,7 @@
 
 (** {1:rendering Rendering} *)
 
-val of_doc : ?backend_blocks:bool -> safe:bool -> Cmarkit.Doc.t -> string
+val of_doc : ?backend_blocks:bool -> safe:bool -> Omarkit.Doc.t -> string
 (** [of_doc ~safe d] is an HTML fragment for [d]. See {!renderer}
     for more details and documentation about rendering options. *)
 
@@ -25,7 +25,7 @@ val of_doc : ?backend_blocks:bool -> safe:bool -> Cmarkit.Doc.t -> string
 val renderer : ?backend_blocks:bool -> safe:bool -> unit -> Cmarkit_renderer.t
 (** [renderer ~safe ()] is the default HTML renderer. This renders the
     strict CommonMark abstract syntax tree and the supported Cmarkit
-    {{!Cmarkit.extensions}extensions}.
+    {{!Omarkit.extensions}extensions}.
 
     The inline, block and document renderers always return
     [true]. Unknown block and inline values are rendered by an HTML
@@ -34,11 +34,11 @@ val renderer : ?backend_blocks:bool -> safe:bool -> unit -> Cmarkit_renderer.t
     The following options are available:
 
     {ul
-    {- [safe], if [true] {{!Cmarkit.Block.extension-Html_block}HTML blocks} and
-       {{!Cmarkit.Inline.extension-Raw_html}raw HTML inlines} are discarded and
+    {- [safe], if [true] {{!Omarkit.Block.extension-Html_block}HTML blocks} and
+       {{!Omarkit.Inline.extension-Raw_html}raw HTML inlines} are discarded and
        replaced by an HTML comment in the output. Besides the URLs of
        autolinks, links and images that satisfy
-       {!Cmarkit.Inline.Link.is_unsafe} are replaced by the empty string.
+       {!Omarkit.Inline.Link.is_unsafe} are replaced by the empty string.
 
        Using safe renderings is a good first step at preventing
        {{:https://en.wikipedia.org/wiki/Cross-site_scripting}XSS} from
@@ -121,7 +121,7 @@ val buffer_add_pct_encoded_string : Buffer.t -> string -> unit
 
     If a language [lang] can be extracted from the info string of a
     code block with
-    {!Cmarkit.Block.Code_block.language_of_info_string}, a
+    {!Omarkit.Block.Code_block.language_of_info_string}, a
     [language-lang] class is added to the corresponding [code]
     element. If you want to highlight the syntax, adding
     {{:https://highlightjs.org/}highlight.js} to your page is an
@@ -130,14 +130,14 @@ val buffer_add_pct_encoded_string : Buffer.t -> string -> unit
     {2:ids Heading identifiers}
 
     Headings identifiers and anchors are added to the output whenever
-    {!Cmarkit.Block.Heading.val-id} holds a value. If the identifier
+    {!Omarkit.Block.Heading.val-id} holds a value. If the identifier
     already exists it is made unique by appending ["-"] and the first
     number starting from 1 that makes it unique.
 
     {2:math Maths}
 
-    If your document has {!Cmarkit.Inline.extension-Ext_math_span}
-    inlines or {!Cmarkit.Block.extension-Ext_math_block} blocks, the
+    If your document has {!Omarkit.Inline.extension-Ext_math_span}
+    inlines or {!Omarkit.Block.extension-Ext_math_block} blocks, the
     default renderer outputs them in [\(], [\)] and
     [\\[], [\\]] delimiters. You should add
     {{:https://katex.org/}K{^A}T{_E}X} or
@@ -150,7 +150,7 @@ val buffer_add_pct_encoded_string : Buffer.t -> string -> unit
     want to add a page frame. For example:
 {[
 let html_doc_of_md ?(lang = "en") ~title ~safe md =
-  let doc = Cmarkit.Doc.of_string md in
+  let doc = Omarkit.Doc.of_string md in
   let r = Cmarkit_html.renderer ~safe () in
   let buffer_add_doc = Cmarkit_renderer.buffer_add_doc r in
   let buffer_add_title = Cmarkit_html.buffer_add_html_escaped_string in

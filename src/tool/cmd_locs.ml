@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Cmarkit_std
-open Cmarkit
+open Omarkit
 
 let strf = Printf.sprintf
 let pf = Format.fprintf
@@ -240,7 +240,7 @@ let doc_locs ppf doc = block ~indent:0 ppf (Doc.block doc)
 let locs ~files ~strict ~no_layout =
   let locs ~file contents =
     let locs = true and layout = not no_layout in
-    let doc = Cmarkit.Doc.of_string ~file ~locs ~layout ~strict contents in
+    let doc = Omarkit.Doc.of_string ~file ~locs ~layout ~strict contents in
     doc_locs Format.std_formatter doc
   in
   Cmarkit_cli.process_files locs files

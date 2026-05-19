@@ -30,7 +30,7 @@ module Label_resolver = struct
   (* A label resolver that warns on redefinitions *)
 
   let warn_label_redefinition ~current ~prev =
-    let open Cmarkit in
+    let open Omarkit in
     let pp_loc = Textloc.pp_ocaml in
     let current_text = Label.text_to_string current in
     let current = Meta.textloc (Label.meta current) in
