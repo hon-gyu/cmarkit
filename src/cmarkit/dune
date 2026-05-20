@@ -1,5 +1,15 @@
 (library
- (name omarkit)
+ (name omarkit_)
  (libraries cmarkit_data cmarkit_base qcheck)
+ (modules omarkit_ common inline block parser pp)
+ (inline_tests)
  (preprocess
-  (pps ppx_jane ppx_deriving_qcheck)))
+  (pps ppx_jane ppx_expect ppx_deriving_qcheck)))
+
+(library
+ (name omarkit)
+ (libraries omarkit_ cmarkit_data cmarkit_base qcheck)
+ (modules omarkit)
+ (inline_tests)
+ (preprocess
+  (pps ppx_jane ppx_expect ppx_deriving_qcheck)))
