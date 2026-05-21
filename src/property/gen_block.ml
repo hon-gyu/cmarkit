@@ -23,59 +23,65 @@ type s_block =
   | Ulist of s_block list list
   [@@deriving sexp]
 
-(* Lowering
+(* Lowering: surface AST to AST
    ========= *)
 
-let mk_text s = Inline.Text (s, Meta.none)
-let mk_inlines = function
-  | [ i ] -> i
-  | is -> Inline.Inlines (is, Meta.none)
+module Lowering : sig
+  val to_block : s_block -> Block.t
+end = struct
+  let mk_text s = Inline.Text (s, Meta.none)
+  let mk_inlines = function
+    | [ i ] -> i
+    | is -> Inline.Inlines (is, Meta.none)
 
-let rec lower_inline = function
-  | Text s -> mk_text s
-  | Emph is ->
-      let inner = mk_inlines (List.map lower_inline is) in
-      Inline.Emphasis (Inline.Emphasis.make inner, Meta.none)
-  | Strong is ->
-      let inner = mk_inlines (List.map lower_inline is) in
-      Inline.Strong_emphasis (Inline.Emphasis.make inner, Meta.none)
-  | Code s ->
-      Inline.Code_span (Inline.Code_span.of_string s, Meta.none)
+  let rec lower_inline = function
+    | Text s -> mk_text s
+    | Emph is ->
+        let inner = mk_inlines (List.map lower_inline is) in
+        Inline.Emphasis (Inline.Emphasis.make inner, Meta.none)
+    | Strong is ->
+        let inner = mk_inlines (List.map lower_inline is) in
+        Inline.Strong_emphasis (Inline.Emphasis.make inner, Meta.none)
+    | Code s ->
+        Inline.Code_span (Inline.Code_span.of_string s, Meta.none)
 
-let to_inline is = mk_inlines (List.map lower_inline is)
+  let to_inline is = mk_inlines (List.map lower_inline is)
 
-let mk_blocks = function
-  | [ b ] -> b
-  | bs -> Block.Blocks (bs, Meta.none)
+  let mk_blocks = function
+    | [ b ] -> b
+    | bs -> Block.Blocks (bs, Meta.none)
 
-let rec lower_block = function
-  | Para is ->
-      let p = Block.Paragraph.make (to_inline is) in
-      Block.Paragraph (p, Meta.none)
-  | Heading (level, is) ->
-      let h = Block.Heading.make ~level (to_inline is) in
-      Block.Heading (h, Meta.none)
-  | Thematic ->
-      Block.Thematic_break (Block.Thematic_break.make (), Meta.none)
-  | Blank ->
-      Block.Blank_line ("", Meta.none)
-  | Code_block lines ->
-      let bls = List.map (fun s -> (s, Meta.none)) lines in
-      let cb = Block.Code_block.make bls in
-      Block.Code_block (cb, Meta.none)
-  | Block_quote bs ->
-      let inner = mk_blocks (List.map lower_block bs) in
-      let bq = Block.Block_quote.make inner in
-      Block.Block_quote (bq, Meta.none)
-  | Ulist items ->
-      let mk_item bs =
+  let rec lower_block = function
+    | Para is ->
+        let p = Block.Paragraph.make (to_inline is) in
+        Block.Paragraph (p, Meta.none)
+    | Heading (level, is) ->
+        let h = Block.Heading.make ~level (to_inline is) in
+        Block.Heading (h, Meta.none)
+    | Thematic ->
+        Block.Thematic_break (Block.Thematic_break.make (), Meta.none)
+    | Blank ->
+        Block.Blank_line ("", Meta.none)
+    | Code_block lines ->
+        let bls = List.map (fun s -> (s, Meta.none)) lines in
+        let cb = Block.Code_block.make bls in
+        Block.Code_block (cb, Meta.none)
+    | Block_quote bs ->
         let inner = mk_blocks (List.map lower_block bs) in
-        (Block.List_item.make inner, Meta.none)
-      in
-      let l = Block.List'.make (`Unordered '-') (List.map mk_item items) in
-      Block.List (l, Meta.none)
+        let bq = Block.Block_quote.make inner in
+        Block.Block_quote (bq, Meta.none)
+    | Ulist items ->
+        let mk_item bs =
+          let inner = mk_blocks (List.map lower_block bs) in
+          (Block.List_item.make inner, Meta.none)
+        in
+        let l = Block.List'.make (`Unordered '-') (List.map mk_item items) in
+        Block.List (l, Meta.none)
 
-let to_block = lower_block
+  let to_block = lower_block
+end
+
+include Lowering
 
 (* Generators
    ========== *)
