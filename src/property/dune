@@ -1,5 +1,5 @@
 (library
  (name oymarkit_property)
- (libraries oymarkit_ cmarkit_commonmark)
+ (libraries oymarkit_ cmarkit_commonmark qcheck-core)
  (inline_tests)
  (preprocess (pps ppx_expect)))
