@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Cmarkit_std
-open Omarkit
+open Oymarkit
 
 let built_in_preamble = ref "" (* See at the end of the module *)
 
@@ -25,7 +25,7 @@ let text_inline t = Inline.Text (t, Meta.none)
 let untilted_inline = text_inline "Untilted"
 
 let lift_headings_map ~extract_title doc =
-  let open Omarkit in
+  let open Oymarkit in
   let title = ref None in
   let block m = function
   | Block.Heading (h, meta) as b ->
@@ -44,14 +44,14 @@ let lift_headings_map ~extract_title doc =
   let title = Option.value ~default:untilted_inline !title in
   title, doc
 
-let empty_defs = Omarkit.Label.Map.empty
+let empty_defs = Oymarkit.Label.Map.empty
 let buffer_add_docs ?(defs = empty_defs) ~accumulate_defs parse r b files =
   let rec loop defs = function
   | [] -> ()
   | file :: files ->
       let md = Os.read_file file |> Result.to_failure in
       let _, doc = parse ~extract_title:false ~file ~defs md in
-      let defs = if accumulate_defs then Omarkit.Doc.defs doc else empty_defs in
+      let defs = if accumulate_defs then Oymarkit.Doc.defs doc else empty_defs in
       Cmarkit_renderer.buffer_add_doc r b doc;
       if files <> [] then Buffer.add_char b '\n';
       loop defs files
@@ -91,7 +91,7 @@ let doc
         let title = text_inline (title_of_file file) in
         (title, snd (parse ~extract_title:false ~file ~defs md))
   in
-  let defs = if accumulate_defs then Omarkit.Doc.defs doc else empty_defs in
+  let defs = if accumulate_defs then Oymarkit.Doc.defs doc else empty_defs in
   Printf.kbprintf Buffer.contents (Buffer.create 1024)
 {|\documentclass{article}
 %a%a
@@ -118,7 +118,7 @@ let latex
   let r = Cmarkit_latex.renderer ~backend_blocks ~first_heading_level () in
   let parse ~extract_title ~file ~defs md =
     let doc =
-      Omarkit.Doc.of_string ~resolver ~defs ~heading_auto_ids ~file ~strict md
+      Oymarkit.Doc.of_string ~resolver ~defs ~heading_auto_ids ~file ~strict md
     in
     if lift_headings then lift_headings_map ~extract_title doc else
     untilted_inline, doc

@@ -3,7 +3,7 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Omarkit
+open Oymarkit
 module C = Cmarkit_renderer.Context
 module String_set = Set.Make (String)
 

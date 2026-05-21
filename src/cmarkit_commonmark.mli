@@ -17,7 +17,7 @@
 
 (** {1:rendering Rendering} *)
 
-val of_doc : Omarkit.Doc.t -> string
+val of_doc : Oymarkit.Doc.t -> string
 (** [of_doc d] is a CommonMark document for [d]. See {!val-renderer} for
     more details. *)
 
@@ -26,7 +26,7 @@ val of_doc : Omarkit.Doc.t -> string
 val renderer : unit -> Cmarkit_renderer.t
 (** [renderer ()] is the default CommonMark renderer. This renders
     the strict CommonMark abstract syntax tree and the supported
-    Cmarkit {{!Omarkit.extensions}extensions}.
+    Cmarkit {{!Oymarkit.extensions}extensions}.
 
     The inline, block and document renderers always return
     [true]. Unknown block and inline values are rendered by an HTML
@@ -50,7 +50,7 @@ type indent =
 | `L of int * string * int * Uchar.t option
    (** Indent before, list marker, indent after, list item task extension *)
 | `Q of int (** Identation followed by a block quote marker and a space *)
-| `Fn of int * Omarkit.Label.t (** Indent before, label (footnote extension)*)]
+| `Fn of int * Oymarkit.Label.t (** Indent before, label (footnote extension)*)]
 (** The type for specifying block indentation. *)
 
 val push_indent : Cmarkit_renderer.context -> indent -> unit
@@ -85,10 +85,10 @@ val buffer_add_escaped_string :
 
 val escaped_text : Cmarkit_renderer.context -> string -> unit
 (** [escaped_text c s] renders [s] on [c] trying to be smart about escaping
-    Commonmark structural symbols for {!Omarkit.Inline.extension-Text} inlines.
+    Commonmark structural symbols for {!Oymarkit.Inline.extension-Text} inlines.
     We assume text can be anywhere in a sequence of inlines and in particular
     that it can start a line. This function also takes into account
-    the existence of the {{!Omarkit.extensions}extensions}.
+    the existence of the {{!Oymarkit.extensions}extensions}.
 
     As such we escape:
 
@@ -96,19 +96,19 @@ val escaped_text : Cmarkit_renderer.context -> string -> unit
     {- These block markers: [-] [+] [_] [=] only if present at [s.[0]].}
     {- Only if at the end of the string or if followed by a space or a tab: [#]}
     {- Only the first of a run longer than 1: [~]
-       (avoid creating a {{!Omarkit.ext_strikethrough}strikethrough extension}
+       (avoid creating a {{!Oymarkit.ext_strikethrough}strikethrough extension}
         or a code fence).}
     {- [&] if followed by an US-ASCII letter or [#].}
     {- [!] or [~] if it is the last character of [s] (could respectively
        create an unwanted image link if followed by a link inline or
-       a code fence if followed by a {{!Omarkit.ext_strikethrough}strikethrough}
+       a code fence if followed by a {{!Oymarkit.ext_strikethrough}strikethrough}
        inline).}
     {- [.] or [)] only if preceeded by at most 9 digits to the start of text
        and followed by a space, tab or the end of string.}
     {- Everywhere, [`] [*] [_] [\ ] [<] [>] [\[] [\]],
       {{:https://spec.commonmark.org/0.31.2/#ascii-control-character}
-       ASCII control characters}, [$] ({{!Omarkit.ext_math_inline}inline math
-       extension}), [|] ({{!Omarkit.ext_tables}table extension}) }} *)
+       ASCII control characters}, [$] ({{!Oymarkit.ext_math_inline}inline math
+       extension}), [|] ({{!Oymarkit.ext_tables}table extension}) }} *)
 
 val buffer_add_escaped_text : Buffer.t -> string -> unit
 (** [buffer_add_escaped_text b s] is {!escaped_text} but appends to
@@ -119,7 +119,7 @@ val buffer_add_escaped_text : Buffer.t -> string -> unit
     The abstract syntax tree has a few block cases and data fields to
     represent the source document layout. This allows to update
     CommonMark documents without normalizing them too much when they
-    are {{!Omarkit.Doc.of_string}parsed} with [layout:true].
+    are {{!Oymarkit.Doc.of_string}parsed} with [layout:true].
 
     To keep things reasonably simple a few things are {b not} attempted like:
 
@@ -144,15 +144,15 @@ val buffer_add_escaped_text : Buffer.t -> string -> unit
        [layout:tree] should all render to the same HTML.}}
 
     In practice CommonMark being not context free point 1. is not
-    always achieved. In particular in {!Omarkit.Inline.extension-Code_span} the
+    always achieved. In particular in {!Oymarkit.Inline.extension-Code_span} the
     number of delimiting backticks depends on the code content
-    ({!Omarkit.Inline.Code_span.of_string}, computes that for you).
+    ({!Oymarkit.Inline.Code_span.of_string}, computes that for you).
 
     The renderer performs almost no checks on the layout data. You
     should be careful if you fill these yourself since you could
     generate CommonMark that will be misinterpreted. Layout
-    data of pristine nodes coming out of {!Omarkit.Doc.of_string}, created
-    with the {!Omarkit.Inline} and {!Omarkit.Block} constructors
+    data of pristine nodes coming out of {!Oymarkit.Doc.of_string}, created
+    with the {!Oymarkit.Inline} and {!Oymarkit.Block} constructors
     should not need your attention (respect their input constraints
     though).  *)
 
@@ -214,7 +214,7 @@ val buffer_add_escaped_text : Buffer.t -> string -> unit
     {- Source list item that start with an empty line get a space after
        their marker.}
     {- The newline used in the output is the one found in the rendered
-      {!Omarkit.Doc.t} value.}}
+      {!Oymarkit.Doc.t} value.}}
 
     {e Simple} and {e implemented} round trip improvements to the
     renderer are welcome.

@@ -8,13 +8,13 @@ open Cmarkit_std
 let built_in_css = ref "" (* See at the end of the module *)
 
 let buffer_add_docs ~accumulate_defs parse r b files =
-  let empty_defs = Omarkit.Label.Map.empty in
+  let empty_defs = Oymarkit.Label.Map.empty in
   let rec loop defs = function
   | [] -> ()
   | file :: files ->
       let md = Os.read_file file |> Result.to_failure in
       let doc = parse ~defs ~file md in
-      let defs = if accumulate_defs then Omarkit.Doc.defs doc else empty_defs in
+      let defs = if accumulate_defs then Oymarkit.Doc.defs doc else empty_defs in
       Cmarkit_renderer.buffer_add_doc r b doc;
       if files <> [] then Buffer.add_char b '\n';
       loop defs files
@@ -127,7 +127,7 @@ let html
   in
   let r = Cmarkit_html.renderer ~backend_blocks ~safe () in
   let parse ~defs ~file md =
-    Omarkit.Doc.of_string ~resolver ~defs ~heading_auto_ids ~layout ~locs
+    Oymarkit.Doc.of_string ~resolver ~defs ~heading_auto_ids ~layout ~locs
       ~file ~strict md
   in
   let buffer_add_docs = buffer_add_docs ~accumulate_defs parse r in

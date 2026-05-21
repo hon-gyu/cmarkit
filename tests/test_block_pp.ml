@@ -1,4 +1,4 @@
-open Omarkit_
+open Oymarkit_
 
 let md = {|# Heading 1
 foo

@@ -1,10 +1,10 @@
 (library
- (name omarkit_tool)
+ (name oymarkit_tool)
  (wrapped false)
  (libraries
     cmdliner
     unix
-    omarkit
+    oymarkit
     cmarkit_renderer
     cmarkit_latex
     cmarkit_html

@@ -27,7 +27,7 @@ let commonmark ~files ~strict ~no_layout ~diff:dodiff ~html_diff =
   in
   let layout = not no_layout in
   let commonmark ~file contents =
-    let doc = Omarkit.Doc.of_string ~file ~layout ~strict contents in
+    let doc = Oymarkit.Doc.of_string ~file ~layout ~strict contents in
     Cmarkit_commonmark.of_doc doc
   in
   match op with
@@ -47,10 +47,10 @@ let commonmark ~files ~strict ~no_layout ~diff:dodiff ~html_diff =
   | `Html_diff ->
       let htmls = ref [] in
       let add ~file src =
-        let doc = Omarkit.Doc.of_string ~file ~layout ~strict src in
+        let doc = Oymarkit.Doc.of_string ~file ~layout ~strict src in
         let doc_html = Cmarkit_html.of_doc ~safe:false doc in
         let md = Cmarkit_commonmark.of_doc doc in
-        let doc' = Omarkit.Doc.of_string ~layout ~strict md in
+        let doc' = Oymarkit.Doc.of_string ~layout ~strict md in
         let doc_html' = Cmarkit_html.of_doc ~safe:false doc' in
         htmls := (doc_html, doc_html') :: !htmls
       in

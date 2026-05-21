@@ -3,7 +3,7 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Omarkit
+open Oymarkit
 module C = Cmarkit_renderer.Context
 
 (* Renderer state *)
@@ -20,7 +20,7 @@ type state =
 let state : state C.State.t = C.State.make ()
 let get_state c = C.State.get c state
 let init_context c d =
-  C.State.set c state (Some { nl = Omarkit.Doc.nl d; sot = true; indents = [] })
+  C.State.set c state (Some { nl = Oymarkit.Doc.nl d; sot = true; indents = [] })
 
 (* Escaping *)
 
@@ -321,7 +321,7 @@ let heading c h =
       let inline = Block.Heading.inline h in
       nchars c indent ' ';
       nchars c (Block.Heading.level h) '#';
-      (if after_opening = "" && not (Omarkit.Inline.is_empty inline)
+      (if after_opening = "" && not (Oymarkit.Inline.is_empty inline)
        then C.byte c ' ' else C.string c after_opening);
       C.inline c inline;
       C.string c closing
