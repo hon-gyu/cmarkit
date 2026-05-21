@@ -2,4 +2,4 @@
  (name oymarkit_property)
  (libraries oymarkit_ cmarkit_commonmark qcheck-core)
  (inline_tests)
- (preprocess (pps ppx_expect)))
+ (preprocess (pps ppx_jane ppx_sexp_conv ppx_expect)))

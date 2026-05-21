@@ -1,4 +1,5 @@
 open Oymarkit_
+open Sexplib0.Sexp_conv
 
 module G = QCheck2.Gen
 
@@ -10,6 +11,7 @@ type s_inline =
   | Emph of s_inline list
   | Strong of s_inline list
   | Code of string
+  [@@deriving sexp]
 
 type s_block =
   | Para of s_inline list
@@ -19,6 +21,7 @@ type s_block =
   | Code_block of string list
   | Block_quote of s_block list
   | Ulist of s_block list list
+  [@@deriving sexp]
 
 (* Lowering
    ========= *)
@@ -150,45 +153,6 @@ let gen_block : s_block G.t =
              (G.list_size (G.int_range 1 2) smaller))
       in
       G.oneof_weighted (leaves @ [ 2, quote; 2, ulist ]))
-
-(* ====================================================================== *)
-(* Printer                                                                *)
-(* ====================================================================== *)
-
-let rec pp_inline ppf = function
-  | Text s -> Format.fprintf ppf "Text %S" s
-  | Code s -> Format.fprintf ppf "Code %S" s
-  | Emph is -> Format.fprintf ppf "@[<2>Emph@ [%a]@]" pp_inlines is
-  | Strong is -> Format.fprintf ppf "@[<2>Strong@ [%a]@]" pp_inlines is
-and pp_inlines ppf is =
-  Format.pp_print_list
-    ~pp_sep:(fun ppf () -> Format.fprintf ppf ";@ ")
-    pp_inline ppf is
-
-let rec pp_block ppf = function
-  | Para is -> Format.fprintf ppf "@[<2>Para@ [%a]@]" pp_inlines is
-  | Heading (l, is) ->
-      Format.fprintf ppf "@[<2>Heading@ %d@ [%a]@]" l pp_inlines is
-  | Thematic -> Format.pp_print_string ppf "Thematic"
-  | Blank -> Format.pp_print_string ppf "Blank"
-  | Code_block lines ->
-      Format.fprintf ppf "@[<2>Code_block@ [%a]@]"
-        (Format.pp_print_list
-           ~pp_sep:(fun ppf () -> Format.fprintf ppf ";@ ")
-           (fun ppf s -> Format.fprintf ppf "%S" s))
-        lines
-  | Block_quote bs ->
-      Format.fprintf ppf "@[<v 2>Block_quote@,%a@]" pp_blocks bs
-  | Ulist items ->
-      Format.fprintf ppf "@[<v 2>Ulist@,%a@]"
-        (Format.pp_print_list
-           ~pp_sep:Format.pp_print_cut
-           (fun ppf bs -> Format.fprintf ppf "@[<v 2>- item@,%a@]" pp_blocks bs))
-        items
-and pp_blocks ppf bs =
-  Format.pp_print_list ~pp_sep:Format.pp_print_cut pp_block ppf bs
-
-let print_s_block b = Format.asprintf "%a" pp_block b
 
 (* Rules
    ====== *)
