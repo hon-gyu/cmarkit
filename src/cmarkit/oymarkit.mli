@@ -937,7 +937,7 @@ module Block : sig
 
   (** {1:blocks Blocks} *)
 
-  type t = ..
+  type t = Oymarkit_.Block.t = ..
   (** The type for blocks. *)
 
   (** Blank lines. *)
@@ -1337,7 +1337,7 @@ module Doc : sig
 
   (** {1:docs Documents} *)
 
-  type t
+  type t = Oymarkit_.Doc.t
   (** The type for CommonMark documents. *)
 
   val nl : t -> Layout.string
@@ -1671,6 +1671,31 @@ let code_block_langs doc =
   let langs = Folder.fold_doc folder String_set.empty doc in
   String_set.elements langs
 ]} *)
+end
+
+(** {1:pp Debug pretty-printing} *)
+
+(** Structural pretty-printers for the AST.
+
+    These drop {!Meta.t} and most layout, and truncate inline previews.
+    Intended for debugging and as a coarse equality (compare the printed
+    forms). Not a faithful round-trip. *)
+module Pp : sig
+  val pp_block_with :
+    ?ext:(Format.formatter -> Block.t -> unit) ->
+    ?ext_inline:(break_on_soft:bool -> Inline.t -> Inline.t) ->
+    unit -> Format.formatter -> Block.t -> unit
+  (** [pp_block_with ?ext ?ext_inline () ppf b] prints [b]. [ext] handles
+      block extension constructors; [ext_inline] is forwarded to
+      {!Inline.to_plain_text}. *)
+
+  val pp_block : Format.formatter -> Block.t -> unit
+  (** [pp_block] is {!pp_block_with} with defaults. *)
+
+  val pp_inline_preview :
+    ?ext_inline:(break_on_soft:bool -> Inline.t -> Inline.t) ->
+    Format.formatter -> Inline.t -> unit
+  (** Truncated, plain-text preview of an inline. *)
 end
 
 (** {1:extensions Extensions}
