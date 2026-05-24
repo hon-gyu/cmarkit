@@ -1,5 +1,5 @@
 (library
- (name oymarkit_property)
+ (name oymarkit_generator)
  (libraries oymarkit_ cmarkit_commonmark qcheck-core textutils.ascii_table)
  (inline_tests)
  (preprocess (pps ppx_jane ppx_sexp_conv ppx_expect)))
