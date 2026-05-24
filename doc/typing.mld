@@ -12,7 +12,8 @@ whose [level] field is [42]. The parser produces a strict subset of
 
 Our goal is to characterize that subset {b empirically} — by
 generating broadly, running a battery of properties, shrinking each
-counterexample, and promoting each shrunk witness into a typing rule.
+counterexample, and tightening the generator until [Property.all]
+holds.
 
 The discipline that emerges is the type theory of the CommonMark AST
 as observed through this implementation.
@@ -23,29 +24,29 @@ The CommonMark specification is operational: it defines a parser, not a
 grammar over the AST. The AST type {!Oymarkit_.Block.t} is therefore
 permissive — it admits "ill-typed" values that no parse can produce.
 
-A typing discipline carves out the well-typed subset. Three places it
-can live:
+A typing discipline carves out the well-typed subset. In principle it
+could live in three places:
 
 {ol
 {- {b In the type.} Refine constructors (e.g. [Heading] could carry a
    [level : (int, 1..6) refinement]). OCaml's surface syntax limits us.}
 {- {b In a generator.} The shape of the generator is the type discipline
-   made syntactic — every constraint in a generator override is a rule.}
+   made syntactic — every constraint encoded in the generator is a rule.}
 {- {b In a predicate table.} Named, declarative checks lifted over the
    tree. Useful for {e reporting} which rule was violated.}}
 
-We use all three. The surface AST {!Oymarkit_property.Gen_block.s_block}
-is (1), [gen_block] is (2), and [Rule.all] is (3).
+We use (2). The generator builds [Block.t] directly via the smart
+constructors in {!Oymarkit_.Block} and {!Oymarkit_.Inline}, so every
+sample is well-formed at the type level. Constraints beyond what the
+smart constructors enforce (heading levels in [1..6], non-empty
+paragraphs, etc.) are encoded by the {e shape} of the generator. There
+is no surface AST and no rule table.
 
 {1 Architecture}
 
 {[
                 Gen_block.gen_block
                        |
-                       v
-                Gen_block.s_block
-                       |
-                       | Gen_block.to_block
                        v
                 Oymarkit_.Block.t
                        |
@@ -56,15 +57,12 @@ is (1), [gen_block] is (2), and [Rule.all] is (3).
                 Pass | Fail { reason; expected; actual }
 ]}
 
-The pipeline has four components, in [src/property/]:
+The pipeline lives in [src/property/]:
 
 {ul
-{- {!Oymarkit_property.Gen_block.s_block} — a narrow surface AST that
-   {e cannot express} most rule violations by construction.}
 {- {!Oymarkit_property.Gen_block.gen_block} — a [QCheck2.Gen.t] over
-   [s_block]. Size-bounded with integrated tree-shrinking.}
-{- {!Oymarkit_property.Gen_block.to_block} — lowers [s_block] into
-   [Oymarkit_.Block.t] using smart constructors.}
+   [Block.t]. Size-bounded with integrated tree-shrinking; uses a
+   fixed vocabulary for inline text to keep counterexamples readable.}
 {- {!Oymarkit_property.Property.all} — the property battery
    ([roundtrip], [normalize_idempotent], [render_determinism],
    [uniformity_block_quote], [uniformity_list_item]).}}
@@ -74,30 +72,24 @@ The pipeline has four components, in [src/property/]:
 The loop is:
 
 {ol
-{- {b Generate.} Sample an [s_block] from the current [gen_block].
-   The generator's current shape is the conjectured typing discipline.}
-{- {b Lower.} Apply [to_block] to obtain a [Block.t].}
+{- {b Generate.} Sample a [Block.t] from the current [gen_block]. The
+   generator's current shape is the conjectured typing discipline.}
 {- {b Check.} Run every [Property.t] in [Property.all] on the block.}
-{- {b Shrink.} On any failure, QCheck2 shrinks the [s_block] to a
-   minimal counterexample (integrated shrinking — no separate
-   shrinker to maintain).}
-{- {b Diagnose.} Read the shrunk witness; identify the
-   typing rule it violates. Examples we expect to see:
+{- {b Shrink.} On any failure, QCheck2 shrinks to a minimal
+   counterexample (integrated shrinking — no separate shrinker to
+   maintain).}
+{- {b Diagnose.} Read the shrunk witness; identify the typing rule it
+   violates. Examples we expect to see:
    {ul
-   {- A paragraph beginning with [- ] inside a list item reparses
-     as a nested list.}
-   {- A thematic break of [-] characters inside a [Ulist] item
-     collides with the list marker.}
+   {- A paragraph beginning with [- ] inside a list item reparses as a
+     nested list.}
+   {- A thematic break of [-] characters inside a [Ulist] item collides
+     with the list marker.}
    {- A code block whose info string contains spaces.}}}
-{- {b Promote.} Encode the rule in one of three places:
-   {ul
-   {- Tighten the surface AST (e.g. add a [Para_safe] variant that
-     forbids container-marker prefixes).}
-   {- Tighten the generator (e.g. reject paragraphs starting with [- ]).}
-   {- Add a named entry to [Rule.all] so future failures can be
-     {e labelled} with which rule they violate.}}}
+{- {b Promote.} Encode the rule by tightening [gen_block] so it can no
+   longer produce such samples.}
 {- {b Repeat} until [Property.all] holds at large [count]. The
-   surviving set of rules {b is} the typing discipline.}}
+   surviving shape of [gen_block] {b is} the typing discipline.}}
 
 {1 What "equal" means}
 
@@ -107,37 +99,21 @@ It is currently {!Oymarkit_.Pp.pp_block} applied to the
 {{!Oymarkit_.Block.normalize}normalized} block. Two blocks are equal
 iff their canonical forms are equal strings.
 
-This is deliberately lossy: it drops [Meta.t], drops most
-[Layout] fields, and truncates inline previews. The {e right} granularity
-for discovering structural rules; the {e wrong} granularity for
+This is deliberately lossy: it drops [Meta.t], drops most [Layout]
+fields, and truncates inline previews. The {e right} granularity for
+discovering structural rules; the {e wrong} granularity for
 layout-preservation bugs. Sharpen when needed.
-
-{1 The current rule table}
-
-See {!Oymarkit_property.Gen_block.Rule.all}. As of the initial
-scaffold, it lists only the rules already enforced by the generator
-shape:
-
-{ul
-{- [heading_level_in_range] — [1 <= level <= 6].}
-{- [paragraph_nonempty] — paragraphs have at least one inline.}
-{- [list_items_nonempty] — lists and items are non-empty.}
-{- [block_quote_nonempty] — block quote bodies are non-empty.}}
-
-These are placeholders. The interesting rules will be added as
-counterexamples are discovered.
 
 {1 What this is not}
 
 {ul
-{- {b A spec.} The discovered rules are this implementation's behavior,
-   not the CommonMark spec. They are likely a superset of any clean
-   formal characterization.}
+{- {b A spec.} The rules encoded in [gen_block] describe this
+   implementation's behavior, not the CommonMark spec. They are likely
+   a superset of any clean formal characterization.}
 {- {b A round-trip fixer.} When a counterexample shows that
-   [parse (render b) ≠ b], the rule we add says "don't generate
-   such [b]" — we do not change the parser or renderer to make it
-   round-trip.}
-{- {b Exhaustive.} The surface AST is intentionally narrow. Extensions
+   [parse (render b) /= b], the rule we add says "don't generate such
+   [b]" — we do not change the parser or renderer to make it round-trip.}
+{- {b Exhaustive.} The generator is intentionally narrow. Extensions
    (math, tables, footnotes), HTML, links, and setext headings are
    omitted from v1 and will be added once the core is stable.}}
 
@@ -152,5 +128,5 @@ counterexamples are discovered.
    block quote and unordered list. Add ordered list, nested
    containers, and an [n]-deep wrapping variant.}
 {- {b Rule provenance.} Each shrunk counterexample should be recorded
-   with the rule it gave rise to, so the rule table doubles as a
-   regression suite of minimal witnesses.}}
+   alongside the generator tightening it motivated, so we can recover
+   the minimal witnesses behind each rule.}}

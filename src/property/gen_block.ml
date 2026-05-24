@@ -1,210 +1,194 @@
 open Oymarkit_
-open Sexplib0.Sexp_conv
 module G = QCheck2.Gen
 
-(* Surface AST
-   =========== *)
-
-type s_inline =
-  | Text of string
-  | Emph of s_inline list
-  | Strong of s_inline list
-  | Code of string
-[@@deriving sexp]
-
-type s_block =
-  | Para of s_inline list
-  | Heading of int * s_inline list
-  | Thematic
-  | Blank
-  | Code_block of string list
-  | Block_quote of s_block list
-  | Ulist of s_block list list
-[@@deriving sexp]
-
-(* Lowering: surface AST to AST
-   ========= *)
-
-module Lowering : sig
-  val to_block : s_block -> Block.t
-end = struct
-  let mk_text s = Inline.Text (s, Meta.none)
-
-  let mk_inlines = function
-    | [ i ] -> i
-    | is -> Inline.Inlines (is, Meta.none)
-
-  let rec lower_inline = function
-    | Text s -> mk_text s
-    | Emph is ->
-        let inner = mk_inlines (List.map lower_inline is) in
-        Inline.Emphasis (Inline.Emphasis.make inner, Meta.none)
-    | Strong is ->
-        let inner = mk_inlines (List.map lower_inline is) in
-        Inline.Strong_emphasis (Inline.Emphasis.make inner, Meta.none)
-    | Code s -> Inline.Code_span (Inline.Code_span.of_string s, Meta.none)
-
-  let to_inline is = mk_inlines (List.map lower_inline is)
-
-  let mk_blocks = function
-    | [ b ] -> b
-    | bs -> Block.Blocks (bs, Meta.none)
-
-  let rec lower_block = function
-    | Para is ->
-        let p = Block.Paragraph.make (to_inline is) in
-        Block.Paragraph (p, Meta.none)
-    | Heading (level, is) ->
-        let h = Block.Heading.make ~level (to_inline is) in
-        Block.Heading (h, Meta.none)
-    | Thematic -> Block.Thematic_break (Block.Thematic_break.make (), Meta.none)
-    | Blank -> Block.Blank_line ("", Meta.none)
-    | Code_block lines ->
-        let bls = List.map (fun s -> (s, Meta.none)) lines in
-        let cb = Block.Code_block.make bls in
-        Block.Code_block (cb, Meta.none)
-    | Block_quote bs ->
-        let inner = mk_blocks (List.map lower_block bs) in
-        let bq = Block.Block_quote.make inner in
-        Block.Block_quote (bq, Meta.none)
-    | Ulist items ->
-        let mk_item bs =
-          let inner = mk_blocks (List.map lower_block bs) in
-          (Block.List_item.make inner, Meta.none)
-        in
-        let l = Block.List'.make (`Unordered '-') (List.map mk_item items) in
-        Block.List (l, Meta.none)
-
-  let to_block = lower_block
-end
-
-include Lowering
-
-(* Generators
+(* Vocabulary
    ========== *)
 
-(* Restrict the text alphabet to keep early counterexamples readable and
-   to avoid hitting unrelated escape/UTF-8 quirks. Widen later. *)
-let safe_char = G.oneof_array [| 'a'; 'b'; 'c'; 'x'; 'y'; 'z'; '0'; '1'; ' ' |]
+let words =
+  [|
+    "alpha";
+    "beta";
+    "gamma";
+    "delta";
+    "lorem";
+    "ipsum";
+    "the";
+    "quick";
+    "fox";
+    "lazy";
+    "dog";
+  |]
 
-let safe_word =
+let code_words = [| "id"; "let"; "fun"; "x"; "y"; "n"; "0"; "1" |]
+
+let gen_phrase =
   let open G in
-  let* n = int_range 1 6 in
-  string_size ~gen:safe_char (return n)
+  let* n = int_range 1 3 in
+  let* ws = list_size (return n) (oneof_array words) in
+  return (String.concat " " ws)
 
-(* Trim outer spaces and reject empty — paragraphs need at least one visible
-   character or the renderer produces no paragraph at all. *)
-let (nonblank_word : string G.t) =
+let gen_code_payload =
   let open G in
-  safe_word |> map String.trim |> map (fun s -> if s = "" then "a" else s)
+  let* n = int_range 1 2 in
+  let* ws = list_size (return n) (oneof_array code_words) in
+  return (String.concat " " ws)
 
-let (code_payload : string G.t) =
-  (* No backticks; pick a tiny alphabet. *)
-  let alpha = G.oneof_array [| 'a'; 'b'; '1'; ' ' |] in
-  let open G in
-  let* n = int_range 1 4 in
-  string_size ~gen:alpha (return n)
+(* Inline
+   ====== *)
 
-let gen_inline : s_inline G.t =
+let mk_text s = Inline.Text (s, Meta.none)
+let mk_code s = Inline.Code_span (Inline.Code_span.of_string s, Meta.none)
+let mk_emph i = Inline.Emphasis (Inline.Emphasis.make i, Meta.none)
+let mk_strong i = Inline.Strong_emphasis (Inline.Emphasis.make i, Meta.none)
+
+let inlines_of = function
+  | [ i ] -> i
+  | is -> Inline.Inlines (is, Meta.none)
+
+let gen_inline : Inline.t G.t =
   G.sized_size (G.int_range 0 2)
   @@ G.fix (fun self n ->
-      if n <= 0 then
-        G.oneof
-          [
-            G.map (fun s -> Text s) nonblank_word;
-            G.map (fun s -> Code s) code_payload;
-          ]
+      let leaves =
+        [ (4, G.map mk_text gen_phrase); (1, G.map mk_code gen_code_payload) ]
+      in
+      if n <= 0 then G.oneof_weighted leaves
       else
-        let smaller = self (n - 1) in
+        let inner =
+          G.map inlines_of (G.list_size (G.int_range 1 3) (self (n - 1)))
+        in
         G.oneof_weighted
-          [
-            (3, G.map (fun s -> Text s) nonblank_word);
-            (1, G.map (fun s -> Code s) code_payload);
-            ( 1,
-              G.map (fun is -> Emph is) (G.list_size (G.int_range 1 3) smaller)
-            );
-            ( 1,
-              G.map
-                (fun is -> Strong is)
-                (G.list_size (G.int_range 1 3) smaller) );
-          ])
+          (leaves @ [ (1, G.map mk_emph inner); (1, G.map mk_strong inner) ]))
 
-let gen_inlines : s_inline list G.t = G.list_size (G.int_range 1 3) gen_inline
+let gen_inlines : Inline.t G.t =
+  G.map inlines_of (G.list_size (G.int_range 1 3) gen_inline)
+
+(* Block
+   ===== *)
+
 let gen_heading_level = G.int_range 1 6
-let gen_code_lines = G.list_size (G.int_range 1 3) code_payload
+let gen_code_lines = G.list_size (G.int_range 1 3) gen_code_payload
+let mk_para is = Block.Paragraph (Block.Paragraph.make is, Meta.none)
+let mk_heading level is = Block.Heading (Block.Heading.make ~level is, Meta.none)
+let mk_thematic = Block.Thematic_break (Block.Thematic_break.make (), Meta.none)
+let mk_blank = Block.Blank_line ("", Meta.none)
 
-(* Block generator with explicit size budget. Containers (block_quote,
-   ulist) recur on a strictly smaller size, so generation terminates. *)
-let gen_block : s_block G.t =
+let mk_code_block lines =
+  let bls = List.map (fun s -> (s, Meta.none)) lines in
+  Block.Code_block (Block.Code_block.make bls, Meta.none)
+
+let blocks_of = function
+  | [ b ] -> b
+  | bs -> Block.Blocks (bs, Meta.none)
+
+let mk_block_quote bs =
+  Block.Block_quote (Block.Block_quote.make (blocks_of bs), Meta.none)
+
+let mk_ulist items =
+  let mk_item bs = (Block.List_item.make (blocks_of bs), Meta.none) in
+  let l = Block.List'.make (`Unordered '-') (List.map mk_item items) in
+  Block.List (l, Meta.none)
+
+let gen_block : Block.t G.t =
   G.sized_size (G.int_range 1 4)
   @@ G.fix (fun self n ->
       let leaves =
         [
-          (4, G.map (fun is -> Para is) gen_inlines);
-          (2, G.map2 (fun l is -> Heading (l, is)) gen_heading_level gen_inlines);
-          (1, G.return Thematic);
-          (1, G.return Blank);
-          (1, G.map (fun ls -> Code_block ls) gen_code_lines);
+          (4, G.map mk_para gen_inlines);
+          (2, G.map2 mk_heading gen_heading_level gen_inlines);
+          (1, G.return mk_thematic);
+          (1, G.return mk_blank);
+          (1, G.map mk_code_block gen_code_lines);
         ]
       in
       if n <= 0 then G.oneof_weighted leaves
       else
         let smaller = self (n - 1) in
         let quote =
-          G.map
-            (fun bs -> Block_quote bs)
-            (G.list_size (G.int_range 1 3) smaller)
+          G.map mk_block_quote (G.list_size (G.int_range 1 3) smaller)
         in
         let ulist =
-          G.map
-            (fun items -> Ulist items)
+          G.map mk_ulist
             (G.list_size (G.int_range 1 3)
                (G.list_size (G.int_range 1 2) smaller))
         in
         G.oneof_weighted (leaves @ [ (2, quote); (2, ulist) ]))
 
-module Rule = struct
-  type t = { name : string; check : s_block -> bool }
+(* Distribution
+   ============ *)
 
-  (* Walk the whole tree; rules are local predicates lifted via [forall]. *)
-  let rec forall_block p b =
-    p b
-    &&
-    match b with
-    | Block_quote bs -> List.for_all (forall_block p) bs
-    | Ulist items -> List.for_all (List.for_all (forall_block p)) items
-    | _ -> true
+module Stats = struct
+  type t = {
+    mutable text : int;
+    mutable code : int;
+    mutable emph : int;
+    mutable strong : int;
+  }
 
-  let heading_level_in_range = function
-    | Heading (l, _) -> 1 <= l && l <= 6
-    | _ -> true
+  let make () = { text = 0; code = 0; emph = 0; strong = 0 }
 
-  let paragraph_nonempty = function
-    | Para [] -> false
-    | _ -> true
+  let rec count_inline t = function
+    | Inline.Text _ -> t.text <- t.text + 1
+    | Inline.Code_span _ -> t.code <- t.code + 1
+    | Inline.Emphasis (e, _) ->
+        t.emph <- t.emph + 1;
+        count_inline t (Inline.Emphasis.inline e)
+    | Inline.Strong_emphasis (e, _) ->
+        t.strong <- t.strong + 1;
+        count_inline t (Inline.Emphasis.inline e)
+    | Inline.Inlines (is, _) -> List.iter (count_inline t) is
+    | _ -> ()
 
-  let list_items_nonempty = function
-    | Ulist items -> items <> [] && List.for_all (fun bs -> bs <> []) items
-    | _ -> true
+  let rec count_block t = function
+    | Block.Paragraph (p, _) -> count_inline t (Block.Paragraph.inline p)
+    | Block.Heading (h, _) -> count_inline t (Block.Heading.inline h)
+    | Block.Block_quote (bq, _) -> count_block t (Block.Block_quote.block bq)
+    | Block.Blocks (bs, _) -> List.iter (count_block t) bs
+    | Block.List (l, _) ->
+        List.iter
+          (fun (item, _) -> count_block t (Block.List_item.block item))
+          (Block.List'.items l)
+    | _ -> ()
 
-  let block_quote_nonempty = function
-    | Block_quote [] -> false
-    | _ -> true
-
-  let all =
-    let lift name p = { name; check = forall_block p } in
-    [
-      lift "heading_level_in_range" heading_level_in_range;
-      lift "paragraph_nonempty" paragraph_nonempty;
-      lift "list_items_nonempty" list_items_nonempty;
-      lift "block_quote_nonempty" block_quote_nonempty;
-    ]
+  let to_table t =
+    let total = t.text + t.code + t.emph + t.strong in
+    let pct n =
+      if total = 0 then "0.0%"
+      else
+        Printf.sprintf "%.1f%%" (100.0 *. float_of_int n /. float_of_int total)
+    in
+    let rows =
+      [
+        ("Text", t.text);
+        ("Code_span", t.code);
+        ("Emphasis", t.emph);
+        ("Strong_emphasis", t.strong);
+      ]
+    in
+    let open Ascii_table in
+    to_string_noattr ~bars:`Ascii ~limit_width_to:60
+      [
+        Column.create "constructor" fst;
+        Column.create "count" (fun (_, c) -> string_of_int c);
+        Column.create "share" (fun (_, c) -> pct c);
+      ]
+      rows
 end
 
-let%expect_test "generator produces a lowerable sample" =
+let%expect_test "inline constructor distribution" =
   let rand = Random.State.make [| 42 |] in
-  let s = G.generate1 ~rand gen_block in
-  let _ : Block.t = to_block s in
-  let pass_rules = List.for_all (fun r -> r.Rule.check s) Rule.all in
-  Printf.printf "lowered ok; rules pass = %b\n" pass_rules;
-  [%expect {| lowered ok; rules pass = true |}]
+  let stats = Stats.make () in
+  for _ = 1 to 500 do
+    Stats.count_block stats (G.generate1 ~rand gen_block)
+  done;
+  print_string (Stats.to_table stats);
+  [%expect
+    {|
+    |---------------------------------|
+    | constructor     | count | share |
+    |-----------------+-------+-------|
+    | Text            | 1258  | 68.6% |
+    | Code_span       | 295   | 16.1% |
+    | Emphasis        | 117   | 6.4%  |
+    | Strong_emphasis | 164   | 8.9%  |
+    |---------------------------------|
+    |}]
