@@ -1,0 +1,3 @@
+[submodule "vendor/random-generator"]
+	path = vendor/random-generator
+	url = git@github.com:gasche/random-generator.git
