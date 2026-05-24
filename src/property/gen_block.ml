@@ -117,52 +117,49 @@ let gen_block : Block.t G.t =
    ============ *)
 
 module Stats = struct
-  type t = {
-    mutable text : int;
-    mutable code : int;
-    mutable emph : int;
-    mutable strong : int;
-  }
+  (* A histogram over constructor labels. [t] is a monoid: [empty] is the
+     unit and [merge] is associative, so traversals compose by folding. *)
+  type t = int String_map.t
 
-  let make () = { text = 0; code = 0; emph = 0; strong = 0 }
+  let empty : t = String_map.empty
+  let singleton k : t = String_map.singleton k 1
+  let merge : t -> t -> t = String_map.union (fun _ a b -> Some (a + b))
+  let total t = String_map.fold (fun _ n acc -> acc + n) t 0
 
-  let rec count_inline t = function
-    | Inline.Text _ -> t.text <- t.text + 1
-    | Inline.Code_span _ -> t.code <- t.code + 1
+  let rec of_inline = function
+    | Inline.Text _ -> singleton "Text"
+    | Inline.Code_span _ -> singleton "Code_span"
     | Inline.Emphasis (e, _) ->
-        t.emph <- t.emph + 1;
-        count_inline t (Inline.Emphasis.inline e)
+        merge (singleton "Emphasis") (of_inline (Inline.Emphasis.inline e))
     | Inline.Strong_emphasis (e, _) ->
-        t.strong <- t.strong + 1;
-        count_inline t (Inline.Emphasis.inline e)
-    | Inline.Inlines (is, _) -> List.iter (count_inline t) is
-    | _ -> ()
+        merge
+          (singleton "Strong_emphasis")
+          (of_inline (Inline.Emphasis.inline e))
+    | Inline.Inlines (is, _) ->
+        List.fold_left (fun acc i -> merge acc (of_inline i)) empty is
+    | _ -> empty
 
-  let rec count_block t = function
-    | Block.Paragraph (p, _) -> count_inline t (Block.Paragraph.inline p)
-    | Block.Heading (h, _) -> count_inline t (Block.Heading.inline h)
-    | Block.Block_quote (bq, _) -> count_block t (Block.Block_quote.block bq)
-    | Block.Blocks (bs, _) -> List.iter (count_block t) bs
+  let rec of_block = function
+    | Block.Paragraph (p, _) -> of_inline (Block.Paragraph.inline p)
+    | Block.Heading (h, _) -> of_inline (Block.Heading.inline h)
+    | Block.Block_quote (bq, _) -> of_block (Block.Block_quote.block bq)
+    | Block.Blocks (bs, _) ->
+        List.fold_left (fun acc b -> merge acc (of_block b)) empty bs
     | Block.List (l, _) ->
-        List.iter
-          (fun (item, _) -> count_block t (Block.List_item.block item))
-          (Block.List'.items l)
-    | _ -> ()
+        List.fold_left
+          (fun acc (item, _) ->
+            merge acc (of_block (Block.List_item.block item)))
+          empty (Block.List'.items l)
+    | _ -> empty
 
-  let to_table t =
-    let total = t.text + t.code + t.emph + t.strong in
-    let pct n =
-      if total = 0 then "0.0%"
-      else
-        Printf.sprintf "%.1f%%" (100.0 *. float_of_int n /. float_of_int total)
+  let to_table t : string =
+    let n = total t in
+    let pct c =
+      if n = 0 then "0.0%"
+      else Printf.sprintf "%.1f%%" (100.0 *. float_of_int c /. float_of_int n)
     in
     let rows =
-      [
-        ("Text", t.text);
-        ("Code_span", t.code);
-        ("Emphasis", t.emph);
-        ("Strong_emphasis", t.strong);
-      ]
+      String_map.bindings t |> List.sort (fun (_, a) (_, b) -> compare b a)
     in
     let open Ascii_table in
     to_string_noattr ~bars:`Ascii ~limit_width_to:60
@@ -176,10 +173,16 @@ end
 
 let%expect_test "inline constructor distribution" =
   let rand = Random.State.make [| 42 |] in
-  let stats = Stats.make () in
-  for _ = 1 to 500 do
-    Stats.count_block stats (G.generate1 ~rand gen_block)
-  done;
+  let stats =
+    let rec loop acc k =
+      if k = 0 then acc
+      else
+        loop
+          (Stats.merge acc (Stats.of_block (G.generate1 ~rand gen_block)))
+          (k - 1)
+    in
+    loop Stats.empty 500
+  in
   print_string (Stats.to_table stats);
   [%expect
     {|
@@ -188,7 +191,7 @@ let%expect_test "inline constructor distribution" =
     |-----------------+-------+-------|
     | Text            | 1258  | 68.6% |
     | Code_span       | 295   | 16.1% |
-    | Emphasis        | 117   | 6.4%  |
     | Strong_emphasis | 164   | 8.9%  |
+    | Emphasis        | 117   | 6.4%  |
     |---------------------------------|
     |}]
