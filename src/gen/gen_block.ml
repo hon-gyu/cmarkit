@@ -61,6 +61,80 @@ let gen_inline : Inline.t G.t =
                 (2, map inlines_of_is (list (self (n / 2))));
               ]))
 
+
+(* Block
+=================== *)
+
+let blank_line_egs : Block.t list =
+  [ "\n"; "  \n"; "\t\n" ]
+  |> List.map (fun bl -> Block.(Blank_line (bl, Meta.none)))
+
+let thematic_break_egs : Block.t list =
+  Block.Thematic_break.
+    [ make (); make ~layout:"***" (); make ~layout:"___" () ]
+  |> List.map (fun tb -> Block.(Thematic_break (tb, Meta.none)))
+
+let code_block_egs : Block.t list =
+  Block.Code_block.
+    [
+      make [];
+      make ~info_string:("ocaml", Meta.none) [ ("let x = 1", Meta.none) ];
+      make ~layout:`Indented [ ("indented code", Meta.none) ];
+    ]
+  |> List.map (fun cb -> Block.(Code_block (cb, Meta.none)))
+
+let gen_paragraph : Block.t G.t =
+  G.map
+    (fun inline -> Block.(Paragraph (Block.Paragraph.make inline, Meta.none)))
+    gen_inline
+
+let gen_heading : Block.t G.t =
+  G.map
+    (fun (level, inline) ->
+      Block.(Heading (Block.Heading.make ~level inline, Meta.none)))
+    G.(pair (int_range 1 6) gen_inline)
+
+let gen_block_leaf : Block.t G.t =
+  G.oneof
+    [
+      G.oneof_list blank_line_egs;
+      G.oneof_list thematic_break_egs;
+      G.oneof_list code_block_egs;
+      gen_paragraph;
+      gen_heading;
+    ]
+
+let gen_block : Block.t G.t =
+  G.(
+    sized
+    @@ fix (fun self (n : int) ->
+        match n with
+        | 0 -> gen_block_leaf
+        | n ->
+            let blocks_of_bs bs = Block.Blocks (bs, Meta.none) in
+            let block_quote_of_b b =
+              Block.(Block_quote (Block.Block_quote.make b, Meta.none))
+            in
+            let gen_list_block =
+              let gen_item =
+                map
+                  (fun block -> (Block.List_item.make block, Meta.none))
+                  (self (n / 2))
+              in
+              map
+                (fun items ->
+                  Block.(
+                    List (Block.List'.make (`Unordered '-') items, Meta.none)))
+                (list gen_item)
+            in
+            oneof_weighted
+              [
+                (1, gen_block_leaf);
+                (2, map blocks_of_bs (list (self (n / 2))));
+                (1, map block_quote_of_b (self (n / 2)));
+                (1, gen_list_block);
+              ]))
+
 (* Distribution
    ============ *)
 
