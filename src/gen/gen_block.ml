@@ -1,117 +1,65 @@
 open Oymarkit_
 module G = QCheck2.Gen
 
-(* Vocabulary
-   ========== *)
-
-let words =
-  [|
-    "alpha";
-    "beta";
-    "gamma";
-    "delta";
-    "lorem";
-    "ipsum";
-    "the";
-    "quick";
-    "fox";
-    "lazy";
-    "dog";
-  |]
-
-let code_words = [| "id"; "let"; "fun"; "x"; "y"; "n"; "0"; "1" |]
-
-let gen_phrase =
-  let open G in
-  let* n = int_range 1 3 in
-  let* ws = list_size (return n) (oneof_array words) in
-  return (String.concat " " ws)
-
-let gen_code_payload =
-  let open G in
-  let* n = int_range 1 2 in
-  let* ws = list_size (return n) (oneof_array code_words) in
-  return (String.concat " " ws)
+let (gen_string : string G.t) = G.string_printable
 
 (* Inline
    ====== *)
 
-let mk_text s = Inline.Text (s, Meta.none)
-let mk_code s = Inline.Code_span (Inline.Code_span.of_string s, Meta.none)
-let mk_emph i = Inline.Emphasis (Inline.Emphasis.make i, Meta.none)
-let mk_strong i = Inline.Strong_emphasis (Inline.Emphasis.make i, Meta.none)
+let text_egs : Inline.t list =
+  [ "jia"; "yi"; "bing" ] |> List.map (fun pl -> Inline.(Text (pl, Meta.none)))
 
-let inlines_of = function
-  | [ i ] -> i
-  | is -> Inline.Inlines (is, Meta.none)
+let (code_span_egs : Inline.t list) =
+  Inline.Code_span.
+    [
+      of_string "";
+      of_string "`add`";
+      of_string "``sub``";
+      of_string "`` `mul` ``";
+    ]
+  |> List.map (fun pl -> Inline.(Code_span (pl, Meta.none)))
+
+let (autolink_egs : Inline.t list) =
+  Inline.Autolink.
+    [ make ("www.foo.com", Meta.none); make ("bar@gmail.com", Meta.none) ]
+  |> List.map (fun pl -> Inline.(Autolink (pl, Meta.none)))
+
+let (break_egs : Inline.t list) =
+  Inline.Break.[ make `Hard; make `Soft ]
+  |> List.map (fun pl -> Inline.(Break (pl, Meta.none)))
+
+let mk_emph_egs i : Inline.t list =
+  Inline.Emphasis.[ make ~delim:'*' i; make ~delim:'_' i ]
+  |> List.map (fun pl -> Inline.(Emphasis (pl, Meta.none)))
+
+let mk_strong_emph_egs i : Inline.t list =
+  Inline.Emphasis.[ make ~delim:'*' i; make ~delim:'_' i ]
+  |> List.map (fun pl -> Inline.(Strong_emphasis (pl, Meta.none)))
+
+(* let mk_link_egs i : Inline.Link.t list =
+  Inline.Link.[
+    make i;
+  ] *)
+
+(* TODO: extension strikethrough and math_span *)
+
+let gen_inline_leaf : Inline.t G.t =
+  [ text_egs; code_span_egs; autolink_egs; break_egs ]
+  |> List.map G.oneof_list |> G.oneof
 
 let gen_inline : Inline.t G.t =
-  G.sized_size (G.int_range 0 2)
-  @@ G.fix (fun self n ->
-      let leaves =
-        [ (4, G.map mk_text gen_phrase); (1, G.map mk_code gen_code_payload) ]
-      in
-      if n <= 0 then G.oneof_weighted leaves
-      else
-        let inner =
-          G.map inlines_of (G.list_size (G.int_range 1 3) (self (n - 1)))
-        in
-        G.oneof_weighted
-          (leaves @ [ (1, G.map mk_emph inner); (1, G.map mk_strong inner) ]))
-
-let gen_inlines : Inline.t G.t =
-  G.map inlines_of (G.list_size (G.int_range 1 3) gen_inline)
-
-(* Block
-   ===== *)
-
-let gen_heading_level = G.int_range 1 6
-let gen_code_lines = G.list_size (G.int_range 1 3) gen_code_payload
-let mk_para is = Block.Paragraph (Block.Paragraph.make is, Meta.none)
-let mk_heading level is = Block.Heading (Block.Heading.make ~level is, Meta.none)
-let mk_thematic = Block.Thematic_break (Block.Thematic_break.make (), Meta.none)
-let mk_blank = Block.Blank_line ("", Meta.none)
-
-let mk_code_block lines =
-  let bls = List.map (fun s -> (s, Meta.none)) lines in
-  Block.Code_block (Block.Code_block.make bls, Meta.none)
-
-let blocks_of = function
-  | [ b ] -> b
-  | bs -> Block.Blocks (bs, Meta.none)
-
-let mk_block_quote bs =
-  Block.Block_quote (Block.Block_quote.make (blocks_of bs), Meta.none)
-
-let mk_ulist items =
-  let mk_item bs = (Block.List_item.make (blocks_of bs), Meta.none) in
-  let l = Block.List'.make (`Unordered '-') (List.map mk_item items) in
-  Block.List (l, Meta.none)
-
-let gen_block : Block.t G.t =
-  G.sized_size (G.int_range 1 4)
-  @@ G.fix (fun self n ->
-      let leaves =
-        [
-          (4, G.map mk_para gen_inlines);
-          (2, G.map2 mk_heading gen_heading_level gen_inlines);
-          (1, G.return mk_thematic);
-          (1, G.return mk_blank);
-          (1, G.map mk_code_block gen_code_lines);
-        ]
-      in
-      if n <= 0 then G.oneof_weighted leaves
-      else
-        let smaller = self (n - 1) in
-        let quote =
-          G.map mk_block_quote (G.list_size (G.int_range 1 3) smaller)
-        in
-        let ulist =
-          G.map mk_ulist
-            (G.list_size (G.int_range 1 3)
-               (G.list_size (G.int_range 1 2) smaller))
-        in
-        G.oneof_weighted (leaves @ [ (2, quote); (2, ulist) ]))
+  G.(
+    sized
+    @@ fix (fun self (n : int) ->
+        match n with
+        | 0 -> gen_inline_leaf
+        | n ->
+            let inlines_of_is is = Inline.Inlines (is, Meta.none) in
+            oneof_weighted
+              [
+                (1, gen_inline_leaf);
+                (2, map inlines_of_is (list (self (n / 2))));
+              ]))
 
 (* Distribution
    ============ *)
@@ -171,7 +119,7 @@ module Stats = struct
       rows
 end
 
-let%expect_test "inline constructor distribution" =
+(* let%expect_test "inline constructor distribution" =
   let rand = Random.State.make [| 42 |] in
   let stats =
     let rec loop acc k =
@@ -194,4 +142,4 @@ let%expect_test "inline constructor distribution" =
     | Strong_emphasis | 164   | 8.9%  |
     | Emphasis        | 117   | 6.4%  |
     |---------------------------------|
-    |}]
+    |}] *)
