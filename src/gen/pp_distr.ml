@@ -5,7 +5,6 @@ module B = PrintBox
 let spf = Printf.sprintf
 
 type 'a stat = string * ('a -> float)
-type display = Table | Boxplot | Histogram | Sparkline
 
 let percentile (sorted : float array) (p : float) : float =
   let n = Array.length sorted in
@@ -189,11 +188,9 @@ let table_of_samples ?(lo_p = 0.05) ?(hi_p = 0.95)
         fmt arr.(n - 1);
       ]
   in
-  B.vlist ~bars:false
-    [
-      B.center_h @@ B.text "Stats Table";
-      B.frame @@ B.grid_l ~bars:true (header :: List.map make_row rows);
-    ]
+  B.frame @@ B.grid_l ~bars:true (header :: List.map make_row rows)
+
+let with_title title b = B.vlist ~bars:false [ B.center_h @@ B.text title; b ]
 
 (** Render a histogram panel for one stat. *)
 let histogram_of_samples ?(bins = 10) ?(bar_width = 40) (label : string)
@@ -282,32 +279,36 @@ let sparklines_of_samples (stat_values : (string * float list) list) : B.t =
 let distr_of_gen ?(rand : Random.State.t = Random.State.make [| 0 |])
     ?(n = 1000) ?(width = 88) ?(max = true) ?(min = true) ?(mean = true)
     ?(med = false) ?(lo_p = 0.05) ?(hi_p = 0.95) ?q1_p ?q3_p
-    ?(display = [ Boxplot ]) ?(colors = false) (gen : 'a QCheck2.Gen.t)
+    ?(display : [ `Stat_table | `Boxplot | `Histogram | `Sparkline_hist ] =
+      `Boxplot) ?(colors = false) (gen : 'a QCheck2.Gen.t)
     (stats : 'a stat list) : string =
   let samples = QCheck2.Gen.generate ~rand ~n gen in
   let (stat_values : (string * float list) list) =
     List.map (fun (label, f) -> (label, List.map f samples)) stats
   in
-  let render_section : display -> B.t = function
-    | Table -> table_of_samples ~lo_p ~hi_p stat_values
-    | Histogram ->
-        B.vlist ~bars:false
-          (List.map
-             (fun (label, values) -> histogram_of_samples label values)
-             stat_values)
-    | Boxplot ->
-        boxplot_of_samples ~width ~max ~min ~mean ~med ~lo_p ~hi_p ?q1_p ?q3_p n
-          stat_values
-    | Sparkline -> sparklines_of_samples stat_values
+  let render : _ -> B.t = function
+    | `Stat_table ->
+        with_title "Stats Table" @@ table_of_samples ~lo_p ~hi_p stat_values
+    | `Histogram ->
+        with_title "Histogram"
+        @@ B.vlist ~bars:false
+             (List.map
+                (fun (label, values) -> histogram_of_samples label values)
+                stat_values)
+    | `Boxplot ->
+        with_title "Boxplot"
+        @@ boxplot_of_samples ~width ~max ~min ~mean ~med ~lo_p ~hi_p ?q1_p
+             ?q3_p n stat_values
+    | `Sparkline_hist ->
+        with_title "Histogram" @@ sparklines_of_samples stat_values
   in
-  let sections = List.map render_section display in
-  let report = B.(vlist ~bars:false sections) in
-  PrintBox_text.to_string_with ~style:colors report
+  PrintBox_text.to_string_with ~style:colors @@ render display
 
 let pp_gen ?(rand : Random.State.t = Random.State.make [| 0 |]) ?(n = 1000)
     ?(width = 88) ?(max = true) ?(min = true) ?(mean = true) ?(med = false)
-    ?(lo_p = 0.05) ?(hi_p = 0.95) ?q1_p ?q3_p ?(display = [ Boxplot ])
-    ?(colors = false) () fmt (gen : 'a QCheck2.Gen.t)
+    ?(lo_p = 0.05) ?(hi_p = 0.95) ?q1_p ?q3_p
+    ?(display : [ `Stat_table | `Boxplot | `Histogram | `Sparkline_hist ] =
+      `Boxplot) ?(colors = false) () fmt (gen : 'a QCheck2.Gen.t)
     (stats : 'a QCheck2.stat list) : unit =
   let stats =
     List.map (fun (label, f) -> (label, Fun.compose float_of_int f)) stats
@@ -420,6 +421,7 @@ let%test_module _ =
       print_endline report;
       [%expect
         {|
+                                                      Boxplot
         ┌────────────────────────────┬────────────────────────────────────────────────────────────────────┐
         │n=1000                      │↓-1                                                              35↓│
         ├────────────────────────────┼────────────────────────────────────────────────────────────────────┤
@@ -466,7 +468,7 @@ let%test_module _ =
 
     let%expect_test "table" =
       let rand = Random.State.make [| 0 |] in
-      let report = distr_of_gen ~rand ~n:1000 ~display:[ Table ] g tree_stats in
+      let report = distr_of_gen ~rand ~n:1000 ~display:`Stat_table g tree_stats in
       print_endline report;
       [%expect
         {|
@@ -505,11 +507,12 @@ let%test_module _ =
     let%expect_test "histogram" =
       let rand = Random.State.make [| 0 |] in
       let report =
-        distr_of_gen ~rand ~n:1000 ~display:[ Histogram ] g tree_stats
+        distr_of_gen ~rand ~n:1000 ~display:`Histogram g tree_stats
       in
       print_endline report;
       [%expect
         {|
+                                         Histogram
         ┌─────────────────────────────────────────────────────────────────────────┐
         │height                                                                   │
         │[       0,     1.4) ████████████████████████████████████████  478 (47.8%)│
@@ -684,11 +687,12 @@ let%test_module _ =
     let%expect_test "sparkline" =
       let rand = Random.State.make [| 0 |] in
       let report =
-        distr_of_gen ~rand ~n:1000 ~display:[ Sparkline ] g tree_stats
+        distr_of_gen ~rand ~n:1000 ~display:`Sparkline_hist g tree_stats
       in
       print_endline report;
       [%expect
         {|
+                         Histogram
         ┌────────────────────┬────────────────────┐
         │height              │█▃▂ ▃▂ ▁▂ ▁▁▁ ▂▁ ▁▁▁│
         ├────────────────────┼────────────────────┤

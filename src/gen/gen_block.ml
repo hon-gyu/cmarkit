@@ -190,6 +190,7 @@ let inline_stats : Inline.t QCheck2.stat list =
 let%expect_test _ =
   Pp_distr.pp_gen () Format.std_formatter gen_inline inline_stats;
   [%expect {|
+                                                 Boxplot
     ┌──────────────────────────┬────────────────────────────────────────────────────────────────────┐
     │n=1000                    │↓0                                                               30↓│
     ├──────────────────────────┼────────────────────────────────────────────────────────────────────┤
