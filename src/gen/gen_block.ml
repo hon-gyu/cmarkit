@@ -49,7 +49,7 @@ let gen_inline_leaf : Inline.t G.t =
 
 let gen_inline : Inline.t G.t =
   G.(
-    sized
+    sized_size nat_small
     @@ fix (fun self (n : int) ->
         match n with
         | 0 -> gen_inline_leaf
@@ -58,9 +58,8 @@ let gen_inline : Inline.t G.t =
             oneof_weighted
               [
                 (1, gen_inline_leaf);
-                (2, map inlines_of_is (list (self (n / 2))));
+                (2, map inlines_of_is (list_size (int_bound (n / 2)) (self (n / 2))));
               ]))
-
 
 (* Block
 =================== *)
@@ -70,8 +69,7 @@ let blank_line_egs : Block.t list =
   |> List.map (fun bl -> Block.(Blank_line (bl, Meta.none)))
 
 let thematic_break_egs : Block.t list =
-  Block.Thematic_break.
-    [ make (); make ~layout:"***" (); make ~layout:"___" () ]
+  Block.Thematic_break.[ make (); make ~layout:"***" (); make ~layout:"___" () ]
   |> List.map (fun tb -> Block.(Thematic_break (tb, Meta.none)))
 
 let code_block_egs : Block.t list =
@@ -106,7 +104,7 @@ let gen_block_leaf : Block.t G.t =
 
 let gen_block : Block.t G.t =
   G.(
-    sized
+    sized_size nat_small
     @@ fix (fun self (n : int) ->
         match n with
         | 0 -> gen_block_leaf
@@ -125,95 +123,103 @@ let gen_block : Block.t G.t =
                 (fun items ->
                   Block.(
                     List (Block.List'.make (`Unordered '-') items, Meta.none)))
-                (list gen_item)
+                (list_size (int_bound (n / 2)) gen_item)
             in
             oneof_weighted
               [
                 (1, gen_block_leaf);
-                (2, map blocks_of_bs (list (self (n / 2))));
+                (2, map blocks_of_bs (list_size (int_bound (n / 2)) (self (n / 2))));
                 (1, map block_quote_of_b (self (n / 2)));
                 (1, gen_list_block);
               ]))
 
-(* Distribution
-   ============ *)
-
-module Stats = struct
-  (* A histogram over constructor labels. [t] is a monoid: [empty] is the
-     unit and [merge] is associative, so traversals compose by folding. *)
-  type t = int String_map.t
-
-  let empty : t = String_map.empty
-  let singleton k : t = String_map.singleton k 1
-  let merge : t -> t -> t = String_map.union (fun _ a b -> Some (a + b))
-  let total t = String_map.fold (fun _ n acc -> acc + n) t 0
-
-  let rec of_inline = function
-    | Inline.Text _ -> singleton "Text"
-    | Inline.Code_span _ -> singleton "Code_span"
-    | Inline.Emphasis (e, _) ->
-        merge (singleton "Emphasis") (of_inline (Inline.Emphasis.inline e))
-    | Inline.Strong_emphasis (e, _) ->
-        merge
-          (singleton "Strong_emphasis")
-          (of_inline (Inline.Emphasis.inline e))
-    | Inline.Inlines (is, _) ->
-        List.fold_left (fun acc i -> merge acc (of_inline i)) empty is
-    | _ -> empty
-
-  let rec of_block = function
-    | Block.Paragraph (p, _) -> of_inline (Block.Paragraph.inline p)
-    | Block.Heading (h, _) -> of_inline (Block.Heading.inline h)
-    | Block.Block_quote (bq, _) -> of_block (Block.Block_quote.block bq)
-    | Block.Blocks (bs, _) ->
-        List.fold_left (fun acc b -> merge acc (of_block b)) empty bs
-    | Block.List (l, _) ->
-        List.fold_left
-          (fun acc (item, _) ->
-            merge acc (of_block (Block.List_item.block item)))
-          empty (Block.List'.items l)
-    | _ -> empty
-
-  let to_table t : string =
-    let n = total t in
-    let pct c =
-      if n = 0 then "0.0%"
-      else Printf.sprintf "%.1f%%" (100.0 *. float_of_int c /. float_of_int n)
+let inline_stats : Inline.t QCheck2.stat list =
+  let text_count =
+   fun (i : Inline.t) ->
+    let rec loop acc = function
+      | Inline.Text _ -> acc + 1
+      | Inline.Emphasis (e, _) -> loop acc (Inline.Emphasis.inline e)
+      | Inline.Strong_emphasis (e, _) -> loop acc (Inline.Emphasis.inline e)
+      | Inline.Inlines (is, _) -> List.fold_left loop acc is
+      | _ -> acc
     in
-    let rows =
-      String_map.bindings t |> List.sort (fun (_, a) (_, b) -> compare b a)
-    in
-    let open Ascii_table in
-    to_string_noattr ~bars:`Ascii ~limit_width_to:60
-      [
-        Column.create "constructor" fst;
-        Column.create "count" (fun (_, c) -> string_of_int c);
-        Column.create "share" (fun (_, c) -> pct c);
-      ]
-      rows
-end
-
-(* let%expect_test "inline constructor distribution" =
-  let rand = Random.State.make [| 42 |] in
-  let stats =
-    let rec loop acc k =
-      if k = 0 then acc
-      else
-        loop
-          (Stats.merge acc (Stats.of_block (G.generate1 ~rand gen_block)))
-          (k - 1)
-    in
-    loop Stats.empty 500
+    loop 0 i
   in
-  print_string (Stats.to_table stats);
-  [%expect
-    {|
-    |---------------------------------|
-    | constructor     | count | share |
-    |-----------------+-------+-------|
-    | Text            | 1258  | 68.6% |
-    | Code_span       | 295   | 16.1% |
-    | Strong_emphasis | 164   | 8.9%  |
-    | Emphasis        | 117   | 6.4%  |
-    |---------------------------------|
-    |}] *)
+  let emph_count =
+   fun (i : Inline.t) ->
+    let rec loop acc = function
+      | Inline.Emphasis (e, _) -> loop (acc + 1) (Inline.Emphasis.inline e)
+      | Inline.Strong_emphasis (e, _) -> loop acc (Inline.Emphasis.inline e)
+      | Inline.Inlines (is, _) -> List.fold_left loop acc is
+      | _ -> acc
+    in
+    loop 0 i
+  in
+  let strong_emph_count =
+   fun (i : Inline.t) ->
+    let rec loop acc = function
+      | Inline.Emphasis (e, _) -> loop acc (Inline.Emphasis.inline e)
+      | Inline.Strong_emphasis (e, _) ->
+          loop (acc + 1) (Inline.Emphasis.inline e)
+      | Inline.Inlines (is, _) -> List.fold_left loop acc is
+      | _ -> acc
+    in
+    loop 0 i
+  in
+  [
+    ("text_count", text_count);
+    ("emphasis_count", emph_count);
+    ("strong_emphasis_count", strong_emph_count);
+  ]
+;;
+
+let%expect_test _ =
+  let testsuite =
+    [
+      QCheck2.Test.make ~name:"Inline generator overview" ~stats:inline_stats
+        gen_inline (fun _ -> true);
+    ]
+  in
+  let rand = Random.State.make [| 42 |] in
+  ignore @@ QCheck_base_runner.run_tests ~colors:false ~verbose:true ~rand testsuite;
+  [%expect {|
+    generated error fail pass / total     time test name
+    [ ]    0    0    0    0 /  100     0.0s Inline generator overview
+    [✓]  100    0    0  100 /  100     0.0s Inline generator overview
+
+    +++ Stats for Inline generator overview ++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+    stats text_count:
+      num: 100, avg: 7.98, stddev: 31.45, median 0, min 0, max 214
+        0.. 10: #######################################################          90
+       11.. 21: #                                                                 3
+       22.. 32:                                                                   0
+       33.. 43:                                                                   0
+       44.. 54: #                                                                 2
+       55.. 65:                                                                   1
+       66.. 76:                                                                   1
+       77.. 87:                                                                   0
+       88.. 98:                                                                   0
+       99..109:                                                                   0
+      110..120:                                                                   1
+      121..131:                                                                   0
+      132..142:                                                                   0
+      143..153:                                                                   0
+      154..164:                                                                   0
+      165..175:                                                                   0
+      176..186:                                                                   1
+      187..197:                                                                   0
+      198..208:                                                                   0
+      209..219:                                                                   1
+
+    stats emphasis_count:
+      num: 100, avg: 0.00, stddev: 0.00, median 0, min 0, max 0
+      0: #######################################################         100
+
+    stats strong_emphasis_count:
+      num: 100, avg: 0.00, stddev: 0.00, median 0, min 0, max 0
+      0: #######################################################         100
+    ================================================================================
+    success (ran 1 tests)
+    |}];
+;;
