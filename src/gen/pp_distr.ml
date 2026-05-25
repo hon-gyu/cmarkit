@@ -2,6 +2,8 @@
 
 module B = PrintBox
 
+let spf = Printf.sprintf
+
 type 'a stat = string * ('a -> float)
 type display = Table | Boxplot | Histogram
 
@@ -18,31 +20,46 @@ let std_dev (arr : float array) (mean_val : float) : float =
   in
   sqrt variance
 
+(** Two-line axis ruler: [^] tick markers at the scale endpoints, then the
+    numeric labels beneath them. Prefixes the left side with [n=...]. *)
+let axis_header ~(width : int) ~(n : int) ~(scale_lo : float)
+    ~(scale_hi : float) : B.t =
+  let lo_str = Printf.sprintf "%.4g" scale_lo in
+  let hi_str = Printf.sprintf "%.4g" scale_hi in
+  let gap = width - String.length lo_str - String.length hi_str in
+  let axis_str = spf "|%s%s%s|" lo_str (String.make gap ' ') hi_str in
+  let pad20 s = spf "%-20s" s in
+  B.(
+    hlist ~bars:false [ text (pad20 (spf "n=%d" n)); text axis_str ])
+
 (** Draw a single box-plot row as a string of [width] chars, given integer
-    positions already mapped to [0..width-1]. [mean] is marked with [+],
-    [med] with [|]; both are optional. *)
-let render_boxplot ~width ~lo ~hi ?q1 ?mean ?med ?q3 () =
-  let line = Bytes.make width '-' in
-  (match (q1, q3) with
-  | Some q1, Some q3 ->
-      for i = q1 to q3 do
-        Bytes.set line i ' '
-      done;
-      Bytes.set line q1 '[';
-      Bytes.set line q3 ']'
-  | _ -> ());
-  Bytes.set line lo '|';
-  Bytes.set line hi '|';
-  (match mean with Some m -> Bytes.set line m '+' | None -> ());
-  (match med with Some m -> Bytes.set line m '|' | None -> ());
+    positions already mapped to [0..width-1]. [mean] is marked with [+], [med]
+    with [|]; both are optional. *)
+let render_boxplot ~width ~lo ~hi ?mean ?med ?q1 ?q3 () =
+  let line = Bytes.make width ' ' in
+  Bytes.fill line (lo + 1) (hi - lo - 1) '-';
+  Bytes.set line lo '[';
+  Bytes.set line hi ']';
+  (match q1 with
+  | Some m -> Bytes.set line m '<'
+  | None -> ());
+  (match q3 with
+  | Some m -> Bytes.set line m '>'
+  | None -> ());
+  (match mean with
+  | Some m -> Bytes.set line m '+'
+  | None -> ());
+  (match med with
+  | Some m -> Bytes.set line m '*'
+  | None -> ());
   Bytes.to_string line
 
 (** Render one boxplot row. [scale_lo]/[scale_hi] override the axis endpoints
     for column mapping (universal scale across multiple stats); when absent the
     per-stat [lo_p]/[hi_p] percentiles define the axis. *)
-let boxplot_of_samples ?(width = 88) ?(max = true) ?(min = true)
-    ?(mean = true) ?(med = false) ?(lo_p = 0.05) ?(hi_p = 0.95) ?q1_p ?q3_p
-    ?scale_lo ?scale_hi (label : string) (samples : float list) : B.t =
+let boxplot_of_samples ?(width = 88) ?(max = true) ?(min = true) ?(mean = true)
+    ?(med = false) ?(lo_p = 0.05) ?(hi_p = 0.95) ?q1_p ?q3_p ?scale_lo ?scale_hi
+    (label : string) (samples : float list) : B.t =
   let arr = Array.of_list samples in
   Array.sort Float.compare arr;
   let n = Array.length arr in
@@ -62,32 +79,33 @@ let boxplot_of_samples ?(width = 88) ?(max = true) ?(min = true)
         (int_of_float ((v -. slo) *. float_of_int (width - 1) /. range))
   in
   let plot =
-    render_boxplot ~width ~lo:(col lo) ~hi:(col hi)
-      ?q1:(Option.map col q1)
+    render_boxplot ~width ~lo:(col lo) ~hi:(col hi) ?q1:(Option.map col q1)
       ~mean:(col mean_val)
       ?med:(if med then Some (col median) else None)
       ?q3:(Option.map col q3) ()
   in
-  let stats =
-    let buf = Buffer.create 64 in
-    Buffer.add_string buf (Printf.sprintf "n=%d" n);
-    if min then Buffer.add_string buf (Printf.sprintf "  lo=%-8.3g" lo);
-    if max then Buffer.add_string buf (Printf.sprintf "  hi=%-8.3g" hi);
-    if mean then Buffer.add_string buf (Printf.sprintf "  mean=%-8.3g" mean_val);
-    if med then Buffer.add_string buf (Printf.sprintf "  med=%-8.3g" median);
-    (match q1 with
-    | Some v -> Buffer.add_string buf (Printf.sprintf "  Q1=%-8.3g" v)
-    | None -> ());
-    (match q3 with
-    | Some v -> Buffer.add_string buf (Printf.sprintf "  Q3=%-8.3g" v)
-    | None -> ());
-    Buffer.contents buf
+  let (stats : string) =
+    let int_of_p (p : float) : int =
+      p *. 100.0 |> Float.round |> int_of_float
+    in
+    let parts =
+      List.filter_map Fun.id
+        [
+          (if min then Some (spf "p%d=%-3.2f" (int_of_p lo_p) lo) else None);
+          (if max then Some (spf "p%d=%-3.2f" (int_of_p hi_p) hi) else None);
+          (if mean then Some (spf "mu=%-3.2f" mean_val) else None);
+          (if med then Some (spf "med=%-3.2f" median) else None);
+          Option.map (spf "Q1=%-3.2f") q1;
+          Option.map (spf "Q3=%-3.2f") q3;
+        ]
+    in
+    " └" ^ String.concat "|" parts
   in
   B.(
     vlist ~bars:false
       [
         hlist ~bars:false [ text (Printf.sprintf "%-20s" label); text plot ];
-        text (String.make 20 ' ' ^ stats);
+        text stats;
       ])
 
 (** Render all stats as a describe()-style table (n, mean, std, min, pLO, q1,
@@ -147,7 +165,9 @@ let histogram_of_samples ?(bins = 20) ?(bar_width = 40) (label : string)
     (fun v ->
       let b =
         if range = 0.0 then bins / 2
-        else Int.min (bins - 1) (int_of_float ((v -. lo) /. range *. float_of_int bins))
+        else
+          Int.min (bins - 1)
+            (int_of_float ((v -. lo) /. range *. float_of_int bins))
       in
       counts.(b) <- counts.(b) + 1)
     arr;
@@ -188,12 +208,11 @@ let pp_gen_distr ?(rand : Random.State.t = Random.State.make [| 0 |])
              (fun (label, values) -> histogram_of_samples label values)
              stat_values)
     | Boxplot ->
-        let all_arr =
-          Array.of_list (List.concat_map snd stat_values)
-        in
+        let all_arr = Array.of_list (List.concat_map snd stat_values) in
         Array.sort Float.compare all_arr;
         let scale_lo = percentile all_arr lo_p in
         let scale_hi = percentile all_arr hi_p in
+        let header = axis_header ~width ~n ~scale_lo ~scale_hi in
         let boxes =
           List.map
             (fun (label, values) ->
@@ -201,7 +220,7 @@ let pp_gen_distr ?(rand : Random.State.t = Random.State.make [| 0 |])
                 ?q3_p ~scale_lo ~scale_hi label values)
             stat_values
         in
-        B.(frame (vlist ~bars:false boxes))
+        B.(frame (vlist ~bars:false (header :: boxes)))
   in
   let sections = List.map render_section display in
   let report = B.(vlist ~bars:false sections) in
@@ -218,14 +237,14 @@ let%test_module _ =
       QCheck2.Gen.(
         sized
         @@ fix (fun self n ->
-               match n with
-               | 0 -> map leaf nat
-               | n ->
-                   oneof_weighted
-                     [
-                       (1, map leaf nat);
-                       (2, map2 node (self (n / 2)) (self (n / 2)));
-                     ]))
+            match n with
+            | 0 -> map leaf nat
+            | n ->
+                oneof_weighted
+                  [
+                    (1, map leaf nat);
+                    (2, map2 node (self (n / 2)) (self (n / 2)));
+                  ]))
 
     let rec height = function
       | Leaf _ -> 0
@@ -309,42 +328,45 @@ let%test_module _ =
       let rand = Random.State.make [| 0 |] in
       let report = pp_gen_distr ~rand ~n:1000 g tree_stats in
       print_endline report;
-      [%expect {|
-        ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-        │height              --|------+----------------|-------------------------------------------------------------│
-        │                    n=1000  lo=0         hi=10        mean=2.9                                              │
-        │leaf_count          ----|-------------------------------------------------------------+--------------------|│
-        │                    n=1000  lo=1         hi=143       mean=26.5                                             │
-        │internal_count      --|-------------------------------------------------------------+----------------------|│
-        │                    n=1000  lo=0         hi=142       mean=25.5                                             │
-        │min_depth           --|-+--|--------------------------------------------------------------------------------│
-        │                    n=1000  lo=0         hi=2         mean=0.935                                            │
-        │max_depth           --|------+----------------|-------------------------------------------------------------│
-        │                    n=1000  lo=0         hi=10        mean=2.9                                              │
-        │is_perfect          |-+-|-----------------------------------------------------------------------------------│
-        │                    n=1000  lo=-1        hi=1         mean=0.052                                            │
-        │balance_factor      --|----+----------------|---------------------------------------------------------------│
-        │                    n=1000  lo=0         hi=9         mean=1.96                                             │
-        │max_width           ----|----------------+-----------------------------------------------------------------|│
-        │                    n=1000  lo=1         hi=40        mean=8.08                                             │
-        │left_spine          --|---+-------|-------------------------------------------------------------------------│
-        │                    n=1000  lo=0         hi=5         mean=1.5                                              │
-        │right_spine         --|---+-------|-------------------------------------------------------------------------│
-        │                    n=1000  lo=0         hi=5         mean=1.53                                             │
-        │is_left_skewed      |--+|-----------------------------------------------------------------------------------│
-        │                    n=1000  lo=-1        hi=1         mean=0.242                                            │
-        │avg_leaf_depth      --|--+------|---------------------------------------------------------------------------│
-        │                    n=1000  lo=0         hi=4.31      mean=1.29                                             │
-        │total_path_length   --|------------------------------------------------------------------------------------+│
-        │                    n=1000  lo=0         hi=636       mean=103                                              │
-        └────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+      [%expect
+        {|
+        ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+        │n=1000              |-1                                                                                    35|│
+        │height                [------+----------------]                                                               │
+        │ └p5=0.00|p95=10.00|mu=2.90                                                                                   │
+        │leaf_count              [-------------------------------------------------------------+--------------------]  │
+        │ └p5=1.00|p95=143.00|mu=26.51                                                                                 │
+        │internal_count        [-------------------------------------------------------------+----------------------]  │
+        │ └p5=0.00|p95=142.00|mu=25.51                                                                                 │
+        │min_depth             [-+--]                                                                                  │
+        │ └p5=0.00|p95=2.00|mu=0.94                                                                                    │
+        │max_depth             [------+----------------]                                                               │
+        │ └p5=0.00|p95=10.00|mu=2.90                                                                                   │
+        │is_perfect          [-+-]                                                                                     │
+        │ └p5=-1.00|p95=1.00|mu=0.05                                                                                   │
+        │balance_factor        [----+----------------]                                                                 │
+        │ └p5=0.00|p95=9.00|mu=1.96                                                                                    │
+        │max_width               [----------------+-----------------------------------------------------------------]  │
+        │ └p5=1.00|p95=40.00|mu=8.08                                                                                   │
+        │left_spine            [---+-------]                                                                           │
+        │ └p5=0.00|p95=5.00|mu=1.50                                                                                    │
+        │right_spine           [---+-------]                                                                           │
+        │ └p5=0.00|p95=5.00|mu=1.53                                                                                    │
+        │is_left_skewed      [--+]                                                                                     │
+        │ └p5=-1.00|p95=1.00|mu=0.24                                                                                   │
+        │avg_leaf_depth        [--+------]                                                                             │
+        │ └p5=0.00|p95=4.31|mu=1.29                                                                                    │
+        │total_path_length     [------------------------------------------------------------------------------------+  │
+        │ └p5=0.00|p95=636.00|mu=102.72                                                                                │
+        └──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
         |}]
 
     let%expect_test "table" =
       let rand = Random.State.make [| 0 |] in
       let report = pp_gen_distr ~rand ~n:1000 ~display:[ Table ] g tree_stats in
       print_endline report;
-      [%expect {|
+      [%expect
+        {|
                          │n   │mean │std   │min│p5│q1│med│q3   │p95  │max
         ─────────────────┼────┼─────┼──────┼───┼──┼──┼───┼─────┼─────┼─────
         height           │1000│2.898│3.38  │0  │0 │0 │2  │4    │10   │14
@@ -380,7 +402,8 @@ let%test_module _ =
         pp_gen_distr ~rand ~n:1000 ~display:[ Histogram ] g tree_stats
       in
       print_endline report;
-      [%expect {|
+      [%expect
+        {|
         ┌─────────────────────────────────────────────────────────────────────────┐
         │height                                                                   │
         │[       0,     0.7) ########################################  369 (36.9%)│
