@@ -6,14 +6,23 @@ type result =
 
 type t = { name : string; check : Block.t -> result }
 
+let mk_qcheck_test (t : t) : QCheck2.Test.t =
+  QCheck2.Test.make ~name:t.name
+    ~print:(fun b -> Format.asprintf "%a" Pp.pp_block b)
+    Gen_block.gen_block
+    (Fun.compose
+       (fun r ->
+         match r with
+         | Pass -> true
+         | _ -> false)
+       t.check)
+
 (* Helpers
 =========== *)
 
 let canonical b = Format.asprintf "%a" Pp.pp_block (Block.normalize b)
 let block_equal a b = String.equal (canonical a) (canonical b)
-
-let to_commonmark b =
-  b |> Doc.make |> Cmarkit_commonmark.of_doc
+let to_commonmark b = b |> Doc.make |> Cmarkit_commonmark.of_doc
 
 let reparse (b : Block.t) : Block.t =
   b |> to_commonmark |> Doc.of_string |> Doc.block
@@ -111,13 +120,13 @@ let uniformity_block_quote =
   uniformity_with ~name:"uniformity/block_quote" ~wrap:wrap_block_quote
     ~unwrap:unwrap_block_quote
 
-(** Wrapping [b] in a single-item unordered list then round-tripping
-    yields a list whose first item's block matches [b]. *)
+(** Wrapping [b] in a single-item unordered list then round-tripping yields a
+    list whose first item's block matches [b]. *)
 let uniformity_list_item =
   uniformity_with ~name:"uniformity/list_item" ~wrap:wrap_list_item
     ~unwrap:unwrap_list_item
 
-let all =
+let (all : t list) =
   [
     roundtrip;
     normalize_idempotent;
@@ -126,11 +135,21 @@ let all =
     uniformity_list_item;
   ]
 
-let%expect_test "roundtrip on a small fixture" =
-  let md = "# Hello\n\nfoo bar\n" in
-  let b = Doc.block (Doc.of_string md) in
-  let r = roundtrip.check b in
-  (match r with
-  | Pass -> print_endline "Pass"
-  | Fail { reason; _ } -> Printf.printf "Fail: %s\n" reason);
-  [%expect {| Pass |}]
+let%expect_test _ =
+  let rand = Random.State.make [| 0 |] in
+  ignore
+  @@ QCheck_base_runner.run_tests ~colors:false ~rand
+       [ mk_qcheck_test render_determinism ];
+  [%expect
+    {|
+    --- Failure --------------------------------------------------------------------
+
+    Test render_determinism failed (12 shrink steps):
+
+    Blocks
+      Blank_line
+      Blank_line
+      Heading H1 " "
+    ================================================================================
+    failure (1 tests failed, 0 tests errored, ran 1 tests)
+    |}]
