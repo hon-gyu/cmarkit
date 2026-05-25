@@ -1,4 +1,21 @@
-(** {0:distr Visualise distributions} *)
+(** {0:distr Visualise distributions}
+
+    Renders statistical summaries of sampled float-valued measurements.
+
+    The entry point is {!pp_gen_distr}, which generates [n] samples from a
+    [QCheck2] generator, applies a list of named stat functions, and returns a
+    formatted string.  The [display] parameter selects one or more panels:
+
+    - {!Boxplot} — a shared-axis grid of box-and-whisker rows.  The axis is the
+      [lo_p]/[hi_p] percentile range pooled across all stats.  Whisker endpoints
+      that exceed the scale are marked with [\~]; point markers ([+] mean,
+      [*] median) are omitted when out of range.
+    - {!Table} — a [describe()]-style summary table (n, mean, std, min, pLO, q1,
+      med, q3, pHI, max).
+    - {!Histogram} — one framed histogram panel per stat, with [█] bars and
+      right-aligned count/percentage columns.
+    - {!Sparkline} — a compact table with one row per stat showing a
+      [▁▂▃▄▅▆▇█] sparkline (one character per bin). *)
 
 module B = PrintBox
 
@@ -40,7 +57,8 @@ let render_boxplot ~width ~scale_lo ~scale_hi ~lo ~hi ?mean ?med ?q1 ?q3 () =
   let col_clamp v = Int.max 0 (Int.min (width - 1) (col v)) in
   let line = Bytes.make width ' ' in
   let lo_col = col_clamp lo and hi_col = col_clamp hi in
-  Bytes.fill line (lo_col + 1) (hi_col - lo_col - 1) '-';
+  if hi_col > lo_col + 1 then
+    Bytes.fill line (lo_col + 1) (hi_col - lo_col - 1) '-';
   Bytes.set line lo_col (if lo < scale_lo then '~' else '[');
   Bytes.set line hi_col (if hi > scale_hi then '~' else ']');
   let set_if_visible v c =
@@ -305,7 +323,7 @@ let distr_of_gen ?(rand : Random.State.t = Random.State.make [| 0 |])
   PrintBox_text.to_string_with ~style:colors @@ render display
 
 let pp_gen ?(rand : Random.State.t = Random.State.make [| 0 |]) ?(n = 1000)
-    ?(width = 88) ?(max = true) ?(min = true) ?(mean = true) ?(med = false)
+    ?(width = 80) ?(max = true) ?(min = true) ?(mean = true) ?(med = false)
     ?(lo_p = 0.05) ?(hi_p = 0.95) ?q1_p ?q3_p
     ?(display : [ `Stat_table | `Boxplot | `Histogram | `Sparkline_hist ] =
       `Boxplot) ?(colors = false) () fmt (gen : 'a QCheck2.Gen.t)
