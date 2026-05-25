@@ -29,9 +29,9 @@ let axis_header ~(width : int) ~(scale_lo : float) ~(scale_hi : float) : B.t =
   let axis_str = spf "↓%s%s%s↓" lo_str (String.make gap ' ') hi_str in
   B.text axis_str
 
-(** Draw a box-plot row of [width] chars given float values and a scale.
-    Whisker endpoints use [~] when clipped outside the scale. Point markers
-    ([+] mean, [*] med, [<] q1, [>] q3) are omitted when out of range. *)
+(** Draw a box-plot row of [width] chars given float values and a scale. Whisker
+    endpoints use [~] when clipped outside the scale. Point markers ([+] mean,
+    [*] med, [<] q1, [>] q3) are omitted when out of range. *)
 let render_boxplot ~width ~scale_lo ~scale_hi ~lo ~hi ?mean ?med ?q1 ?q3 () =
   let range = scale_hi -. scale_lo in
   let col v =
@@ -48,10 +48,18 @@ let render_boxplot ~width ~scale_lo ~scale_hi ~lo ~hi ?mean ?med ?q1 ?q3 () =
     let p = col v in
     if p >= 0 && p < width then Bytes.set line p c
   in
-  (match q1 with Some v -> set_if_visible v '<' | None -> ());
-  (match q3 with Some v -> set_if_visible v '>' | None -> ());
-  (match mean with Some v -> set_if_visible v '+' | None -> ());
-  (match med with Some v -> set_if_visible v '*' | None -> ());
+  (match q1 with
+  | Some v -> set_if_visible v '<'
+  | None -> ());
+  (match q3 with
+  | Some v -> set_if_visible v '>'
+  | None -> ());
+  (match mean with
+  | Some v -> set_if_visible v '+'
+  | None -> ());
+  (match med with
+  | Some v -> set_if_visible v '*'
+  | None -> ());
   Bytes.to_string line
 
 (** Render one boxplot row. [scale_lo]/[scale_hi] override the axis endpoints
@@ -72,8 +80,7 @@ let boxplot_of_samples_row ?(width = 88) ?(max = true) ?(min = true)
   let slo = Option.value ~default:lo scale_lo in
   let shi = Option.value ~default:hi scale_hi in
   let plot =
-    render_boxplot ~width ~scale_lo:slo ~scale_hi:shi ~lo ~hi
-      ?q1 ?q3
+    render_boxplot ~width ~scale_lo:slo ~scale_hi:shi ~lo ~hi ?q1 ?q3
       ?mean:(if mean then Some mean_val else None)
       ?med:(if med then Some median else None)
       ()
@@ -117,17 +124,21 @@ let boxplot_of_samples ?(width = 88) ?(max = true) ?(min = true) ?(mean = true)
   let stats_str_lst, box_str_lst =
     List.map
       (fun (_label, values) ->
-        boxplot_of_samples_row ~width:value_width ~max ~min ~mean ~med ~lo_p ~hi_p ?q1_p
-          ?q3_p ~scale_lo:slo ~scale_hi:shi values)
+        boxplot_of_samples_row ~width:value_width ~max ~min ~mean ~med ~lo_p
+          ~hi_p ?q1_p ?q3_p ~scale_lo:slo ~scale_hi:shi values)
       stat_values
     |> List.split
   in
   let (lt_header : B.t) = B.text (spf "n=%-*d" label_width n) in
-  let (rt_header : B.t) = axis_header ~width:value_width ~scale_lo:slo ~scale_hi:shi in
+  let (rt_header : B.t) =
+    axis_header ~width:value_width ~scale_lo:slo ~scale_hi:shi
+  in
   let (header : B.t array) = [| lt_header; rt_header |] in
   let (ld_labels : B.t list) =
     let labels = stat_values |> List.map fst in
-     List.map2 (fun label stat -> B.text (spf "%-*s\n%s" label_width label stat)) labels stats_str_lst
+    List.map2
+      (fun label stat -> B.text (spf "%-*s\n%s" label_width label stat))
+      labels stats_str_lst
   in
   let (rd_boxes : B.t list) = List.map (fun s -> B.text s) box_str_lst in
   let (boxes : B.t array array) =
@@ -178,10 +189,11 @@ let table_of_samples ?(lo_p = 0.05) ?(hi_p = 0.95)
         fmt arr.(n - 1);
       ]
   in
-  B.vlist ~bars:false [
-    B.center_h @@ B.text "Stats Table";
-    B.frame @@ B.grid_l ~bars:true (header :: List.map make_row rows);
-  ]
+  B.vlist ~bars:false
+    [
+      B.center_h @@ B.text "Stats Table";
+      B.frame @@ B.grid_l ~bars:true (header :: List.map make_row rows);
+    ]
 
 (** Render a histogram panel for one stat. *)
 let histogram_of_samples ?(bins = 10) ?(bar_width = 40) (label : string)
@@ -236,7 +248,9 @@ let sparkline_of_samples ?(bins = 20) (samples : float list) : string =
     (fun v ->
       let b =
         if range = 0.0 then bins / 2
-        else Int.min (bins - 1) (int_of_float ((v -. lo) /. range *. float_of_int bins))
+        else
+          Int.min (bins - 1)
+            (int_of_float ((v -. lo) /. range *. float_of_int bins))
       in
       counts.(b) <- counts.(b) + 1)
     arr;
@@ -265,7 +279,7 @@ let sparklines_of_samples (stat_values : (string * float list) list) : B.t =
   in
   B.frame @@ B.grid ~bars:true (Array.of_list rows)
 
-let pp_gen_distr ?(rand : Random.State.t = Random.State.make [| 0 |])
+let distr_of_gen ?(rand : Random.State.t = Random.State.make [| 0 |])
     ?(n = 1000) ?(width = 88) ?(max = true) ?(min = true) ?(mean = true)
     ?(med = false) ?(lo_p = 0.05) ?(hi_p = 0.95) ?q1_p ?q3_p
     ?(display = [ Boxplot ]) ?(colors = false) (gen : 'a QCheck2.Gen.t)
@@ -289,6 +303,18 @@ let pp_gen_distr ?(rand : Random.State.t = Random.State.make [| 0 |])
   let sections = List.map render_section display in
   let report = B.(vlist ~bars:false sections) in
   PrintBox_text.to_string_with ~style:colors report
+
+let pp_gen ?(rand : Random.State.t = Random.State.make [| 0 |]) ?(n = 1000)
+    ?(width = 88) ?(max = true) ?(min = true) ?(mean = true) ?(med = false)
+    ?(lo_p = 0.05) ?(hi_p = 0.95) ?q1_p ?q3_p ?(display = [ Boxplot ])
+    ?(colors = false) () fmt (gen : 'a QCheck2.Gen.t)
+    (stats : 'a QCheck2.stat list) : unit =
+  let stats =
+    List.map (fun (label, f) -> (label, Fun.compose float_of_int f)) stats
+  in
+  Format.fprintf fmt "%s"
+    (distr_of_gen ~rand ~n ~width ~max ~min ~mean ~med ~lo_p ~hi_p ?q1_p ?q3_p
+       ~display ~colors gen stats)
 
 let%test_module _ =
   (module struct
@@ -390,7 +416,7 @@ let%test_module _ =
 
     let%expect_test "boxplot" =
       let rand = Random.State.make [| 0 |] in
-      let report = pp_gen_distr ~rand ~n:1000 g tree_stats in
+      let report = distr_of_gen ~rand ~n:1000 g tree_stats in
       print_endline report;
       [%expect
         {|
@@ -440,7 +466,7 @@ let%test_module _ =
 
     let%expect_test "table" =
       let rand = Random.State.make [| 0 |] in
-      let report = pp_gen_distr ~rand ~n:1000 ~display:[ Table ] g tree_stats in
+      let report = distr_of_gen ~rand ~n:1000 ~display:[ Table ] g tree_stats in
       print_endline report;
       [%expect
         {|
@@ -479,7 +505,7 @@ let%test_module _ =
     let%expect_test "histogram" =
       let rand = Random.State.make [| 0 |] in
       let report =
-        pp_gen_distr ~rand ~n:1000 ~display:[ Histogram ] g tree_stats
+        distr_of_gen ~rand ~n:1000 ~display:[ Histogram ] g tree_stats
       in
       print_endline report;
       [%expect
@@ -654,13 +680,15 @@ let%test_module _ =
         │[ 3.8e+03,4.22e+03)                                             2 (0.2%) │
         └─────────────────────────────────────────────────────────────────────────┘
         |}]
+
     let%expect_test "sparkline" =
       let rand = Random.State.make [| 0 |] in
       let report =
-        pp_gen_distr ~rand ~n:1000 ~display:[ Sparkline ] g tree_stats
+        distr_of_gen ~rand ~n:1000 ~display:[ Sparkline ] g tree_stats
       in
       print_endline report;
-      [%expect {|
+      [%expect
+        {|
         ┌────────────────────┬────────────────────┐
         │height              │█▃▂ ▃▂ ▁▂ ▁▁▁ ▂▁ ▁▁▁│
         ├────────────────────┼────────────────────┤
