@@ -22,15 +22,12 @@ let std_dev (arr : float array) (mean_val : float) : float =
 
 (** Two-line axis ruler: [^] tick markers at the scale endpoints, then the
     numeric labels beneath them. Prefixes the left side with [n=...]. *)
-let axis_header ~(width : int) ~(n : int) ~(scale_lo : float)
-    ~(scale_hi : float) : B.t =
+let axis_header ~(width : int) ~(scale_lo : float) ~(scale_hi : float) : B.t =
   let lo_str = Printf.sprintf "%.4g" scale_lo in
   let hi_str = Printf.sprintf "%.4g" scale_hi in
   let gap = width - String.length lo_str - String.length hi_str in
-  let axis_str = spf "|%s%s%s|" lo_str (String.make gap ' ') hi_str in
-  let pad20 s = spf "%-20s" s in
-  B.(
-    hlist ~bars:false [ text (pad20 (spf "n=%d" n)); text axis_str ])
+  let axis_str = spf "↓%s%s%s↓" lo_str (String.make gap ' ') hi_str in
+  B.text axis_str
 
 (** Draw a single box-plot row as a string of [width] chars, given integer
     positions already mapped to [0..width-1]. [mean] is marked with [+], [med]
@@ -57,9 +54,9 @@ let render_boxplot ~width ~lo ~hi ?mean ?med ?q1 ?q3 () =
 (** Render one boxplot row. [scale_lo]/[scale_hi] override the axis endpoints
     for column mapping (universal scale across multiple stats); when absent the
     per-stat [lo_p]/[hi_p] percentiles define the axis. *)
-let boxplot_of_samples ?(width = 88) ?(max = true) ?(min = true) ?(mean = true)
-    ?(med = false) ?(lo_p = 0.05) ?(hi_p = 0.95) ?q1_p ?q3_p ?scale_lo ?scale_hi
-    (label : string) (samples : float list) : B.t =
+let boxplot_of_samples_row ?(width = 88) ?(max = true) ?(min = true)
+    ?(mean = true) ?(med = false) ?(lo_p = 0.05) ?(hi_p = 0.95) ?q1_p ?q3_p
+    ?scale_lo ?scale_hi (samples : float list) : string * string =
   let arr = Array.of_list samples in
   Array.sort Float.compare arr;
   let n = Array.length arr in
@@ -99,14 +96,46 @@ let boxplot_of_samples ?(width = 88) ?(max = true) ?(min = true) ?(mean = true)
           Option.map (spf "Q3=%-3.2f") q3;
         ]
     in
-    " └" ^ String.concat "|" parts
+    String.concat "|" parts
   in
-  B.(
-    vlist ~bars:false
-      [
-        hlist ~bars:false [ text (Printf.sprintf "%-20s" label); text plot ];
-        text stats;
-      ])
+  (stats, plot)
+
+let boxplot_of_samples ?(width = 88) ?(max = true) ?(min = true) ?(mean = true)
+    ?(med = false) ?(lo_p = 0.05) ?(hi_p = 0.95) ?q1_p ?q3_p
+    ?(scale_lo : float option) ?(scale_hi : float option) (n : int)
+    (stat_values : (string * float list) list) : B.t =
+  let slo, shi =
+    match (scale_lo, scale_hi) with
+    | Some lo, Some hi -> (lo, hi)
+    | _ ->
+        let all_arr = Array.of_list (List.concat_map snd stat_values) in
+        Array.sort Float.compare all_arr;
+        let slo = percentile all_arr lo_p in
+        let shi = percentile all_arr hi_p in
+        (Option.value ~default:slo scale_lo, Option.value ~default:shi scale_hi)
+  in
+  let stats_str_lst, box_str_lst =
+    List.map
+      (fun (_label, values) ->
+        boxplot_of_samples_row ~width ~max ~min ~mean ~med ~lo_p ~hi_p ?q1_p
+          ?q3_p ~scale_lo:slo ~scale_hi:shi values)
+      stat_values
+    |> List.split
+  in
+  let (lt_header : B.t) = B.text (spf "n=%d" n) in
+  let (rt_header : B.t) = axis_header ~width ~scale_lo:slo ~scale_hi:shi in
+  let (header : B.t array) = [| lt_header; rt_header |] in
+  let (ld_labels : B.t list) =
+    let labels = stat_values |> List.map fst in
+     List.map2 (fun label stat -> B.text (spf "%s\n%s" label stat)) labels stats_str_lst
+  in
+  let (rd_boxes : B.t list) = List.map (fun s -> B.text s) box_str_lst in
+  let (boxes : B.t array array) =
+    List.map2 (fun label box -> [| label; box |]) ld_labels rd_boxes
+    |> Array.of_list
+  in
+  let grid_items = Array.append [| header |] boxes in
+  B.frame @@ B.grid ~bars:true grid_items
 
 (** Render all stats as a describe()-style table (n, mean, std, min, pLO, q1,
     med, q3, pHI, max). *)
@@ -197,10 +226,10 @@ let pp_gen_distr ?(rand : Random.State.t = Random.State.make [| 0 |])
     ?(display = [ Boxplot ]) ?(colors = false) (gen : 'a QCheck2.Gen.t)
     (stats : 'a stat list) : string =
   let samples = QCheck2.Gen.generate ~rand ~n gen in
-  let stat_values =
+  let (stat_values : (string * float list) list) =
     List.map (fun (label, f) -> (label, List.map f samples)) stats
   in
-  let render_section = function
+  let render_section : display -> B.t = function
     | Table -> table_of_samples ~lo_p ~hi_p stat_values
     | Histogram ->
         B.vlist ~bars:false
@@ -208,19 +237,8 @@ let pp_gen_distr ?(rand : Random.State.t = Random.State.make [| 0 |])
              (fun (label, values) -> histogram_of_samples label values)
              stat_values)
     | Boxplot ->
-        let all_arr = Array.of_list (List.concat_map snd stat_values) in
-        Array.sort Float.compare all_arr;
-        let scale_lo = percentile all_arr lo_p in
-        let scale_hi = percentile all_arr hi_p in
-        let header = axis_header ~width ~n ~scale_lo ~scale_hi in
-        let boxes =
-          List.map
-            (fun (label, values) ->
-              boxplot_of_samples ~width ~max ~min ~mean ~med ~lo_p ~hi_p ?q1_p
-                ?q3_p ~scale_lo ~scale_hi label values)
-            stat_values
-        in
-        B.(frame (vlist ~bars:false (header :: boxes)))
+        boxplot_of_samples ~width ~max ~min ~mean ~med ~lo_p ~hi_p ?q1_p ?q3_p n
+          stat_values
   in
   let sections = List.map render_section display in
   let report = B.(vlist ~bars:false sections) in
@@ -330,35 +348,48 @@ let%test_module _ =
       print_endline report;
       [%expect
         {|
-        ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-        │n=1000              |-1                                                                                    35|│
-        │height                [------+----------------]                                                               │
-        │ └p5=0.00|p95=10.00|mu=2.90                                                                                   │
-        │leaf_count              [-------------------------------------------------------------+--------------------]  │
-        │ └p5=1.00|p95=143.00|mu=26.51                                                                                 │
-        │internal_count        [-------------------------------------------------------------+----------------------]  │
-        │ └p5=0.00|p95=142.00|mu=25.51                                                                                 │
-        │min_depth             [-+--]                                                                                  │
-        │ └p5=0.00|p95=2.00|mu=0.94                                                                                    │
-        │max_depth             [------+----------------]                                                               │
-        │ └p5=0.00|p95=10.00|mu=2.90                                                                                   │
-        │is_perfect          [-+-]                                                                                     │
-        │ └p5=-1.00|p95=1.00|mu=0.05                                                                                   │
-        │balance_factor        [----+----------------]                                                                 │
-        │ └p5=0.00|p95=9.00|mu=1.96                                                                                    │
-        │max_width               [----------------+-----------------------------------------------------------------]  │
-        │ └p5=1.00|p95=40.00|mu=8.08                                                                                   │
-        │left_spine            [---+-------]                                                                           │
-        │ └p5=0.00|p95=5.00|mu=1.50                                                                                    │
-        │right_spine           [---+-------]                                                                           │
-        │ └p5=0.00|p95=5.00|mu=1.53                                                                                    │
-        │is_left_skewed      [--+]                                                                                     │
-        │ └p5=-1.00|p95=1.00|mu=0.24                                                                                   │
-        │avg_leaf_depth        [--+------]                                                                             │
-        │ └p5=0.00|p95=4.31|mu=1.29                                                                                    │
-        │total_path_length     [------------------------------------------------------------------------------------+  │
-        │ └p5=0.00|p95=636.00|mu=102.72                                                                                │
-        └──────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+        ┌────────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────┐
+        │n=1000                      │↓-1                                                                                    35↓│
+        ├────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────┤
+        │height                      │  [------+----------------]                                                               │
+        │p5=0.00|p95=10.00|mu=2.90   │                                                                                          │
+        ├────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────┤
+        │leaf_count                  │    [-------------------------------------------------------------+--------------------]  │
+        │p5=1.00|p95=143.00|mu=26.51 │                                                                                          │
+        ├────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────┤
+        │internal_count              │  [-------------------------------------------------------------+----------------------]  │
+        │p5=0.00|p95=142.00|mu=25.51 │                                                                                          │
+        ├────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────┤
+        │min_depth                   │  [-+--]                                                                                  │
+        │p5=0.00|p95=2.00|mu=0.94    │                                                                                          │
+        ├────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────┤
+        │max_depth                   │  [------+----------------]                                                               │
+        │p5=0.00|p95=10.00|mu=2.90   │                                                                                          │
+        ├────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────┤
+        │is_perfect                  │[-+-]                                                                                     │
+        │p5=-1.00|p95=1.00|mu=0.05   │                                                                                          │
+        ├────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────┤
+        │balance_factor              │  [----+----------------]                                                                 │
+        │p5=0.00|p95=9.00|mu=1.96    │                                                                                          │
+        ├────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────┤
+        │max_width                   │    [----------------+-----------------------------------------------------------------]  │
+        │p5=1.00|p95=40.00|mu=8.08   │                                                                                          │
+        ├────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────┤
+        │left_spine                  │  [---+-------]                                                                           │
+        │p5=0.00|p95=5.00|mu=1.50    │                                                                                          │
+        ├────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────┤
+        │right_spine                 │  [---+-------]                                                                           │
+        │p5=0.00|p95=5.00|mu=1.53    │                                                                                          │
+        ├────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────┤
+        │is_left_skewed              │[--+]                                                                                     │
+        │p5=-1.00|p95=1.00|mu=0.24   │                                                                                          │
+        ├────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────┤
+        │avg_leaf_depth              │  [--+------]                                                                             │
+        │p5=0.00|p95=4.31|mu=1.29    │                                                                                          │
+        ├────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────┤
+        │total_path_length           │  [------------------------------------------------------------------------------------+  │
+        │p5=0.00|p95=636.00|mu=102.72│                                                                                          │
+        └────────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────┘
         |}]
 
     let%expect_test "table" =
