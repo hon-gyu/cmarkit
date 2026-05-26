@@ -104,7 +104,7 @@ let render_determinism =
     check =
       (fun b ->
         let s1 = to_commonmark b in
-        let b' = reparse b in
+        let b' = s1 |> Doc.of_string |> Doc.block in
         let s2 = to_commonmark b' in
         if String.equal s1 s2 then Pass
         else
@@ -188,20 +188,19 @@ let%expect_test _ =
     { block: Blocks
                Blank_line
                Blank_line
-               Heading H1 " "
-    ; metadata: { cm: ┌────┐
-                      │#   │
-                      └────┘
+               Blank_line
+               Paragraph "<www.foo.com>"
+    ; metadata: { cm: ┌─────────────┐
+                      │<www.foo.com>│
+                      └─────────────┘
                 ; b': Blocks
                         Blank_line
                         Blank_line
                         Blank_line
-                        Blank_line
-                        Heading H1 ""
-                        Blank_line
-                ; cm': ┌─┐
-                       │#│
-                       └─┘
+                        Paragraph "<www.foo.com>"
+                ; cm': ┌───────────────┐
+                       │\<www.foo.com\>│
+                       └───────────────┘
                 }
     }
     ================================================================================

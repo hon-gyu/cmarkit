@@ -53,16 +53,23 @@ let (raw_html_egs : Inline.t list) =
 
 (* TODO: extension strikethrough and math_span *)
 
-let gen_inline_leaf : Inline.t G.t =
-  [ text_egs; code_span_egs; autolink_egs; break_egs; raw_html_egs ]
-  |> List.map G.oneof_list |> G.oneof
-
-let gen_inline : Inline.t G.t =
+let gen_inline ?(w_break = 1) () : Inline.t G.t =
+  let gen_leaf =
+    [
+      (1, G.oneof_list text_egs);
+      (1, G.oneof_list code_span_egs);
+      (1, G.oneof_list autolink_egs);
+      (w_break, G.oneof_list break_egs);
+      (1, G.oneof_list raw_html_egs);
+    ]
+    |> List.filter (fun (w, _) -> w > 0)
+    |> G.oneof_weighted
+  in
   G.(
     sized_size nat_small
     @@ fix (fun self (n : int) ->
         match n with
-        | 0 -> gen_inline_leaf
+        | 0 -> gen_leaf
         | n ->
             let inlines_of_is is = Inline.Inlines (is, Meta.none) in
             let emph_gen =
@@ -73,7 +80,7 @@ let gen_inline : Inline.t G.t =
             in
             oneof_weighted
               [
-                (1, gen_inline_leaf);
+                (1, gen_leaf);
                 ( 1,
                   map inlines_of_is
                     (list_size (int_bound (n / 2)) (self (n / 2))) );
@@ -87,8 +94,18 @@ let gen_inline : Inline.t G.t =
 =================== *)
 
 let blank_line_egs : Block.t list =
-  [ "\n"; "  \n"; "\t\n" ]
-  |> List.map (fun bl -> Block.(Blank_line (bl, Meta.none)))
+  [ ""; "  "; "\t" ] |> List.map (fun bl -> Block.(Blank_line (bl, Meta.none)))
+
+let gen_blank_line : Block.t G.t =
+  (* according to cmarkit.mli:Layout.blanks, blank is only made of spaces and tabs *)
+  let open G in
+  let vocab = [ " "; "\t" ] in
+  let (words_g : string list t) = list_size nat_small (oneof_list vocab) in
+  map
+    (fun words ->
+      let bl = String.concat "" words in
+      Block.(Blank_line (bl, Meta.none)))
+    words_g
 
 let thematic_break_egs : Block.t list =
   Block.Thematic_break.[ make (); make ~layout:"***" (); make ~layout:"___" () ]
@@ -106,16 +123,20 @@ let code_block_egs : Block.t list =
 let gen_paragraph : Block.t G.t =
   G.map
     (fun inline -> Block.(Paragraph (Block.Paragraph.make inline, Meta.none)))
-    gen_inline
+    (gen_inline ())
 
 let gen_heading : Block.t G.t =
   G.map
     (fun (level, inline) ->
       Block.(Heading (Block.Heading.make ~level inline, Meta.none)))
-    G.(pair (int_range 1 6) gen_inline)
+    G.(pair (int_range 1 6) (gen_inline ~w_break:0 ()))
 
 let html_block_egs : Block.t list =
-  [ [ ("<div>\n", Meta.none) ]; [ ("<p>hello</p>\n", Meta.none) ]; [ ("<!-- comment -->\n", Meta.none) ] ]
+  [
+    [ ("<div>\n", Meta.none) ];
+    [ ("<p>hello</p>\n", Meta.none) ];
+    [ ("<!-- comment -->\n", Meta.none) ];
+  ]
   |> List.map (fun lines -> Block.(Html_block (lines, Meta.none)))
 
 let gen_block_leaf : Block.t G.t =
@@ -193,8 +214,9 @@ let inline_stats : Inline.t QCheck2.stat list =
   ] [@@ocamlformat "disable"]
 
 let%expect_test _ =
-  Pp_distr.pp_gen () Format.std_formatter gen_inline inline_stats;
-  [%expect {|
+  Pp_distr.pp_gen () Format.std_formatter (gen_inline ()) inline_stats;
+  [%expect
+    {|
                                              Boxplot
     ┌──────────────────────────┬────────────────────────────────────────────────────────────┐
     │n=1000                    │↓0                                                       30↓│
@@ -260,8 +282,10 @@ let block_stats : Block.t QCheck2.stat list =
   ] [@@ocamlformat "disable"]
 
 let%expect_test _ =
-  Pp_distr.pp_gen ~display:`Boxplot () Format.std_formatter gen_block block_stats;
-  [%expect {|
+  Pp_distr.pp_gen ~display:`Boxplot () Format.std_formatter gen_block
+    block_stats;
+  [%expect
+    {|
                                             Boxplot
     ┌─────────────────────────┬────────────────────────────────────────────────────────────┐
     │n=1000                   │↓0                                                       13↓│
