@@ -1,14 +1,48 @@
 open Oymarkit_
 
-type result =
-  | Pass
-  | Fail of { reason : string; expected : string; actual : string }
+type value =
+  | String of string
+  | Int of int
+  | Float of float
+  | Bool of bool
+  | Null
+  | Block of Block.t
 
+type metadata = (string * value) list
+
+let pp_value fmt = function
+  | String s -> Format.fprintf fmt "%s" s
+  | Int i -> Format.fprintf fmt "%d" i
+  | Float f -> Format.fprintf fmt "%f" f
+  | Bool b -> Format.fprintf fmt "%b" b
+  | Null -> Format.fprintf fmt "null"
+  | Block b -> Format.fprintf fmt "%a" Pp.pp_block b
+
+let pp_metadata fmt = function
+  | [] -> Format.fprintf fmt "[]"
+  | meta ->
+      (* TODO: use Fmt *)
+      Format.fprintf fmt "[%a]"
+        (Format.pp_print_list ~pp_sep:Format.pp_print_space (fun fmt (k, v) ->
+             Format.fprintf fmt "%s: %a" k pp_value v))
+        meta
+
+type result = Pass | Fail of Block.t * metadata
 type t = { name : string; check : Block.t -> result }
 
-let mk_qcheck_test (t : t) : QCheck2.Test.t =
+let fail ?(message : string option) ?(expect : Block.t option)
+    (actual : Block.t) =
+  let metadata = ref [] in
+  Option.iter (fun r -> metadata := ("message", String r) :: !metadata) message;
+  Option.iter (fun e -> metadata := ("expect", Block e) :: !metadata) expect;
+  Fail (actual, !metadata)
+
+let qcheck_test_of_t (t : t) : QCheck2.Test.t =
   QCheck2.Test.make ~name:t.name
-    ~print:(fun b -> Format.asprintf "%a" Pp.pp_block b)
+    ~print:(fun b ->
+      match t.check b with
+      | Pass -> assert false
+      | Fail (b, meta) -> Format.asprintf "%a" Pp.pp_block b)
     Gen_block.gen_block
     (Fun.compose
        (fun r ->
@@ -24,14 +58,11 @@ let canonical b = Format.asprintf "%a" Pp.pp_block (Block.normalize b)
 let block_equal a b = String.equal (canonical a) (canonical b)
 let to_commonmark b = b |> Doc.make |> Cmarkit_commonmark.of_doc
 
+let check_eq ?(message : string option) ~(expect : Block.t) (actual : Block.t) =
+  if block_equal expect actual then Pass else fail ?message ~expect actual
+
 let reparse (b : Block.t) : Block.t =
   b |> to_commonmark |> Doc.of_string |> Doc.block
-
-let fail ~reason ~expected ~actual = Fail { reason; expected; actual }
-
-let check_eq ~reason ~expected ~actual =
-  if block_equal expected actual then Pass
-  else fail ~reason ~expected:(canonical expected) ~actual:(canonical actual)
 
 (* Properties
   =========== *)
@@ -43,7 +74,7 @@ let roundtrip =
     check =
       (fun b ->
         let b' = reparse b in
-        check_eq ~reason:"parse (render b) /= b" ~expected:b ~actual:b');
+        check_eq ~message:"parse (render b) /= b" ~expect:b b');
   }
 
 (** [normalize (normalize b) = normalize b] structurally. *)
@@ -54,7 +85,7 @@ let normalize_idempotent =
       (fun b ->
         let n1 = Block.normalize b in
         let n2 = Block.normalize n1 in
-        check_eq ~reason:"normalize is not idempotent" ~expected:n1 ~actual:n2);
+        check_eq ~message:"normalize is not idempotent" ~expect:n1 n2);
   }
 
 (** [render b = render (parse (render b))] as strings. *)
@@ -64,11 +95,11 @@ let render_determinism =
     check =
       (fun b ->
         let s1 = to_commonmark b in
-        let s2 = to_commonmark (reparse b) in
+        let b' = reparse b in
+        let s2 = to_commonmark b' in
         if String.equal s1 s2 then Pass
         else
-          fail ~reason:"render is not stable under reparse" ~expected:s1
-            ~actual:s2);
+          Fail (b, [ ("cm", String s1); ("b'", Block b'); ("cm'", String s2) ]));
   }
 
 (* Container uniformity
@@ -107,11 +138,10 @@ let uniformity_with ~name ~wrap ~unwrap =
         let parsed = reparse wrapped |> peel_singleton_blocks in
         match unwrap parsed with
         | None ->
-            fail ~reason:"container shape not preserved by round-trip"
-              ~expected:(canonical wrapped) ~actual:(canonical parsed)
+            fail ~message:"container shape not preserved by round-trip"
+              ~expect:wrapped parsed
         | Some inner ->
-            check_eq ~reason:"container content not preserved" ~expected:b
-              ~actual:inner);
+            check_eq ~message:"container content not preserved" ~expect:b inner);
   }
 
 (** Wrapping [b] in a [Block_quote] then round-tripping yields a [Block_quote]
@@ -139,7 +169,7 @@ let%expect_test _ =
   let rand = Random.State.make [| 0 |] in
   ignore
   @@ QCheck_base_runner.run_tests ~colors:false ~rand
-       [ mk_qcheck_test render_determinism ];
+       [ qcheck_test_of_t render_determinism ];
   [%expect
     {|
     --- Failure --------------------------------------------------------------------
