@@ -6,7 +6,8 @@
   qcheck-core
   textutils.ascii_table
   printbox
-  printbox-text)
+  printbox-text
+  fmt)
  (inline_tests)
  (preprocess
   (pps ppx_jane ppx_sexp_conv ppx_expect)))

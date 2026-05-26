@@ -7,25 +7,28 @@ type value =
   | Bool of bool
   | Null
   | Block of Block.t
+  | Md of string
 
 type metadata = (string * value) list
 
-let pp_value fmt = function
+let box_frame_default = true
+
+let pp_value ?(box_frame = box_frame_default) () fmt = function
   | String s -> Format.fprintf fmt "%s" s
   | Int i -> Format.fprintf fmt "%d" i
   | Float f -> Format.fprintf fmt "%f" f
   | Bool b -> Format.fprintf fmt "%b" b
   | Null -> Format.fprintf fmt "null"
   | Block b -> Format.fprintf fmt "%a" Pp.pp_block b
+  | Md s ->
+      if not box_frame then Format.fprintf fmt "%s" s
+      else
+        let b = PrintBox.(frame @@ text s) in
+        Format.fprintf fmt "%a" PrintBox_text.pp b
 
-let pp_metadata fmt = function
-  | [] -> Format.fprintf fmt "[]"
-  | meta ->
-      (* TODO: use Fmt *)
-      Format.fprintf fmt "[%a]"
-        (Format.pp_print_list ~pp_sep:Format.pp_print_space (fun fmt (k, v) ->
-             Format.fprintf fmt "%s: %a" k pp_value v))
-        meta
+let pp_metadata fmt m =
+  let pp_pair fmt (k, v) = Fmt.pf fmt "@[<h>%s:@ %a@]" k (pp_value ()) v in
+  Fmt.pf fmt "@[<v>{ %a@,}@]" (Fmt.list ~sep:(Fmt.any "@,; ") pp_pair) m
 
 type result = Pass | Fail of Block.t * metadata
 type t = { name : string; check : Block.t -> result }
@@ -37,12 +40,18 @@ let fail ?(message : string option) ?(expect : Block.t option)
   Option.iter (fun e -> metadata := ("expect", Block e) :: !metadata) expect;
   Fail (actual, !metadata)
 
+let pp_fail t fmt b : unit =
+  match t.check b with
+  | Pass -> assert false
+  | Fail (b, meta) ->
+      if Int.equal (List.length meta) 0 then Fmt.pf fmt "%a" Pp.pp_block b
+      else
+        Fmt.pf fmt "@[<v>{ block: %a@,; metadata: %a@,}@]" Pp.pp_block b
+          pp_metadata meta
+
 let qcheck_test_of_t (t : t) : QCheck2.Test.t =
   QCheck2.Test.make ~name:t.name
-    ~print:(fun b ->
-      match t.check b with
-      | Pass -> assert false
-      | Fail (b, meta) -> Format.asprintf "%a" Pp.pp_block b)
+    ~print:(fun b -> Fmt.str "%a" (pp_fail t) b)
     Gen_block.gen_block
     (Fun.compose
        (fun r ->
@@ -99,7 +108,7 @@ let render_determinism =
         let s2 = to_commonmark b' in
         if String.equal s1 s2 then Pass
         else
-          Fail (b, [ ("cm", String s1); ("b'", Block b'); ("cm'", String s2) ]));
+          Fail (b, [ ("cm", Md s1); ("b'", Block b'); ("cm'", Md s2) ]));
   }
 
 (* Container uniformity
@@ -176,10 +185,25 @@ let%expect_test _ =
 
     Test render_determinism failed (12 shrink steps):
 
-    Blocks
-      Blank_line
-      Blank_line
-      Heading H1 " "
+    { block: Blocks
+               Blank_line
+               Blank_line
+               Heading H1 " "
+    ; metadata: { cm: ┌────┐
+                      │#   │
+                      └────┘
+                ; b': Blocks
+                        Blank_line
+                        Blank_line
+                        Blank_line
+                        Blank_line
+                        Heading H1 ""
+                        Blank_line
+                ; cm': ┌─┐
+                       │#│
+                       └─┘
+                }
+    }
     ================================================================================
     failure (1 tests failed, 0 tests errored, ran 1 tests)
     |}]
