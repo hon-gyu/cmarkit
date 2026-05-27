@@ -1,5 +1,5 @@
 (library
- (name run_property)
+ (name test_generator)
  (inline_tests)
  (libraries
   oymarkit_

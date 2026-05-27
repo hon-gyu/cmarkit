@@ -80,7 +80,7 @@ let pp_fail t fmt b : unit =
 let qcheck_test_of_t (t : t) : QCheck2.Test.t =
   QCheck2.Test.make ~name:t.name
     ~print:(fun b -> Fmt.str "%a" (pp_fail t) b)
-    (Gen_block.gen_block ())
+    (Gen.gen_block ())
     (fun b ->
       try
         match t.check b with
