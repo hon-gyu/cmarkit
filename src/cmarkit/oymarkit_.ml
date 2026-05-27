@@ -13,15 +13,7 @@ module Text = Cmarkit_base.Text
 module Match = Cmarkit_base
 module Textloc = Cmarkit_base.Textloc
 module Meta = Cmarkit_base.Meta
-module Layout = struct
-  type blanks = string
-  type nonrec string = string
-  type nonrec char = char
-  type count = int
-  type indent = int
-  let string ?(meta = Meta.none) s = s, meta
-  let empty = string ""
-end
+module Layout = Common.Layout
 module Pp = Pp
 
 type byte_pos = Textloc.byte_pos
@@ -47,28 +39,7 @@ include Parser
 
 (* Documents *)
 
-module Doc = struct
-  type t = { nl : Layout.string; block : Block.t; defs : Label.defs }
-  let make ?(nl = "\n") ?(defs = Label.Map.empty) block = { nl; block; defs }
-  let empty = make (Block.Blocks ([], Meta.none))
-  let nl d = d.nl
-  let block d = d.block
-  let defs d = d.defs
-  let of_string
-      ?defs ?resolver ?nested_links ?heading_auto_ids ?layout ?locs ?file
-      ?(strict = true) s
-    =
-    let p =
-      parser ?defs ?resolver ?nested_links ?heading_auto_ids ?layout ?locs
-        ?file ~strict s
-    in
-    let nl, doc = Block_struct.parse p in
-    let block = block_struct_to_doc p doc in
-    make ~nl block ~defs:p.defs
-
-  let unicode_version = Cmarkit_data.unicode_version
-  let commonmark_version = "0.31.2"
-end
+module Doc = Doc
 
 (* Maps and folds *)
 

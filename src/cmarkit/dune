@@ -1,7 +1,7 @@
 (library
  (name oymarkit_)
  (libraries cmarkit_data cmarkit_base qcheck)
- (modules oymarkit_ common inline block parser pp)
+ (modules oymarkit_ common inline block doc parser pp sexp)
  (inline_tests)
  (preprocess
   (pps ppx_jane ppx_expect ppx_deriving_qcheck)))
