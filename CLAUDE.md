@@ -3,3 +3,5 @@ This is a fork of cmarkit.
 - it adds pp and qcheck generators
 - it adds more extensions (TODO)
 - ...
+
+@docs/typing.mld

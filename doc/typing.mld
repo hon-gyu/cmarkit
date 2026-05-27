@@ -1,6 +1,7 @@
 {0 Type theory of the CommonMark AST}
 
 @llm_generated true
+@date 2026-05-21
 
 {1 Goal}
 
@@ -130,3 +131,8 @@ layout-preservation bugs. Sharpen when needed.
 {- {b Rule provenance.} Each shrunk counterexample should be recorded
    alongside the generator tightening it motivated, so we can recover
    the minimal witnesses behind each rule.}}
+
+
+{1 2026-05-27 Edit}
+
+When a test fails, it can also indicates our notion of equality / equivalence needs to be changed / updated.
