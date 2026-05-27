@@ -11,16 +11,14 @@ let%expect_test _ =
 
     Test roundtrip failed (3 shrink steps):
 
-    { block: Blocks
-               Html_block { lines=1 }
-               Blank_line
+    { block: (Blocks (Html_block <div>) Blank_line)
     ; metadata: { cm: ┌─────┐
                       │<div>│
                       └─────┘
                 ; cm': ┌─────┐
                        │<div>│
                        └─────┘
-                ; expect: Html_block { lines=1 }
+                ; expect: (Html_block "<div>\n")
                 }
     }
     ================================================================================

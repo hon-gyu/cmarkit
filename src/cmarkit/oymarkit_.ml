@@ -15,6 +15,7 @@ module Textloc = Cmarkit_base.Textloc
 module Meta = Cmarkit_base.Meta
 module Layout = Common.Layout
 module Pp = Pp
+module Sexp_ = Sexp_
 
 type byte_pos = Textloc.byte_pos
 type line_span = Match.line_span =

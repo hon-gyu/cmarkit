@@ -3,6 +3,14 @@
 *)
 open Oymarkit_
 
+let use_sexp = true
+
+let pp_block fmt b =
+  if use_sexp then
+    Format.fprintf fmt "%s"
+      ((Sexp_.make_sexp_of ()).block b |> Sexplib0.Sexp.to_string_hum)
+  else Format.printf "%a" Pp.pp_block b
+
 type value =
   | String of string
   | Int of int
@@ -22,7 +30,7 @@ let pp_value ?(box_frame = box_frame_default) () fmt = function
   | Float f -> Format.fprintf fmt "%f" f
   | Bool b -> Format.fprintf fmt "%b" b
   | Null -> Format.fprintf fmt "null"
-  | Block b -> Format.fprintf fmt "%a" Pp.pp_block b
+  | Block b -> Format.fprintf fmt "%a" pp_block b
   | Md s ->
       if not box_frame then Format.fprintf fmt "%s" s
       else
@@ -64,9 +72,9 @@ let pp_fail t fmt b : unit =
   match t.check b with
   | Pass -> assert false
   | Fail (b, meta) ->
-      if Int.equal (List.length meta) 0 then Fmt.pf fmt "%a" Pp.pp_block b
+      if Int.equal (List.length meta) 0 then Fmt.pf fmt "%a" pp_block b
       else
-        Fmt.pf fmt "@[<v>{ block: %a@,; metadata: %a@,}@]" Pp.pp_block b
+        Fmt.pf fmt "@[<v>{ block: %a@,; metadata: %a@,}@]" pp_block b
           pp_metadata meta
 
 let qcheck_test_of_t (t : t) : QCheck2.Test.t =
@@ -84,7 +92,7 @@ let qcheck_test_of_t (t : t) : QCheck2.Test.t =
 (* Helpers
 =========== *)
 
-let canonical b = Format.asprintf "%a" Pp.pp_block (Block.normalize b)
+let canonical b : string = Format.asprintf "%a" pp_block (Block.normalize b)
 let block_equal a b = String.equal (canonical a) (canonical b)
 let to_commonmark b = b |> Doc.make |> Cmarkit_commonmark.of_doc
 
@@ -114,7 +122,9 @@ let roundtrip =
   let check =
    fun b ->
     let b' = reparse b in
-    let metadata = [ ("cm", Md (to_commonmark b)); ("cm'", Md (to_commonmark b')) ] in
+    let metadata =
+      [ ("cm", Md (to_commonmark b)); ("cm'", Md (to_commonmark b')) ]
+    in
     check_eq ~expect:b ~metadata b'
   in
   { name = "roundtrip"; check }
