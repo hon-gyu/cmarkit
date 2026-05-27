@@ -139,23 +139,32 @@ let html_block_egs : Block.t list =
   ]
   |> List.map (fun lines -> Block.(Html_block (lines, Meta.none)))
 
-let gen_block_leaf : Block.t G.t =
-  G.oneof
+let gen_block_leaf ?(w_blank_line = 1) ?(w_thematic_break = 1)
+    ?(w_code_block = 1) ?(w_html_block = 1) ?(w_paragraph = 1) ?(w_heading = 1)
+    () : Block.t G.t =
+  G.oneof_weighted
     [
-      G.oneof_list blank_line_egs;
-      G.oneof_list thematic_break_egs;
-      G.oneof_list code_block_egs;
-      G.oneof_list html_block_egs;
-      gen_paragraph;
-      gen_heading;
+      (w_blank_line, G.oneof_list blank_line_egs);
+      (w_thematic_break, G.oneof_list thematic_break_egs);
+      (w_code_block, G.oneof_list code_block_egs);
+      (w_html_block, G.oneof_list html_block_egs);
+      (w_paragraph, gen_paragraph);
+      (w_heading, gen_heading);
     ]
 
-let gen_block : Block.t G.t =
+let gen_block ?(w_direct_blank_line = 1) ?(w_direct_thematic_break = 1)
+    ?(w_direct_code_block = 1) ?(w_direct_html_block = 1)
+    ?(w_direct_paragraph = 1) ?(w_direct_heading = 1) () : Block.t G.t =
   G.(
     sized_size nat_small
     @@ fix (fun self (n : int) ->
         match n with
-        | 0 -> gen_block_leaf
+        | 0 ->
+            gen_block_leaf ~w_blank_line:w_direct_blank_line
+              ~w_thematic_break:w_direct_thematic_break
+              ~w_code_block:w_direct_code_block
+              ~w_html_block:w_direct_html_block ~w_paragraph:w_direct_paragraph
+              ~w_heading:w_direct_heading ()
         | n ->
             let blocks_of_bs bs = Block.Blocks (bs, Meta.none) in
             let block_quote_of_b b =
@@ -175,14 +184,13 @@ let gen_block : Block.t G.t =
             in
             oneof_weighted
               [
-                (2, gen_block_leaf);
+                (2, gen_block_leaf ());
                 ( 1,
                   map blocks_of_bs
                     (list_size (int_bound (n / 2)) (self (n / 2))) );
                 (1, map block_quote_of_b (self (n / 2)));
                 (1, gen_list_block);
               ]))
-
 
 let%expect_test _ =
   Pp_distr.pp_gen () Format.std_formatter (gen_inline ()) Stat.inline_stats;
@@ -224,9 +232,8 @@ let%expect_test _ =
     └──────────────────────────┴────────────────────────────────────────────────────────────┘
     |}]
 
-
 let%expect_test _ =
-  Pp_distr.pp_gen ~display:`Boxplot () Format.std_formatter gen_block
+  Pp_distr.pp_gen ~display:`Boxplot () Format.std_formatter (gen_block ())
     Stat.block_stats;
   [%expect
     {|

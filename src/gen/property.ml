@@ -80,7 +80,7 @@ let pp_fail t fmt b : unit =
 let qcheck_test_of_t (t : t) : QCheck2.Test.t =
   QCheck2.Test.make ~name:t.name
     ~print:(fun b -> Fmt.str "%a" (pp_fail t) b)
-    Gen_block.gen_block
+    (Gen_block.gen_block ())
     (fun b ->
       try
         match t.check b with
@@ -119,10 +119,9 @@ let normalize_idempotent =
 
 (** [parse (to_commonmark b) ≡ b] modulo {!canonical}.
 
-  This is the most important property for generators as it ensures that
-  the block structure is valid, i.e. can be emitted by the parser from
-  a piece of CommonMark.
-*)
+    This is the most important property for generators as it ensures that the
+    block structure is valid, i.e. can be emitted by the parser from a piece of
+    CommonMark. *)
 let roundtrip =
   let check =
    fun b ->
