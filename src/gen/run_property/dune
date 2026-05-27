@@ -1,0 +1,13 @@
+(library
+ (name run_property)
+ (inline_tests)
+ (libraries
+  oymarkit_
+  oymarkit_generator
+  cmarkit_commonmark
+  qcheck-core
+  textutils.ascii_table
+  fmt
+ )
+ (preprocess
+  (pps ppx_jane ppx_expect)))

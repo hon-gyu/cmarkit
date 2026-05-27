@@ -1,3 +1,6 @@
+(* TOOD:
+  - make calculation of metadata lazy
+*)
 open Oymarkit_
 
 type value =
@@ -48,12 +51,14 @@ let imply p q : t =
 
 let ( ==> ) p q = imply p q
 
-let fail ?(message : string option) ?(expect : Block.t option)
+let fail ?(message : string option) ?(expect : Block.t option) ?(metadata = [])
     (actual : Block.t) =
-  let metadata = ref [] in
-  Option.iter (fun r -> metadata := ("message", String r) :: !metadata) message;
-  Option.iter (fun e -> metadata := ("expect", Block e) :: !metadata) expect;
-  Fail (actual, !metadata)
+  let extra_meta = ref [] in
+  Option.iter
+    (fun r -> extra_meta := ("message", String r) :: !extra_meta)
+    message;
+  Option.iter (fun e -> extra_meta := ("expect", Block e) :: !extra_meta) expect;
+  Fail (actual, metadata @ !extra_meta)
 
 let pp_fail t fmt b : unit =
   match t.check b with
@@ -83,8 +88,10 @@ let canonical b = Format.asprintf "%a" Pp.pp_block (Block.normalize b)
 let block_equal a b = String.equal (canonical a) (canonical b)
 let to_commonmark b = b |> Doc.make |> Cmarkit_commonmark.of_doc
 
-let check_eq ?(message : string option) ~(expect : Block.t) (actual : Block.t) =
-  if block_equal expect actual then Pass else fail ?message ~expect actual
+let check_eq ?(message : string option) ?(metadata = []) ~(expect : Block.t)
+    (actual : Block.t) =
+  if block_equal expect actual then Pass
+  else fail ?message ~metadata ~expect actual
 
 let reparse (b : Block.t) : Block.t =
   b |> to_commonmark |> Doc.of_string |> Doc.block
@@ -92,28 +99,27 @@ let reparse (b : Block.t) : Block.t =
 (* Properties
   =========== *)
 
-(** [parse (render b) ≡ b] modulo {!canonical}. *)
-let roundtrip =
-  {
-    name = "roundtrip";
-    check =
-      (fun b ->
-        let b' = reparse b in
-        check_eq ~message:"parse (render b) /= b" ~expect:b b');
-  }
-
 (** [normalize (normalize b) = normalize b] structurally. *)
 let normalize_idempotent =
-  {
-    name = "normalize_idempotent";
-    check =
-      (fun b ->
-        let n1 = Block.normalize b in
-        let n2 = Block.normalize n1 in
-        check_eq ~message:"normalize is not idempotent" ~expect:n1 n2);
-  }
+  let check =
+   fun b ->
+    let n1 = Block.normalize b in
+    let n2 = Block.normalize n1 in
+    check_eq ~expect:n1 n2
+  in
+  { name = "normalize_idempotent"; check }
 
-(** [render b = render (parse (render b))] as strings. *)
+(** [parse (to_commonmark b) ≡ b] modulo {!canonical}. *)
+let roundtrip =
+  let check =
+   fun b ->
+    let b' = reparse b in
+    let metadata = [ ("cm", Md (to_commonmark b)); ("cm'", Md (to_commonmark b')) ] in
+    check_eq ~expect:b ~metadata b'
+  in
+  { name = "roundtrip"; check }
+
+(** [render b = to_commonmark (parse (to_commonmark b))] as strings. *)
 let render_determinism =
   {
     name = "render_determinism";
@@ -188,36 +194,3 @@ let (all : t list) =
     uniformity_block_quote;
     uniformity_list_item;
   ]
-
-let%expect_test _ =
-  let rand = Random.State.make [| 0 |] in
-  ignore
-  @@ QCheck_base_runner.run_tests ~colors:false ~rand
-       [ qcheck_test_of_t render_determinism ];
-  [%expect
-    {|
-    --- Failure --------------------------------------------------------------------
-
-    Test render_determinism failed (12 shrink steps):
-
-    { block: Blocks
-               Blank_line
-               Blank_line
-               Blank_line
-               Paragraph "<www.foo.com>"
-    ; metadata: { cm: ┌─────────────┐
-                      │<www.foo.com>│
-                      └─────────────┘
-                ; b': Blocks
-                        Blank_line
-                        Blank_line
-                        Blank_line
-                        Paragraph "<www.foo.com>"
-                ; cm': ┌───────────────┐
-                       │\<www.foo.com\>│
-                       └───────────────┘
-                }
-    }
-    ================================================================================
-    failure (1 tests failed, 0 tests errored, ran 1 tests)
-    |}]
