@@ -136,3 +136,7 @@ layout-preservation bugs. Sharpen when needed.
 {1 2026-05-27 Edit}
 
 When a test fails, it can also indicates our notion of equality / equivalence needs to be changed / updated.
+
+Every tightening of the generator needs a rationale.
+
+Correction on tightening generator: we want the most flexible generator. We want to generate generators (parametrize generator over weights or boolean flags). Whenever we add a new rule that encodes a piece of knowledge, we want to make sure we have a generator that can generate both the example and counter-example of that rule.

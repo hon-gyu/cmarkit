@@ -1,5 +1,22 @@
 open Oymarkit_
 
+(** {1 No trailing blank lines in blocks}
+
+    [Blank_line] at the tail of a [Blocks] list renders as nothing (the `\n` it
+    contributes merely closes the preceding block's last line), so
+    [parse(render(Blocks [...; Blank_line]))] will never reconstruct the
+    trailing [Blank_line]. Any such node is a generator artifact with no
+    syntactic witness. *)
+
+let no_trailing_blank_line_in_blocks : Block.t -> bool = function
+  | Block.Blocks (bs, _) -> (
+      match List.rev bs with
+      | Block.Blank_line _ :: _ -> false
+      | _ -> true)
+  | _ -> true
+
+(** {1 Others} *)
+
 (* Layout.blanks is only spaces and tabs, no newline
 
    @source cmarkit.mli:Layout.blanks
@@ -11,9 +28,11 @@ let blank_line : Block.t -> bool = function
 let rec inline_no_break : Inline.t -> bool = function
   | Inline.Break _ -> false
   | Inline.Inlines (is, _) -> List.for_all inline_no_break is
-  | Inline.Emphasis (e, _) | Inline.Strong_emphasis (e, _) ->
+  | Inline.Emphasis (e, _)
+  | Inline.Strong_emphasis (e, _) ->
       inline_no_break (Inline.Emphasis.inline e)
-  | Inline.Link (l, _) | Inline.Image (l, _) ->
+  | Inline.Link (l, _)
+  | Inline.Image (l, _) ->
       inline_no_break (Inline.Link.text l)
   | _ -> true
 

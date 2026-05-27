@@ -117,7 +117,12 @@ let normalize_idempotent =
   in
   { name = "normalize_idempotent"; check }
 
-(** [parse (to_commonmark b) ≡ b] modulo {!canonical}. *)
+(** [parse (to_commonmark b) ≡ b] modulo {!canonical}.
+
+  This is the most important property for generators as it ensures that
+  the block structure is valid, i.e. can be emitted by the parser from
+  a piece of CommonMark.
+*)
 let roundtrip =
   let check =
    fun b ->
