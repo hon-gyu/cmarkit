@@ -33,6 +33,16 @@ let pp_metadata fmt m =
 type result = Pass | Fail of Block.t * metadata
 type t = { name : string; check : Block.t -> result }
 
+let imply p q : t =
+  let name = Fmt.str "%s ==> %s" p.name q.name in
+  { name; check = fun b ->
+    match p.check b with
+    | Pass -> q.check b
+    | Fail _ -> QCheck2.assume_fail ()
+  }
+
+let ( ==> ) p q = imply p q
+
 let fail ?(message : string option) ?(expect : Block.t option)
     (actual : Block.t) =
   let metadata = ref [] in
