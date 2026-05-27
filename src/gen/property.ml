@@ -33,12 +33,17 @@ let pp_metadata fmt m =
 type result = Pass | Fail of Block.t * metadata
 type t = { name : string; check : Block.t -> result }
 
+exception Failed_precondition
+
 let imply p q : t =
   let name = Fmt.str "%s ==> %s" p.name q.name in
-  { name; check = fun b ->
-    match p.check b with
-    | Pass -> q.check b
-    | Fail _ -> QCheck2.assume_fail ()
+  {
+    name;
+    check =
+      (fun b ->
+        match p.check b with
+        | Pass -> q.check b
+        | Fail _ -> raise Failed_precondition);
   }
 
 let ( ==> ) p q = imply p q
@@ -63,12 +68,13 @@ let qcheck_test_of_t (t : t) : QCheck2.Test.t =
   QCheck2.Test.make ~name:t.name
     ~print:(fun b -> Fmt.str "%a" (pp_fail t) b)
     Gen_block.gen_block
-    (Fun.compose
-       (fun r ->
-         match r with
-         | Pass -> true
-         | _ -> false)
-       t.check)
+    (fun b ->
+      try
+        match t.check b with
+        | Pass -> true
+        | Fail _ -> false
+      with
+      | Failed_precondition -> QCheck2.assume_fail ())
 
 (* Helpers
 =========== *)
@@ -117,8 +123,7 @@ let render_determinism =
         let b' = s1 |> Doc.of_string |> Doc.block in
         let s2 = to_commonmark b' in
         if String.equal s1 s2 then Pass
-        else
-          Fail (b, [ ("cm", Md s1); ("b'", Block b'); ("cm'", Md s2) ]));
+        else Fail (b, [ ("cm", Md s1); ("b'", Block b'); ("cm'", Md s2) ]));
   }
 
 (* Container uniformity
