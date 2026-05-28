@@ -1,13 +1,11 @@
-(library
- (name test_generator)
- (inline_tests)
+(tests
+ (names normalize_idempotent render_roundtrip trailing_blank_in_blocks)
  (libraries
   oymarkit_
   oymarkit_generator
   cmarkit_commonmark
   qcheck-core
   textutils.ascii_table
-  fmt
- )
+  fmt)
  (preprocess
   (pps ppx_jane ppx_expect)))

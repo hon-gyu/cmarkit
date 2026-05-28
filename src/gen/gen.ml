@@ -188,15 +188,12 @@ let gen_block ?(w_direct_blank_line = 1) ?(w_direct_thematic_break = 1)
             (2, gen_block_leaf ());
             ( 1,
               map blocks_of_bs
-                (list_size
-                   (int_bound (n / 2))
-                   (gen_block' ~w_direct_blank_line:w_blocks_direct_blank_line
-                      () (n / 2))) );
+                (list_size (int_bound (n / 2)) (gen_block' () (n / 2))) );
             (1, map block_quote_of_b (gen_block' () (n / 2)));
             (1, gen_list_block);
           ]
   in
-  sized @@ gen_block' ()
+  sized_size nat_small @@ gen_block' ()
 
 (* let gen_block ?(w_direct_blank_line = 1) ?(w_direct_thematic_break = 1)
     ?(w_direct_code_block = 1) ?(w_direct_html_block = 1)

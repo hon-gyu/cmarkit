@@ -1,0 +1,20 @@
+
+--- Failure --------------------------------------------------------------------
+
+Test roundtrip failed (3 shrink steps):
+
+{ block: (Blocks (Html_block <div>) Blank_line)
+; cm: ┌─────┐
+      │<div>│
+      └─────┘
+; metadata: { cm: ┌─────┐
+                  │<div>│
+                  └─────┘
+            ; cm': ┌─────┐
+                   │<div>│
+                   └─────┘
+            ; expect: (Html_block "<div>\n")
+            }
+}
+================================================================================
+failure (1 tests failed, 0 tests errored, ran 1 tests)

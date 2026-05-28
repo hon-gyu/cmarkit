@@ -77,8 +77,8 @@ let pp_fail t fmt b : unit =
         Fmt.pf fmt "@[<v>{ block: %a@,; metadata: %a@,}@]" pp_block b
           pp_metadata meta
 
-let qcheck_test_of_t (t : t) : QCheck2.Test.t =
-  QCheck2.Test.make ~name:t.name
+let qcheck_test_of_t ?(count = 500) () (t : t) : QCheck2.Test.t =
+  QCheck2.Test.make ~name:t.name ~count
     ~print:(fun b -> Fmt.str "%a" (pp_fail t) b)
     (Gen.gen_block ())
     (fun b ->

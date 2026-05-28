@@ -8,12 +8,18 @@ open Oymarkit_
     trailing [Blank_line]. Any such node is a generator artifact with no
     syntactic witness. *)
 
-let no_trailing_blank_line_in_blocks : Block.t -> bool = function
-  | Block.Blocks (bs, _) -> (
-      match List.rev bs with
-      | Block.Blank_line _ :: _ -> false
-      | _ -> true)
-  | _ -> true
+let no_trailing_blank_line_in_blocks : Property.t =
+  let name = "no trailing blank line in blocks" in
+  let rec check : Block.t -> Property.result =
+   fun b ->
+    match b with
+    | Block.Blocks (bs, _) as blocks -> (
+        match List.rev bs with
+        | Block.Blank_line _ :: _ -> Fail (b, [ ("blocks", Block blocks) ])
+        | _ -> Pass)
+    | _ -> Pass
+  in
+  { name; check }
 
 (** {1 Others} *)
 
