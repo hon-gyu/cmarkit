@@ -7,8 +7,8 @@ let use_sexp = true
 
 let pp_block fmt b =
   if use_sexp then
-    Format.fprintf fmt "%s"
-      ((Sexp_.make_sexp_of ()).block b |> Sexplib0.Sexp.to_string_hum)
+    Format.fprintf fmt "%a" Sexplib0.Sexp.pp_hum
+      ((Sexp_.make_sexp_of ()).block b)
   else Format.printf "%a" Pp.pp_block b
 
 type value =
@@ -23,6 +23,13 @@ type value =
 type metadata = (string * value) list
 
 let box_frame_default = true
+let to_commonmark b = b |> Doc.make |> Cmarkit_commonmark.of_doc
+
+let pp_cm ?(box_frame = box_frame_default) () fmt (cm : string) =
+  if not box_frame then Format.fprintf fmt "%s" cm
+  else
+    let b = PrintBox.(frame @@ text cm) in
+    Format.fprintf fmt "%a" PrintBox_text.pp b
 
 let pp_value ?(box_frame = box_frame_default) () fmt = function
   | String s -> Format.fprintf fmt "%s" s
@@ -74,8 +81,8 @@ let pp_fail t fmt b : unit =
   | Fail (b, meta) ->
       if Int.equal (List.length meta) 0 then Fmt.pf fmt "%a" pp_block b
       else
-        Fmt.pf fmt "@[<v>{ block: %a@,; metadata: %a@,}@]" pp_block b
-          pp_metadata meta
+        Fmt.pf fmt "@[<v>{ block: %a@,; cm: %a@,; metadata: %a@,}@]" pp_block b
+          (pp_cm ()) (to_commonmark b) pp_metadata meta
 
 let qcheck_test_of_t ?(count = 500) () (t : t) : QCheck2.Test.t =
   QCheck2.Test.make ~name:t.name ~count
@@ -94,7 +101,6 @@ let qcheck_test_of_t ?(count = 500) () (t : t) : QCheck2.Test.t =
 
 let canonical b : string = Format.asprintf "%a" pp_block (Block.normalize b)
 let block_equal a b = String.equal (canonical a) (canonical b)
-let to_commonmark b = b |> Doc.make |> Cmarkit_commonmark.of_doc
 
 let check_eq ?(message : string option) ?(metadata = []) ~(expect : Block.t)
     (actual : Block.t) =

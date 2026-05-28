@@ -139,7 +139,13 @@ let html_block_egs : Block.t list =
   ]
   |> List.map (fun lines -> Block.(Html_block (lines, Meta.none)))
 
-let gen_block_leaf ?(w_blank_line = 1) ?(w_thematic_break = 1)
+type block_gen_config = { foo : int }
+type block_gen_state = { foo : int }
+
+let default_config : block_gen_config = { foo = 0 }
+let init_state () : block_gen_state = { foo = 0 }
+
+let gen_leaf_block ?(w_blank_line = 1) ?(w_thematic_break = 1)
     ?(w_code_block = 1) ?(w_html_block = 1) ?(w_paragraph = 1) ?(w_heading = 1)
     () : Block.t G.t =
   G.oneof_weighted
@@ -152,21 +158,14 @@ let gen_block_leaf ?(w_blank_line = 1) ?(w_thematic_break = 1)
       (w_heading, gen_heading);
     ]
 
-let gen_block ?(w_direct_blank_line = 1) ?(w_direct_thematic_break = 1)
-    ?(w_direct_code_block = 1) ?(w_direct_html_block = 1)
-    ?(w_direct_paragraph = 1) ?(w_direct_heading = 1)
-    ?(w_blocks_direct_blank_line = 1) () : Block.t G.t =
+let gen_leaf_block' config st =
+  gen_leaf_block ()
+
+let gen_block ?(config = default_config) () : Block.t G.t =
   let open G in
-  let rec gen_block' ?(w_direct_blank_line = 1) ?(w_direct_thematic_break = 1)
-      ?(w_direct_code_block = 1) ?(w_direct_html_block = 1)
-      ?(w_direct_paragraph = 1) ?(w_direct_heading = 1)
-      ?(w_blocks_direct_blank_line = 1) () (n : int) : Block.t G.t =
+  let rec loop st (n : int) : Block.t G.t =
     match n with
-    | 0 ->
-        gen_block_leaf ~w_blank_line:w_direct_blank_line
-          ~w_thematic_break:w_direct_thematic_break
-          ~w_code_block:w_direct_code_block ~w_html_block:w_direct_html_block
-          ~w_paragraph:w_direct_paragraph ~w_heading:w_direct_heading ()
+    | 0 -> gen_leaf_block' config st
     | n ->
         let blocks_of_bs bs = Block.Blocks (bs, Meta.none) in
         let block_quote_of_b b =
@@ -176,7 +175,7 @@ let gen_block ?(w_direct_blank_line = 1) ?(w_direct_thematic_break = 1)
           let gen_item =
             map
               (fun block -> (Block.List_item.make block, Meta.none))
-              (gen_block' () (n / 2))
+              (loop st (n / 2))
           in
           map
             (fun items ->
@@ -185,15 +184,15 @@ let gen_block ?(w_direct_blank_line = 1) ?(w_direct_thematic_break = 1)
         in
         oneof_weighted
           [
-            (2, gen_block_leaf ());
+            (2, gen_leaf_block' config st);
             ( 1,
               map blocks_of_bs
-                (list_size (int_bound (n / 2)) (gen_block' () (n / 2))) );
-            (1, map block_quote_of_b (gen_block' () (n / 2)));
+                (list_size (int_bound (n / 2)) (loop st (n / 2))) );
+            (1, map block_quote_of_b (loop st (n / 2)));
             (1, gen_list_block);
           ]
   in
-  sized_size nat_small @@ gen_block' ()
+  sized_size nat_small @@ loop (init_state ())
 
 (* let gen_block ?(w_direct_blank_line = 1) ?(w_direct_thematic_break = 1)
     ?(w_direct_code_block = 1) ?(w_direct_html_block = 1)

@@ -15,7 +15,8 @@ let no_trailing_blank_line_in_blocks : Property.t =
     match b with
     | Block.Blocks (bs, _) as blocks -> (
         match List.rev bs with
-        | Block.Blank_line _ :: _ -> Fail (b, [ ("blocks", Block blocks) ])
+        | Block.Blank_line _ :: _ ->
+            Fail (b, [ ("blocks", Block blocks) ])
         | _ -> Pass)
     | _ -> Pass
   in
