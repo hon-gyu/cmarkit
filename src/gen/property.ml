@@ -1,7 +1,11 @@
 (* TOOD:
   - make calculation of metadata lazy
 *)
-open Oymarkit_
+module Block = Oymarkit_.Block
+module Sexp_ = Oymarkit_.Sexp_
+module Pp = Oymarkit_.Pp
+module Doc = Oymarkit_.Doc
+module Meta = Oymarkit_.Meta
 
 let use_sexp = true
 
@@ -84,10 +88,15 @@ let pp_fail t fmt b : unit =
         Fmt.pf fmt "@[<v>{ block: %a@,; cm: %a@,; metadata: %a@,}@]" pp_block b
           (pp_cm ()) (to_commonmark b) pp_metadata meta
 
-let qcheck_test_of_t ?(count = 500) () (t : t) : QCheck2.Test.t =
-  QCheck2.Test.make ~name:t.name ~count
+let qcheck_test_of_t ?(count = 500) ?(negative = false) ?config () (t : t) :
+    QCheck2.Test.t =
+  let make_test =
+    if not negative then QCheck2.Test.make ~name:t.name ~count
+    else QCheck2.Test.make_neg ~name:t.name ~count
+  in
+  make_test
     ~print:(fun b -> Fmt.str "%a" (pp_fail t) b)
-    (Gen.gen_block ())
+    (Gen.mk_gen_block ?config ())
     (fun b ->
       try
         match t.check b with

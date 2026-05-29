@@ -1,5 +1,5 @@
 (tests
- (names normalize_idempotent render_roundtrip trailing_blank_in_blocks)
+ (names normalize_idempotent render_roundtrip no_trailing_blank_in_blocks)
  (libraries
   oymarkit_
   oymarkit_generator

@@ -139,13 +139,19 @@ let html_block_egs : Block.t list =
   ]
   |> List.map (fun lines -> Block.(Html_block (lines, Meta.none)))
 
-type block_gen_config = { foo : int }
+type block_gen_config = {
+  no_direct_blank_line : bool;
+  no_trailing_blank_line_in_blocks : bool;
+}
+
 type block_gen_state = { foo : int }
 
-let default_config : block_gen_config = { foo = 0 }
-let init_state () : block_gen_state = { foo = 0 }
+let default_config : block_gen_config =
+  { no_direct_blank_line = false; no_trailing_blank_line_in_blocks = false }
 
-let gen_leaf_block ?(w_blank_line = 1) ?(w_thematic_break = 1)
+let init_state : block_gen_state = { foo = 0 }
+
+let gen_leaf_block_ ?(w_blank_line = 1) ?(w_thematic_break = 1)
     ?(w_code_block = 1) ?(w_html_block = 1) ?(w_paragraph = 1) ?(w_heading = 1)
     () : Block.t G.t =
   G.oneof_weighted
@@ -158,41 +164,51 @@ let gen_leaf_block ?(w_blank_line = 1) ?(w_thematic_break = 1)
       (w_heading, gen_heading);
     ]
 
-let gen_leaf_block' config st =
-  gen_leaf_block ()
+let gen_leaf_block config st =
+  let w_blank_line = if config.no_direct_blank_line then Some 0 else None in
+  gen_leaf_block_ ?w_blank_line ()
 
-let gen_block ?(config = default_config) () : Block.t G.t =
+let rec gen_block config st n =
   let open G in
-  let rec loop st (n : int) : Block.t G.t =
-    match n with
-    | 0 -> gen_leaf_block' config st
-    | n ->
-        let blocks_of_bs bs = Block.Blocks (bs, Meta.none) in
-        let block_quote_of_b b =
-          Block.(Block_quote (Block.Block_quote.make b, Meta.none))
-        in
-        let gen_list_block =
-          let gen_item =
-            map
-              (fun block -> (Block.List_item.make block, Meta.none))
-              (loop st (n / 2))
-          in
+  match n with
+  | 0 -> gen_leaf_block config st
+  | n ->
+      let block_quote_of_b b =
+        Block.(Block_quote (Block.Block_quote.make b, Meta.none))
+      in
+      let gen_list_block =
+        let gen_item =
           map
-            (fun items ->
-              Block.(List (Block.List'.make (`Unordered '-') items, Meta.none)))
-            (list_size (int_bound (n / 2)) gen_item)
+            (fun block -> (Block.List_item.make block, Meta.none))
+            (gen_block config st (n / 2))
         in
-        oneof_weighted
-          [
-            (2, gen_leaf_block' config st);
-            ( 1,
-              map blocks_of_bs
-                (list_size (int_bound (n / 2)) (loop st (n / 2))) );
-            (1, map block_quote_of_b (loop st (n / 2)));
-            (1, gen_list_block);
-          ]
+        map
+          (fun items ->
+            Block.(List (Block.List'.make (`Unordered '-') items, Meta.none)))
+          (list_size (int_bound (n / 2)) gen_item)
+      in
+      oneof_weighted
+        [
+          (2, gen_leaf_block config st);
+          (1, gen_blocks config st (n / 2));
+          (1, map block_quote_of_b (gen_block config st (n / 2)));
+          (1, gen_list_block);
+        ]
+
+and gen_blocks config st n : Block.t G.t =
+  let open G in
+  let (blocks : Block.t list t) =
+    if config.no_trailing_blank_line_in_blocks then
+      let config' = { config with no_direct_blank_line = true } in
+      list_size (int_bound n) (gen_block config' st n)
+    else
+      (* Note: here it's possible that blocks has length 0 or 1 *)
+      list_size (int_bound n) (gen_block config st n)
   in
-  sized_size nat_small @@ loop (init_state ())
+  map (fun bs -> Block.Blocks (bs, Meta.none)) blocks
+
+let mk_gen_block ?(config = default_config) () : Block.t G.t =
+  G.(sized_size nat_small @@ gen_block config init_state)
 
 (* let gen_block ?(w_direct_blank_line = 1) ?(w_direct_thematic_break = 1)
     ?(w_direct_code_block = 1) ?(w_direct_html_block = 1)
@@ -275,7 +291,7 @@ let%expect_test _ =
     |}]
 
 let%expect_test _ =
-  Pp_distr.pp_gen ~display:`Boxplot () Format.std_formatter (gen_block ())
+  Pp_distr.pp_gen ~display:`Boxplot () Format.std_formatter (mk_gen_block ())
     Stat.block_stats;
   [%expect
     {|
