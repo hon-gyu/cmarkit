@@ -133,9 +133,9 @@ let gen_heading : Block.t G.t =
 
 let html_block_egs : Block.t list =
   [
-    [ ("<div>\n", Meta.none) ];
-    [ ("<p>hello</p>\n", Meta.none) ];
-    [ ("<!-- comment -->\n", Meta.none) ];
+    [ ("<div>", Meta.none) ];
+    [ ("<p>hello</p>", Meta.none) ];
+    [ ("<!-- comment -->", Meta.none) ];
   ]
   |> List.map (fun lines -> Block.(Html_block (lines, Meta.none)))
 

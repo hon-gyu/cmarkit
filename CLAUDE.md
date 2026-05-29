@@ -4,4 +4,4 @@ This is a fork of cmarkit.
 - it adds more extensions (TODO)
 - ...
 
-@docs/typing.mld
+@doc/typing.mld
