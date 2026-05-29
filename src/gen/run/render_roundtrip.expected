@@ -1,16 +1,14 @@
 
 --- Failure --------------------------------------------------------------------
 
-Test roundtrip failed (3 shrink steps):
+Test roundtrip failed (2 shrink steps):
 
-{ block: (Html_block "<div>\n")
-; cm: ┌─────┐
-      │<div>│
-      └─────┘
-; reparse: (Blocks (Html_block <div>) Blank_line)
-; reparse_cm: ┌─────┐
-              │<div>│
-              └─────┘
+{ block: (Paragraph (Inlines))
+; cm: ┌┐
+      └┘
+; reparse: Blank_line
+; reparse_cm: ┌┐
+              └┘
 }
 ================================================================================
 failure (1 tests failed, 0 tests errored, ran 1 tests)
