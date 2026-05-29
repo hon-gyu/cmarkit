@@ -102,7 +102,7 @@ let pp_fail t fmt b : unit =
         )
         meta
 
-let qcheck_test_of_t ?(count = 500) ?(negative = false) ?config () (t : t) :
+let qcheck_test_of_t ?(count = 500) ?(negative = false) ?(gen=Gen.mk_gen_block ()) () (t : t) :
     QCheck2.Test.t =
   let make_test =
     if not negative then QCheck2.Test.make ~name:t.name ~count
@@ -110,7 +110,7 @@ let qcheck_test_of_t ?(count = 500) ?(negative = false) ?config () (t : t) :
   in
   make_test
     ~print:(fun b -> Fmt.str "%a" (pp_fail t) b)
-    (Gen.mk_gen_block ?config ())
+    gen
     (fun b ->
       try
         match t.check b with

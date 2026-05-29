@@ -1,18 +1,14 @@
 open Common_
 
+let gen = G.(mk_gen_block ~config:Config.typed_md ())
+
 let () =
   let rand = Random.State.make [| 0 |] in
   ignore
   @@ QCheck_base_runner.run_tests ~colors:false ~rand
        [
          P.qcheck_test_of_t
-           ?config:
-             (Some
-                G.
-                  {
-                    Config.typed_md with
-                    no_trailing_blank_line_in_blocks = true;
-                  })
+           ~gen
            () T.no_trailing_blank_line_in_blocks;
        ]
 
@@ -24,13 +20,7 @@ let () =
   @@ QCheck_base_runner.run_tests ~colors:false ~rand
        [
          P.qcheck_test_of_t
+           ~gen
            ~negative:true
-           ?config:
-             (Some
-                G.
-                  {
-                    Config.typed_md with
-                    no_trailing_blank_line_in_blocks = false;
-                  })
            () T.no_trailing_blank_line_in_blocks;
        ]

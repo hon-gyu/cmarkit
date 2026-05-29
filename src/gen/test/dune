@@ -1,5 +1,5 @@
 (tests
- (names normalize_idempotent render_roundtrip no_trailing_blank_in_blocks)
+ (names test_leaf_block)
  (libraries
   oymarkit_
   oymarkit_generator

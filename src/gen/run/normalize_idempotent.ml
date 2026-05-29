@@ -1,7 +1,8 @@
-open Oymarkit_generator.Property
+open Common_
 
 let () =
   let rand = Random.State.make [| 0 |] in
+  let gen = G.(mk_gen_block ~config:Config.typed_md ()) in
   ignore
   @@ QCheck_base_runner.run_tests ~colors:false ~rand
-       [ qcheck_test_of_t () normalize_idempotent ];
+       [ P.qcheck_test_of_t ~gen () P.normalize_idempotent ];
