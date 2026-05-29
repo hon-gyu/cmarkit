@@ -3,18 +3,14 @@
 
 Test roundtrip failed (3 shrink steps):
 
-{ block: (Blocks (Html_block <div>) Blank_line)
+{ block: (Html_block "<div>\n")
 ; cm: ┌─────┐
       │<div>│
       └─────┘
-; metadata: { cm: ┌─────┐
-                  │<div>│
-                  └─────┘
-            ; cm': ┌─────┐
-                   │<div>│
-                   └─────┘
-            ; expect: (Html_block "<div>\n")
-            }
+; reparse: (Blocks (Html_block <div>) Blank_line)
+; reparse_cm: ┌─────┐
+              │<div>│
+              └─────┘
 }
 ================================================================================
 failure (1 tests failed, 0 tests errored, ran 1 tests)

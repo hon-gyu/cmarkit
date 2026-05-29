@@ -1,6 +1,4 @@
-module P = Oymarkit_generator.Property
-module T = Oymarkit_generator.Typing
-module G = Oymarkit_generator.Gen
+open Common_
 
 let () =
   let rand = Random.State.make [| 0 |] in
@@ -12,7 +10,7 @@ let () =
              (Some
                 G.
                   {
-                    default_config with
+                    Config.typed_md with
                     no_trailing_blank_line_in_blocks = true;
                   })
            () T.no_trailing_blank_line_in_blocks;
@@ -31,7 +29,7 @@ let () =
              (Some
                 G.
                   {
-                    default_config with
+                    Config.typed_md with
                     no_trailing_blank_line_in_blocks = false;
                   })
            () T.no_trailing_blank_line_in_blocks;

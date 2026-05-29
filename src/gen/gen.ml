@@ -139,15 +139,19 @@ let html_block_egs : Block.t list =
   ]
   |> List.map (fun lines -> Block.(Html_block (lines, Meta.none)))
 
-type block_gen_config = {
-  no_direct_blank_line : bool;
-  no_trailing_blank_line_in_blocks : bool;
-}
+module Config = struct
+  type t = {
+    no_direct_blank_line : bool;
+    no_trailing_blank_line_in_blocks : bool;
+  }
+
+  let empty =
+    { no_direct_blank_line = false; no_trailing_blank_line_in_blocks = false }
+
+  let typed_md = { empty with no_trailing_blank_line_in_blocks = true }
+end
 
 type block_gen_state = { foo : int }
-
-let default_config : block_gen_config =
-  { no_direct_blank_line = false; no_trailing_blank_line_in_blocks = false }
 
 let init_state : block_gen_state = { foo = 0 }
 
@@ -164,7 +168,7 @@ let gen_leaf_block_ ?(w_blank_line = 1) ?(w_thematic_break = 1)
       (w_heading, gen_heading);
     ]
 
-let gen_leaf_block config st =
+let gen_leaf_block (config : Config.t) st =
   let w_blank_line = if config.no_direct_blank_line then Some 0 else None in
   gen_leaf_block_ ?w_blank_line ()
 
@@ -207,7 +211,7 @@ and gen_blocks config st n : Block.t G.t =
   in
   map (fun bs -> Block.Blocks (bs, Meta.none)) blocks
 
-let mk_gen_block ?(config = default_config) () : Block.t G.t =
+let mk_gen_block ?(config = Config.empty) () : Block.t G.t =
   G.(sized_size nat_small @@ gen_block config init_state)
 
 (* let gen_block ?(w_direct_blank_line = 1) ?(w_direct_thematic_break = 1)

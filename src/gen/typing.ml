@@ -8,17 +8,39 @@ open Oymarkit_
     trailing [Blank_line]. Any such node is a generator artifact with no
     syntactic witness. *)
 
+(* Immediate child blocks of [b], so the check can descend into nested
+   structures (block quotes, list items, footnote definitions, ...). *)
+let child_blocks : Block.t -> Block.t list = function
+  | Block.Block_quote (bq, _) -> [ Block.Block_quote.block bq ]
+  | Block.Blocks (bs, _) -> bs
+  | Block.List (l, _) ->
+      List.map (fun (i, _) -> Block.List_item.block i) (Block.List'.items l)
+  | Block.Ext_footnote_definition (fn, _) -> [ Block.Footnote.block fn ]
+  | _ -> []
+
 let no_trailing_blank_line_in_blocks : Property.t =
   let name = "no trailing blank line in blocks" in
   let rec check : Block.t -> Property.result =
    fun b ->
-    match b with
-    | Block.Blocks (bs, _) as blocks -> (
-        match List.rev bs with
-        | Block.Blank_line _ :: _ ->
-            Fail (b, [ ("blocks", Block blocks) ])
-        | _ -> Pass)
-    | _ -> Pass
+    let here =
+      match b with
+      | Block.Blocks (bs, _) as blocks -> (
+          match List.rev bs with
+          | Block.Blank_line _ :: _ ->
+              Property.Fail (b, [ ("blocks", Block blocks) ])
+          | _ -> Pass)
+      | _ -> Pass
+    in
+    match here with
+    | Property.Fail _ -> here
+    | Property.Pass ->
+        (* Recurse into nested blocks, returning the first failure. *)
+        List.fold_left
+          (fun acc child ->
+            match acc with
+            | Property.Fail _ -> acc
+            | Property.Pass -> check child)
+          Property.Pass (child_blocks b)
   in
   { name; check }
 

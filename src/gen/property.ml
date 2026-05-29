@@ -83,10 +83,24 @@ let pp_fail t fmt b : unit =
   match t.check b with
   | Pass -> assert false
   | Fail (b, meta) ->
-      if Int.equal (List.length meta) 0 then Fmt.pf fmt "%a" pp_block b
-      else
-        Fmt.pf fmt "@[<v>{ block: %a@,; cm: %a@,; metadata: %a@,}@]" pp_block b
-          (pp_cm ()) (to_commonmark b) pp_metadata meta
+    if false then
+      Fmt.pf fmt "@[<v>{ block: %a@,; cm: %a@,; %a@,}@]"
+        pp_block b
+        (pp_cm ()) (to_commonmark b)
+        (
+          if List.length meta = 0 then (fun _ _ -> ())
+          else (fun fmt m -> Fmt.pf fmt "metadata: %a" pp_metadata m)
+        )
+        meta
+    else
+      Fmt.pf fmt "@[<v>{ block: %a@,; cm: %a@,; %a@,}@]"
+        pp_block b
+        (pp_cm ()) (to_commonmark b)
+        (
+          let pp_pair fmt (k, v) = Fmt.pf fmt "@[<h>%s:@ %a@]" k (pp_value ()) v in
+          fun fmt m -> Fmt.pf fmt "%a" (Fmt.list ~sep:(Fmt.any "@,; ") pp_pair) m
+        )
+        meta
 
 let qcheck_test_of_t ?(count = 500) ?(negative = false) ?config () (t : t) :
     QCheck2.Test.t =
@@ -141,10 +155,12 @@ let roundtrip =
   let check =
    fun b ->
     let b' = reparse b in
-    let metadata =
-      [ ("cm", Md (to_commonmark b)); ("cm'", Md (to_commonmark b')) ]
-    in
-    check_eq ~expect:b ~metadata b'
+    if block_equal b b' then Pass
+    else
+      Fail (b, [
+        ("reparse", Block b');
+        ("reparse_cm", Md (to_commonmark b'))
+      ])
   in
   { name = "roundtrip"; check }
 
