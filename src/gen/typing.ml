@@ -110,7 +110,10 @@ let no_empty_blocks : Property.t =
 let typed : Property.t =
   let p =
     Property.(
-      no_trailing_blank_line_in_blocks & no_empty_paragraph & no_empty_blocks)
+      none
+      (* & no_trailing_blank_line_in_blocks *)
+      & no_empty_paragraph
+      & no_empty_blocks)
   in
   let name' = "typed: " ^ p.name in
   { p with name = name' }

@@ -22,6 +22,7 @@ let imply (p : t) (q : t) : t =
   }
 
 let ( ==> ) = imply
+let none : t = { name = "none"; check = (fun _ -> Pass) }
 
 (* TODO: make the metadata calculation applicative? *)
 let and_ (p : t) (q : t) : t =
@@ -73,7 +74,7 @@ let pp_fail t fmt b : unit =
         Fmt.pf fmt "@[<v>{ block: %a@,; cm: %a@,; %a@,}@]" pp_block b (pp_cm ())
           (to_commonmark b)
           (let pp_pair fmt (k, v) =
-            Fmt.pf fmt "@[<v>\"%s\":@ %a@]" k (pp_value ()) v
+             Fmt.pf fmt "@[<v>\"%s\":@ %a@]" k (pp_value ()) v
            in
            fun fmt m ->
              Fmt.pf fmt "%a" (Fmt.list ~sep:(Fmt.any "@,; ") pp_pair) m)

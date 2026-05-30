@@ -72,15 +72,18 @@ module Bconfig = struct
   let typed_md =
     {
       empty with
-      no_trailing_blank_line_in_blocks = true;
       no_empty_paragraph = true;
       no_empty_blocks = true;
       no_break_in_atx_heading = true;
+      (* *)
+      no_trailing_blank_line_in_blocks = false;
     }
 end
 
 let gen_paragraph (config : Bconfig.t) : Block.t G.t =
-  let ic = { config.inline with no_empty_inlines = config.no_empty_paragraph } in
+  let ic =
+    { config.inline with no_empty_inlines = config.no_empty_paragraph }
+  in
   G.map
     (fun inline -> Block.(Paragraph (Block.Paragraph.make inline, Meta.none)))
     (gen_inline ic)
