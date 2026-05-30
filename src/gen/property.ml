@@ -10,7 +10,7 @@ type t = { name : string; check : Block.t -> result }
 
 exception Failed_precondition
 
-let imply p q : t =
+let imply (p : t) (q : t) : t =
   let name = Fmt.str "%s ==> %s" p.name q.name in
   {
     name;
@@ -21,7 +21,34 @@ let imply p q : t =
         | Fail _ -> raise Failed_precondition);
   }
 
-let ( ==> ) p q = imply p q
+let ( ==> ) = imply
+
+(* TODO: make the metadata calculation applicative? *)
+let and_ (p : t) (q : t) : t =
+  let name = Fmt.str "%s &@ %s" p.name q.name in
+  {
+    name;
+    check =
+      (fun b ->
+        match p.check b with
+        | Pass ->
+            begin match q.check b with
+            | Pass -> Pass
+            | Fail (b, meta2) -> Fail (b, [ (q.name, Object meta2) ])
+            end
+        | Fail (b, meta1) -> (
+            match q.check b with
+            | Pass -> Fail (b, [ (p.name, Object meta1) ])
+            | Fail (_, meta2) ->
+                let meta =
+                  metadata_concat
+                    ?wrapped_name:(Some (p.name, q.name))
+                    meta1 meta2
+                in
+                Fail (b, meta)));
+  }
+
+let ( & ) = and_
 
 let fail ?(message : string option) ?(expect : Block.t option) ?(metadata = [])
     (actual : Block.t) =
@@ -46,7 +73,7 @@ let pp_fail t fmt b : unit =
         Fmt.pf fmt "@[<v>{ block: %a@,; cm: %a@,; %a@,}@]" pp_block b (pp_cm ())
           (to_commonmark b)
           (let pp_pair fmt (k, v) =
-             Fmt.pf fmt "@[<h>%s:@ %a@]" k (pp_value ()) v
+            Fmt.pf fmt "@[<v>\"%s\":@ %a@]" k (pp_value ()) v
            in
            fun fmt m ->
              Fmt.pf fmt "%a" (Fmt.list ~sep:(Fmt.any "@,; ") pp_pair) m)

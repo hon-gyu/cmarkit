@@ -106,6 +106,15 @@ let no_empty_blocks : Property.t =
   in
   { name; check }
 
+(* All rules aggregated *)
+let typed : Property.t =
+  let p =
+    Property.(
+      no_trailing_blank_line_in_blocks & no_empty_paragraph & no_empty_blocks)
+  in
+  let name' = "typed: " ^ p.name in
+  { p with name = name' }
+
 (** {1 Others} *)
 
 (* Layout.blanks is only spaces and tabs, no newline

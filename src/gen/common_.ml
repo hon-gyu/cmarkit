@@ -17,10 +17,19 @@ type value =
   | Float of float
   | Bool of bool
   | Null
+  | Object of (string * value) list
   | Block of Block.t
   | Md of string
 
 type metadata = (string * value) list
+
+let metadata_concat ?(wrapped_name : (string * string) option) m1 m2 =
+  match wrapped_name with
+  | None -> m1 @ m2
+  | Some (n1, n2) ->
+      let m1' = (n1, Object m1) in
+      let m2' = (n2, Object m2) in
+      [ m1'; m2' ]
 
 let box_frame_default = true
 let to_commonmark b = b |> Doc.make |> Cmarkit_commonmark.of_doc
@@ -31,12 +40,16 @@ let pp_cm ?(box_frame = box_frame_default) () fmt (cm : string) =
     let b = PrintBox.(frame @@ text cm) in
     Format.fprintf fmt "%a" PrintBox_text.pp b
 
-let pp_value ?(box_frame = box_frame_default) () fmt = function
+let rec pp_value ?(box_frame = box_frame_default) () fmt = function
   | String s -> Format.fprintf fmt "%s" s
   | Int i -> Format.fprintf fmt "%d" i
   | Float f -> Format.fprintf fmt "%f" f
   | Bool b -> Format.fprintf fmt "%b" b
   | Null -> Format.fprintf fmt "null"
+  | Object o ->
+      let pp_pair fmt (k, v) = Fmt.pf fmt "%s: %a" k (pp_value ()) v in
+      let pp_pairs = Fmt.list ~sep:(Fmt.any "@,; ") pp_pair in
+      Fmt.pf fmt "@[<v>{ %a@,}@]" pp_pairs o
   | Block b -> Format.fprintf fmt "%a" pp_block b
   | Md s ->
       if not box_frame then Format.fprintf fmt "%s" s
@@ -45,7 +58,7 @@ let pp_value ?(box_frame = box_frame_default) () fmt = function
         Format.fprintf fmt "%a" PrintBox_text.pp b
 
 let pp_metadata fmt m =
-  let pp_pair fmt (k, v) = Fmt.pf fmt "@[<h>%s:@ %a@]" k (pp_value ()) v in
+  let pp_pair fmt (k, v) = Fmt.pf fmt "@[<v>\"%s\":@ %a@]" k (pp_value ()) v in
   Fmt.pf fmt "@[<v>{ %a@,}@]" (Fmt.list ~sep:(Fmt.any "@,; ") pp_pair) m
 
 let reparse (b : Block.t) : Block.t =
