@@ -1,3 +1,8 @@
+(** {0 Block AST Properties}
+    - Property types
+    - Counterexample printer
+    - QCheck.Test bridge *)
+
 (* TOOD:
   - make calculation of metadata lazy
 *)
@@ -24,7 +29,6 @@ let imply (p : t) (q : t) : t =
 let ( ==> ) = imply
 let none : t = { name = "none"; check = (fun _ -> Pass) }
 
-(* TODO: make the metadata calculation applicative? *)
 let and_ (p : t) (q : t) : t =
   let name = Fmt.str "%s &@ %s" p.name q.name in
   {

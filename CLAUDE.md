@@ -1,7 +1,4 @@
-This is a fork of cmarkit.
-- it breaks cmarkit into smaller modules
-- it adds pp and qcheck generators
-- it adds more extensions (TODO)
-- ...
+See @.agent/overview.mld
 
-@.agent/overview.mld
+Notes:
+- We are using tests (especially expect-test and property-based tests) to explore the rules we should encode in AST generator. So when we are analyzing a test failure, sometimes the solution is not "fix" it.

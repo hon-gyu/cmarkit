@@ -1,3 +1,9 @@
+(** Predicates that define well-formed AST
+
+    In an ideal world, when our generator respects these predicates (which means
+    the generated AST is typed), then it should follow the nice properties we'd
+    like to see. *)
+
 open Cmarkit_
 
 (** {1 No trailing blank lines in blocks}

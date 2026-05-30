@@ -105,6 +105,8 @@ module Iconfig = struct
       no_empty_inlines = false;
       no_nested_link = false;
     }
+
+  let typed = { default with no_nested_link = true }
 end
 
 (**

@@ -1,4 +1,7 @@
 (** {0:distr Visualise distributions}
+    @meta{[
+      ai-disclosure: ai-generated
+    ]}
 
     Renders statistical summaries of sampled float-valued measurements.
 
@@ -486,7 +489,9 @@ let%test_module _ =
 
     let%expect_test "table" =
       let rand = Random.State.make [| 0 |] in
-      let report = distr_of_gen ~rand ~n:1000 ~display:`Stat_table g tree_stats in
+      let report =
+        distr_of_gen ~rand ~n:1000 ~display:`Stat_table g tree_stats
+      in
       print_endline report;
       [%expect
         {|

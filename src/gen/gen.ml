@@ -1,3 +1,8 @@
+(** _
+    - {!Config} encodes {!mod:Typing} rules
+    - when the typed config is enabled, we expect the generator to produce ASTs
+      that satisfy the typing rules *)
+
 open Cmarkit_
 module G = QCheck2.Gen
 open Gen_inline
@@ -56,7 +61,7 @@ module Bconfig = struct
       no_empty_paragraph = false;
       no_empty_blocks = false;
       no_break_in_atx_heading = false;
-      inline = Iconfig.default;
+      inline = Iconfig.typed;
     }
 
   (** This config indicates its generator will only construct
