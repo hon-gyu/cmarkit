@@ -149,6 +149,6 @@ let rec no_break : Inline.t -> bool = function
 let no_break_in_atx_heading : Block.t -> bool = function
   | Block.Heading (h, _) -> (
       match Block.Heading.layout h with
-      | `Atx _ -> Typing_inline.no_break (Block.Heading.inline h)
+      | `Atx _ -> no_break (Block.Heading.inline h)
       | `Setext _ -> true)
   | _ -> true

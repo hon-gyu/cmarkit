@@ -127,56 +127,51 @@ let gen_leaf (ic : Iconfig.t) =
 
 let gen_inline (ic : Iconfig.t) : Inline.t G.t =
   let open Iconfig in
-  let gen_leaf = gen_leaf ic in
-  let inlines_len n =
-    if ic.no_empty_inlines then G.int_range 1 (max 1 (n / 2))
-    else G.int_bound (n / 2)
+  let open G in
+  let inlines_len ic n =
+    if ic.no_empty_inlines then int_range 1 (max 1 (n / 2))
+    else int_bound (n / 2)
   in
-  (* When [no_nested_link] is set, link content is drawn from a link-free generator ([self_nolink]);
-     otherwise it uses the full generator and may emit invalid nested links.  *)
-  G.(
-    let body ~(self : int -> Inline.t G.t) ~(link_content : int -> Inline.t G.t)
-        ~(allow_link : bool) (n : int) =
-      let inlines_of_is is = Inline.Inlines (is, Meta.none) in
-      let emph_gen =
-        bind (self (n - 1)) (fun i -> oneof_list @@ mk_emph_egs i)
-      in
-      let strong_emph_gen =
-        bind (self (n - 1)) (fun i -> oneof_list @@ mk_strong_emph_egs i)
-      in
-      let link_branch =
-        if allow_link then [ (ic.w_link, map mk_link (link_content (n - 1))) ]
-        else []
-      in
-      [
-        (1, gen_leaf);
-        ( ic.w_inlines,
-          map inlines_of_is (list_size (inlines_len n) (self (n / 2))) );
-        (ic.w_emphasis, emph_gen);
-        (ic.w_strong_emphasis, strong_emph_gen);
-        (ic.w_image, map mk_image (self (n - 1)));
-      ]
-      @ link_branch
-      |> List.filter (fun (w, _) -> w > 0)
-      |> oneof_weighted
-    in
-    (* [self_nolink] never emits a link, at any depth. With [no_nested_link]
-       off, link content reuses [self_full] (nested links allowed). *)
-    let rec self_full (n : int) =
-      match n with
-      | 0 -> gen_leaf
-      | n ->
-          let link_content =
-            if ic.no_nested_link then self_nolink else self_full
-          in
-          body ~self:self_full ~link_content ~allow_link:true n
-    and self_nolink (n : int) =
-      match n with
-      | 0 -> gen_leaf
-      | n ->
-          body ~self:self_nolink ~link_content:self_nolink ~allow_link:false n
-    in
-    sized_size nat_small self_full)
+  (* [ic] is threaded through the recursion (à la [gen.ml]'s [config]) so a
+     subtree can be generated under a tightened config.
+
+     Each recursive sub-generator goes through [delay], which is load-bearing:
+     it hands back the generator without running the recursion, so building a
+     node is O(branches) and only the one branch [oneof_weighted] picks unfolds
+     at run time. Calling [self] directly (an eager [let rec] over [n - 1])
+     would build all children at every node and blow up exponentially. *)
+  let rec self (ic, n) =
+    let child ic' k = delay (fun () -> self (ic', k)) in
+    match n with
+    | 0 -> gen_leaf ic
+    | n ->
+        let inlines_of_is is = Inline.Inlines (is, Meta.none) in
+        let emph_gen =
+          bind (child ic (n - 1)) (fun i -> oneof_list @@ mk_emph_egs i)
+        in
+        let strong_emph_gen =
+          bind (child ic (n - 1)) (fun i -> oneof_list @@ mk_strong_emph_egs i)
+        in
+        (* CommonMark forbids a link inside a link at any depth. When
+           [no_nested_link] is set, generate link content with links disabled
+           all the way down by threading [w_link = 0] into it. *)
+        let link_ic =
+          if ic.no_nested_link then { ic with w_link = 0 } else ic
+        in
+        [
+          (1, gen_leaf ic);
+          ( ic.w_inlines,
+            map inlines_of_is (list_size (inlines_len ic n) (child ic (n / 2)))
+          );
+          (ic.w_emphasis, emph_gen);
+          (ic.w_strong_emphasis, strong_emph_gen);
+          (ic.w_link, map mk_link (child link_ic (n - 1)));
+          (ic.w_image, map mk_image (child ic (n - 1)));
+        ]
+        |> List.filter (fun (w, _) -> w > 0)
+        |> oneof_weighted
+  in
+  sized_size nat_small (fun n -> self (ic, n))
 
 let%expect_test "Default config should give a sensible distribution" =
   Pp_distr.pp_gen () Format.std_formatter
