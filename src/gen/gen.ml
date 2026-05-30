@@ -59,6 +59,16 @@ module Bconfig = struct
       inline = Iconfig.default;
     }
 
+  (** This config indicates its generator will only construct
+      AST that is valid w.r.t. some desirable properties.
+
+      @requirement
+      Each of these choice needs to be justified with a test
+      against a desirable property in both positive and negative
+      cases. I.e.:
+      - what property holds with this knob enabled?
+      - what property is violated with this knob disabled?
+  *)
   let typed_md =
     {
       empty with
@@ -70,7 +80,7 @@ module Bconfig = struct
 end
 
 let gen_paragraph (config : Bconfig.t) : Block.t G.t =
-  let ic = { config.inline with nonempty = config.no_empty_paragraph } in
+  let ic = { config.inline with no_empty_inlines = config.no_empty_paragraph } in
   G.map
     (fun inline -> Block.(Paragraph (Block.Paragraph.make inline, Meta.none)))
     (gen_inline ic)

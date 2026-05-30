@@ -1,6 +1,7 @@
 ; Tests for generators themselves
+; Most importantly, the config should do what they indicate
 (tests
- (names test_leaf_block)
+ (names test_leaf_block test_leaf_inline test_inline_config)
  (libraries
   oymarkit_
   oymarkit_generator

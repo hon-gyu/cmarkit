@@ -1,16 +1,16 @@
 
 --- Failure --------------------------------------------------------------------
 
-Test roundtrip failed (3 shrink steps):
+Test leaf inline roundtrip failed (1 shrink steps):
 
-{ block: (Paragraph (Break hard))
+{ i: (Break hard)
 ; cm: ┌──┐
       │  │
       └──┘
-; reparse: (Blocks Blank_line Blank_line)
-; reparse_cm: ┌──┐
-              │  │
-              └──┘
+; i': None
+; cm': ┌────┐
+       │None│
+       └────┘
 }
 ================================================================================
 failure (1 tests failed, 0 tests errored, ran 1 tests)

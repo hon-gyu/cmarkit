@@ -64,7 +64,7 @@ module Iconfig = struct
     w_strong_emphasis : int;
     w_link : int;
     w_image : int;
-    nonempty : bool;
+    no_empty_inlines : bool;
   }
 
   let default =
@@ -79,25 +79,27 @@ module Iconfig = struct
       w_strong_emphasis = 1;
       w_link = 1;
       w_image = 1;
-      nonempty = false;
+      no_empty_inlines = false;
     }
 end
 
+let gen_leaf (ic : Iconfig.t) =
+  [
+    (ic.w_text, G.oneof_list text_egs);
+    (ic.w_code_span, G.oneof_list code_span_egs);
+    (ic.w_autolink, G.oneof_list autolink_egs);
+    (ic.w_break, G.oneof_list break_egs);
+    (ic.w_raw_html, G.oneof_list raw_html_egs);
+  ]
+  |> List.filter (fun (w, _) -> w > 0)
+  |> G.oneof_weighted
+
 let gen_inline (ic : Iconfig.t) : Inline.t G.t =
   let open Iconfig in
-  let gen_leaf =
-    [
-      (ic.w_text, G.oneof_list text_egs);
-      (ic.w_code_span, G.oneof_list code_span_egs);
-      (ic.w_autolink, G.oneof_list autolink_egs);
-      (ic.w_break, G.oneof_list break_egs);
-      (ic.w_raw_html, G.oneof_list raw_html_egs);
-    ]
-    |> List.filter (fun (w, _) -> w > 0)
-    |> G.oneof_weighted
-  in
+  let gen_leaf = gen_leaf ic in
   let inlines_len n =
-    if ic.nonempty then G.int_range 1 (max 1 (n / 2)) else G.int_bound (n / 2)
+    if ic.no_empty_inlines then G.int_range 1 (max 1 (n / 2))
+    else G.int_bound (n / 2)
   in
   G.(
     sized_size nat_small
