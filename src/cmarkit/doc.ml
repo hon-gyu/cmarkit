@@ -3,6 +3,8 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+[@@@ocamlformat "disable"]
+
 module Meta = Cmarkit_base.Meta
 module Label = Common.Label
 module Layout = Common.Layout

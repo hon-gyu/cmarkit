@@ -1,3 +1,10 @@
+(*---------------------------------------------------------------------------
+   Copyright (c) 2021 The cmarkit programmers. All rights reserved.
+   SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+[@@@ocamlformat "disable"]
+
 open Common
 
 type t = ..

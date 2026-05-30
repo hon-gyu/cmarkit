@@ -1,3 +1,10 @@
+(*---------------------------------------------------------------------------
+   Copyright (c) 2021 The cmarkit programmers. All rights reserved.
+   SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+[@@@ocamlformat "disable"]
+
 module String_map = Map.Make (String)
 module Ascii = Cmarkit_base.Ascii
 module Text = Cmarkit_base.Text
