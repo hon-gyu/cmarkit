@@ -85,6 +85,9 @@ module Iconfig = struct
     w_link : int;
     w_image : int;
     no_empty_inlines : bool;
+    (* When set, a [Link] never contains another [Link] at any nesting depth
+       (even across an intervening image). *)
+    no_nested_link : bool;
   }
 
   let default =
@@ -100,6 +103,7 @@ module Iconfig = struct
       w_link = 1;
       w_image = 1;
       no_empty_inlines = false;
+      no_nested_link = false;
     }
 end
 
@@ -128,30 +132,51 @@ let gen_inline (ic : Iconfig.t) : Inline.t G.t =
     if ic.no_empty_inlines then G.int_range 1 (max 1 (n / 2))
     else G.int_bound (n / 2)
   in
+  (* When [no_nested_link] is set, link content is drawn from a link-free generator ([self_nolink]);
+     otherwise it uses the full generator and may emit invalid nested links.  *)
   G.(
-    sized_size nat_small
-    @@ fix (fun self (n : int) ->
-        match n with
-        | 0 -> gen_leaf
-        | n ->
-            let inlines_of_is is = Inline.Inlines (is, Meta.none) in
-            let emph_gen =
-              bind (self (n - 1)) (fun i -> oneof_list @@ mk_emph_egs i)
-            in
-            let strong_emph_gen =
-              bind (self (n - 1)) (fun i -> oneof_list @@ mk_strong_emph_egs i)
-            in
-            [
-              (1, gen_leaf);
-              ( ic.w_inlines,
-                map inlines_of_is (list_size (inlines_len n) (self (n / 2))) );
-              (ic.w_emphasis, emph_gen);
-              (ic.w_strong_emphasis, strong_emph_gen);
-              (ic.w_link, map mk_link (self (n - 1)));
-              (ic.w_image, map mk_image (self (n - 1)));
-            ]
-            |> List.filter (fun (w, _) -> w > 0)
-            |> oneof_weighted))
+    let body ~(self : int -> Inline.t G.t) ~(link_content : int -> Inline.t G.t)
+        ~(allow_link : bool) (n : int) =
+      let inlines_of_is is = Inline.Inlines (is, Meta.none) in
+      let emph_gen =
+        bind (self (n - 1)) (fun i -> oneof_list @@ mk_emph_egs i)
+      in
+      let strong_emph_gen =
+        bind (self (n - 1)) (fun i -> oneof_list @@ mk_strong_emph_egs i)
+      in
+      let link_branch =
+        if allow_link then [ (ic.w_link, map mk_link (link_content (n - 1))) ]
+        else []
+      in
+      [
+        (1, gen_leaf);
+        ( ic.w_inlines,
+          map inlines_of_is (list_size (inlines_len n) (self (n / 2))) );
+        (ic.w_emphasis, emph_gen);
+        (ic.w_strong_emphasis, strong_emph_gen);
+        (ic.w_image, map mk_image (self (n - 1)));
+      ]
+      @ link_branch
+      |> List.filter (fun (w, _) -> w > 0)
+      |> oneof_weighted
+    in
+    (* [self_nolink] never emits a link, at any depth. With [no_nested_link]
+       off, link content reuses [self_full] (nested links allowed). *)
+    let rec self_full (n : int) =
+      match n with
+      | 0 -> gen_leaf
+      | n ->
+          let link_content =
+            if ic.no_nested_link then self_nolink else self_full
+          in
+          body ~self:self_full ~link_content ~allow_link:true n
+    and self_nolink (n : int) =
+      match n with
+      | 0 -> gen_leaf
+      | n ->
+          body ~self:self_nolink ~link_content:self_nolink ~allow_link:false n
+    in
+    sized_size nat_small self_full)
 
 let%expect_test "Default config should give a sensible distribution" =
   Pp_distr.pp_gen () Format.std_formatter

@@ -75,6 +75,7 @@ module Bconfig = struct
       no_empty_paragraph = true;
       no_empty_blocks = true;
       no_break_in_atx_heading = true;
+      inline = { Iconfig.default with no_nested_link = true };
       (* *)
       no_trailing_blank_line_in_blocks = false;
     }
