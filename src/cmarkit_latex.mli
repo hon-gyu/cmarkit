@@ -24,7 +24,7 @@ type heading_level =
 
 val of_doc :
   ?backend_blocks:bool -> ?first_heading_level:heading_level ->
-  Oymarkit.Doc.t -> string
+  Cmarkit.Doc.t -> string
 (** [of_doc d] is a L{^A}T{_E}X fragment for [d]. See {!val-renderer}
     for more details and documentation about rendering options. *)
 
@@ -35,7 +35,7 @@ val renderer :
   Cmarkit_renderer.t
 (** [renderer] is a default L{^A}T{_E}X renderer. This renders
     the strict CommonMark abstract syntax tree and the supported
-    Cmarkit {{!Oymarkit.extensions}extensions}.
+    Cmarkit {{!Cmarkit.extensions}extensions}.
 
     The inline, block and document renderers always return
     [true]. Unknown block and inline values are rendered by a
@@ -135,7 +135,7 @@ v}
     {2:labels Section labels}
 
     Section labels are added to the output whenever
-    {!Oymarkit.Block.Heading.val-id} holds a value. If the identifier
+    {!Cmarkit.Block.Heading.val-id} holds a value. If the identifier
     already exists it is made unique by appending ["-"] and the first
     number starting from 1 that makes it unique. Also the character
     [_] seems problematic in labels even when escaped, we map it to [-]
@@ -150,7 +150,7 @@ v}
     {2:code_blocks Code blocks}
 
     If a language [lang] can be
-    {{!Oymarkit.Block.Code_block.language_of_info_string}extracted}
+    {{!Cmarkit.Block.Code_block.language_of_info_string}extracted}
     from a code block info string, the
     {{:https://www.ctan.org/pkg/listings}[listings]} package is used
     with the corresponding language in a [lstlisting] environment.
@@ -182,7 +182,7 @@ v}
    may want to add a document frame. For example:
 {[
 let latex_doc_of_md ?(title = "") md =
-  let doc = Oymarkit.Doc.of_string md in
+  let doc = Cmarkit.Doc.of_string md in
   let r = Cmarkit_latex.renderer () in
   let buffer_add_doc = Cmarkit_renderer.buffer_add_doc r in
   let buffer_add_title = Cmarkit_latex.buffer_add_latex_escaped_string in

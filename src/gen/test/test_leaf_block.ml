@@ -1,9 +1,9 @@
 (* Minimum requirement for a leaf generator is that
    it should maintain render roundtrip.
 *)
-module P = Oymarkit_generator.Property
-module T = Oymarkit_generator.Typing
-module G = Oymarkit_generator.Gen
+module P = Cmarkit_generator.Property
+module T = Cmarkit_generator.Typing
+module G = Cmarkit_generator.Gen
 
 let () =
   let rand = Random.State.make [| 0 |] in

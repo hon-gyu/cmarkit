@@ -1,8 +1,8 @@
 (tests
  (names normalize_idempotent render_roundtrip no_trailing_blank_in_blocks)
  (libraries
-  oymarkit_
-  oymarkit_generator
+  cmarkit_
+  cmarkit_generator
   fmt)
  (preprocess
   (pps ppx_jane ppx_expect)))

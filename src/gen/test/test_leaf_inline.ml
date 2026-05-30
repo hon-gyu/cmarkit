@@ -2,13 +2,13 @@
    roundtrip: there must exist a CommonMark witness whose parse recovers the
    inline (modulo normalization).
  *)
-module P = Oymarkit_generator.Property
-module G = Oymarkit_generator.Gen_inline
-module Inline = Oymarkit_.Inline
-module Block = Oymarkit_.Block
-module Meta = Oymarkit_.Meta
-module Sexp = Oymarkit_.Sexp
-module Inline_parse = Oymarkit_.Inline_parse
+module P = Cmarkit_generator.Property
+module G = Cmarkit_generator.Gen_inline
+module Inline = Cmarkit_.Inline
+module Block = Cmarkit_.Block
+module Meta = Cmarkit_.Meta
+module Sexp = Cmarkit_.Sexp
+module Inline_parse = Cmarkit_.Inline_parse
 
 let sexp_of_inline : Inline.t -> Sexplib0.Sexp.t =
   (Sexp.make_sexp_of ()).inline

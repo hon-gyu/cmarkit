@@ -1,6 +1,6 @@
 (library
   (name test_block_pp)
-  (libraries oymarkit_)
+  (libraries cmarkit_)
   (inline_tests)
   (preprocess (pps ppx_expect ppx_inline_test))
 )

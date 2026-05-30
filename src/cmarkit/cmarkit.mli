@@ -937,7 +937,7 @@ module Block : sig
 
   (** {1:blocks Blocks} *)
 
-  type t = Oymarkit_.Block.t = ..
+  type t = Cmarkit_.Block.t = ..
   (** The type for blocks. *)
 
   (** Blank lines. *)
@@ -1337,7 +1337,7 @@ module Doc : sig
 
   (** {1:docs Documents} *)
 
-  type t = Oymarkit_.Doc.t
+  type t = Cmarkit_.Doc.t
   (** The type for CommonMark documents. *)
 
   val nl : t -> Layout.string

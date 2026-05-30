@@ -5,19 +5,19 @@
 (library
  (name cmarkit_renderer)
  (modules cmarkit_renderer)
- (libraries oymarkit))
+ (libraries cmarkit))
 
 (library
  (name cmarkit_html)
  (modules cmarkit_html)
- (libraries oymarkit cmarkit_renderer))
+ (libraries cmarkit cmarkit_renderer))
 
 (library
  (name cmarkit_commonmark)
  (modules cmarkit_commonmark)
- (libraries oymarkit cmarkit_renderer))
+ (libraries cmarkit cmarkit_renderer))
 
 (library
  (name cmarkit_latex)
  (modules cmarkit_latex)
- (libraries oymarkit cmarkit_renderer))
+ (libraries cmarkit cmarkit_renderer))

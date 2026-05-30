@@ -3,8 +3,8 @@
 (tests
  (names test_leaf_block test_leaf_inline test_inline_config)
  (libraries
-  oymarkit_
-  oymarkit_generator
+  cmarkit_
+  cmarkit_generator
   fmt)
  (preprocess
   (pps ppx_jane ppx_expect)))

@@ -1,4 +1,4 @@
-open Oymarkit_
+open Cmarkit_
 
 let count_in_inline pred i =
   let rec loop acc i =

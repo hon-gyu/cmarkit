@@ -1,11 +1,11 @@
 (* TOOD:
   - make calculation of metadata lazy
 *)
-module Block = Oymarkit_.Block
-module Sexp = Oymarkit_.Sexp
-module Pp = Oymarkit_.Pp
-module Doc = Oymarkit_.Doc
-module Meta = Oymarkit_.Meta
+module Block = Cmarkit_.Block
+module Sexp = Cmarkit_.Sexp
+module Pp = Cmarkit_.Pp
+module Doc = Cmarkit_.Doc
+module Meta = Cmarkit_.Meta
 
 let use_sexp = true
 

@@ -1,7 +1,7 @@
 (library
- (name oymarkit_generator)
+ (name cmarkit_generator)
  (libraries
-  oymarkit_
+  cmarkit_
   cmarkit_commonmark
   qcheck-core
   textutils.ascii_table
