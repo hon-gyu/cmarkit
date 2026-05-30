@@ -4,15 +4,29 @@ module G = QCheck2.Gen
 let text_egs : Inline.t list =
   [ "jia"; "yi"; "bing" ] |> List.map (fun pl -> Inline.(Text (pl, Meta.none)))
 
-let (code_span_egs : Inline.t list) =
-  Inline.Code_span.
-    [
-      (* TODO(rule): No empty code span: [``] renders as literal backticks, not a span. *)
-      of_string "`add`";
-      of_string "``sub``";
-      of_string "`` `mul` ``";
-    ]
-  |> List.map (fun pl -> Inline.(Code_span (pl, Meta.none)))
+open struct
+  (* [of_string] takes the code span's *content* and computes the fence width. *)
+  let plain_code_span_egs : Inline.t list =
+    Inline.Code_span.[ of_string "add"; of_string "sub"; of_string "mul" ]
+    |> List.map (fun pl -> Inline.(Code_span (pl, Meta.none)))
+
+  (* Code spans whose content contains backticks. Built directly rather than via
+   [of_string], whose fence-width computation ([min_backtick_count]) is buggy
+   for repeated run-lengths. The fence must be a backtick run longer than, and
+   not equal to, any run inside the content; content that starts or ends with a
+   backtick is padded with one space (stripped again on parse). *)
+  let backtick_code_span_egs : Inline.t list =
+    let mk ~backtick_count content =
+      Inline.(
+        Code_span
+          ( Code_span.make ~backtick_count
+              (Block_line.tight_list_of_string content),
+            Meta.none ))
+    in
+    [ mk ~backtick_count:2 "a`b"; mk ~backtick_count:2 " `mul` " ]
+end
+
+let code_span_egs : Inline.t list = plain_code_span_egs @ backtick_code_span_egs
 
 let (autolink_egs : Inline.t list) =
   Inline.Autolink.(
@@ -147,36 +161,36 @@ let%expect_test _ =
     {|
                                              Boxplot
     ┌──────────────────────────┬────────────────────────────────────────────────────────────┐
-    │n=1000                    │↓0                                                       30↓│
+    │n=1000                    │↓0                                                       28↓│
     ├──────────────────────────┼────────────────────────────────────────────────────────────┤
-    │text                      │[-----+------------------------]                            │
-    │p5=0.00|p95=16.00|mu=3.32 │                                                            │
+    │text                      │[-------+----------------------------]                      │
+    │p5=0.00|p95=18.00|mu=4.01 │                                                            │
     ├──────────────────────────┼────────────────────────────────────────────────────────────┤
-    │code_span                 │[-----+----------------------]                              │
-    │p5=0.00|p95=15.00|mu=3.21 │                                                            │
+    │code_span                 │[-------+-------------------------------]                   │
+    │p5=0.00|p95=19.00|mu=4.07 │                                                            │
     ├──────────────────────────┼────────────────────────────────────────────────────────────┤
-    │autolink                  │[-----+--------------------]                                │
-    │p5=0.00|p95=14.00|mu=3.22 │                                                            │
+    │autolink                  │[-------+-------------------------------]                   │
+    │p5=0.00|p95=19.00|mu=4.10 │                                                            │
     ├──────────────────────────┼────────────────────────────────────────────────────────────┤
-    │break                     │[-----+------------------------]                            │
-    │p5=0.00|p95=16.00|mu=3.25 │                                                            │
+    │break                     │+                                                           │
+    │p5=0.00|p95=0.00|mu=0.00  │                                                            │
     ├──────────────────────────┼────────────────────────────────────────────────────────────┤
-    │raw_html                  │[-----+----------------------]                              │
-    │p5=0.00|p95=15.00|mu=3.28 │                                                            │
+    │raw_html                  │[-------+----------------------------]                      │
+    │p5=0.00|p95=18.00|mu=4.09 │                                                            │
     ├──────────────────────────┼────────────────────────────────────────────────────────────┤
-    │emphasis                  │[-----------------------+----------------------------------~│
+    │emphasis                  │[-------------------------+--------------------------------~│
     │p5=0.00|p95=60.00|mu=12.58│                                                            │
     ├──────────────────────────┼────────────────────────────────────────────────────────────┤
-    │strong_emphasis           │[-----------------------+----------------------------------~│
+    │strong_emphasis           │[-------------------------+--------------------------------~│
     │p5=0.00|p95=56.00|mu=12.48│                                                            │
     ├──────────────────────────┼────────────────────────────────────────────────────────────┤
-    │link                      │[-----------------------+----------------------------------~│
+    │link                      │[-------------------------+--------------------------------~│
     │p5=0.00|p95=60.00|mu=12.57│                                                            │
     ├──────────────────────────┼────────────────────────────────────────────────────────────┤
-    │image                     │[-----------------------+----------------------------------~│
+    │image                     │[-------------------------+--------------------------------~│
     │p5=0.00|p95=55.00|mu=12.68│                                                            │
     ├──────────────────────────┼────────────────────────────────────────────────────────────┤
-    │inlines                   │[-----------------------+----------------------------------~│
+    │inlines                   │[-------------------------+--------------------------------~│
     │p5=0.00|p95=55.00|mu=12.43│                                                            │
     └──────────────────────────┴────────────────────────────────────────────────────────────┘
     |}]
