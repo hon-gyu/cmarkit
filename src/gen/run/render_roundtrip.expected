@@ -1,14 +1,16 @@
 
 --- Failure --------------------------------------------------------------------
 
-Test roundtrip failed (2 shrink steps):
+Test roundtrip failed (4 shrink steps):
 
-{ block: (Paragraph (Inlines))
-; cm: ┌┐
-      └┘
-; reparse: Blank_line
-; reparse_cm: ┌┐
-              └┘
+{ block: (Paragraph (Inlines (Text jia)))
+; cm: ┌───┐
+      │jia│
+      └───┘
+; reparse: (Paragraph (Text jia))
+; reparse_cm: ┌───┐
+              │jia│
+              └───┘
 }
 ================================================================================
 failure (1 tests failed, 0 tests errored, ran 1 tests)
