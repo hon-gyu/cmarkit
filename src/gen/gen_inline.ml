@@ -45,8 +45,14 @@ let mk_image i : Inline.t =
   let ref_ = `Inline (Link_definition.make ~dest (), Meta.none) in
   Inline.(Image (Inline.Link.make i ref_, Meta.none))
 
+(** @note{[
+    There was "<em>foo</em>" but removed because:
+    Inline raw HTML is one tag (or comment) per node: the parser emits [<em>],
+    text, then [</em>] as three inlines, never a whole element in one node.
+    ]}
+ *)
 let (raw_html_egs : Inline.t list) =
-  [ "<br />"; "<em>foo</em>"; "<!-- comment -->" ]
+  [ "<br />"; "<em>"; "</em>"; "<!-- comment -->" ]
   |> List.map (fun s ->
       Inline.(Raw_html (Block_line.tight_list_of_string s, Meta.none)))
 
