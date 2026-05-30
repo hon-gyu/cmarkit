@@ -12,8 +12,10 @@ module Match = Cmarkit_base
 module Textloc = Cmarkit_base.Textloc
 module Meta = Cmarkit_base.Meta
 module Layout = Common.Layout
+(* Extended modules *)
 module Pp = Pp
-module Sexp_ = Sexp_
+module Sexp = Sexp
+module Inline_parse = Inline_parse
 
 type byte_pos = Textloc.byte_pos
 type line_span = Match.line_span =
@@ -39,7 +41,6 @@ include Parser
 (* Documents *)
 
 module Doc = Doc
-module Inline_parse = Inline_parse
 
 (* Maps and folds *)
 

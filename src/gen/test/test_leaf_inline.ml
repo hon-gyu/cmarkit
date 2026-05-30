@@ -7,11 +7,11 @@ module G = Oymarkit_generator.Gen_inline
 module Inline = Oymarkit_.Inline
 module Block = Oymarkit_.Block
 module Meta = Oymarkit_.Meta
-module Sexp_ = Oymarkit_.Sexp_
+module Sexp = Oymarkit_.Sexp
 module Inline_parse = Oymarkit_.Inline_parse
 
 let sexp_of_inline : Inline.t -> Sexplib0.Sexp.t =
-  (Sexp_.make_sexp_of ()).inline
+  (Sexp.make_sexp_of ()).inline
 
 let canonical (i : Inline.t) =
   Format.asprintf "%a" Sexplib0.Sexp.pp_hum

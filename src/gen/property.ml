@@ -2,7 +2,7 @@
   - make calculation of metadata lazy
 *)
 module Block = Oymarkit_.Block
-module Sexp_ = Oymarkit_.Sexp_
+module Sexp = Oymarkit_.Sexp
 module Pp = Oymarkit_.Pp
 module Doc = Oymarkit_.Doc
 module Meta = Oymarkit_.Meta
@@ -12,7 +12,7 @@ let use_sexp = true
 let pp_block fmt b =
   if use_sexp then
     Format.fprintf fmt "%a" Sexplib0.Sexp.pp_hum
-      ((Sexp_.make_sexp_of ()).block b)
+      ((Sexp.make_sexp_of ()).block b)
   else Format.printf "%a" Pp.pp_block b
 
 type value =
