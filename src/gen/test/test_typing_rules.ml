@@ -7,17 +7,21 @@
     rule or the parser is buggy.
 
     Here we will use gen.ml with config that turns off typing rule constraints
-    *)
+    to generate AST and re-parse to ensure we get AST that is emitted by the
+    parser *)
 
 module P = Cmarkit_generator.Property
 module T = Cmarkit_generator.Typing
 module G = Cmarkit_generator.Gen
+open Cmarkit_generator.Common_
 
-let gen = G.mk_gen_block ~config:G.Bconfig.empty ()
+let gen =
+  let open QCheck2.Gen in
+  let+ b = G.mk_gen_block ~config:G.Bconfig.empty () in
+  reparse b
 
-
-(* let property : P.t =
-  let name = "Typing rule should not reject valid input" in
-  let check = (fun b ->
-    P.to_commonmark
-  ) *)
+let () =
+  let rand = Random.State.make [| 0 |] in
+  ignore
+  @@ QCheck_base_runner.run_tests ~long:true ~colors:false ~rand
+       [ P.qcheck_test_of_t ~gen () T.typed ]
