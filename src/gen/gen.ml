@@ -12,7 +12,7 @@ let text_egs : Inline.t list =
 let (code_span_egs : Inline.t list) =
   Inline.Code_span.
     [
-      of_string "";
+      (* TODO(rule): No empty code span: [``] renders as literal backticks, not a span. *)
       of_string "`add`";
       of_string "``sub``";
       of_string "`` `mul` ``";
@@ -20,8 +20,12 @@ let (code_span_egs : Inline.t list) =
   |> List.map (fun pl -> Inline.(Code_span (pl, Meta.none)))
 
 let (autolink_egs : Inline.t list) =
-  Inline.Autolink.
-    [ make ("www.foo.com", Meta.none); make ("bar@gmail.com", Meta.none) ]
+  Inline.Autolink.(
+    (* TODO(rule): URI autolinks need a scheme; [<www.foo.com>] is literal text, not an
+       autolink. Emails are recognized as-is. *)
+    [
+      make ("http://www.foo.com", Meta.none); make ("bar@gmail.com", Meta.none);
+    ])
   |> List.map (fun pl -> Inline.(Autolink (pl, Meta.none)))
 
 let (break_egs : Inline.t list) =
@@ -53,17 +57,52 @@ let (raw_html_egs : Inline.t list) =
 
 (* TODO: extension strikethrough and math_span *)
 
-let gen_inline ?(w_break = 1) () : Inline.t G.t =
+module Inline_config = struct
+  type t = {
+    w_text : int;
+    w_code_span : int;
+    w_autolink : int;
+    w_break : int;
+    w_raw_html : int;
+    w_inlines : int;
+    w_emphasis : int;
+    w_strong_emphasis : int;
+    w_link : int;
+    w_image : int;
+    nonempty : bool;
+  }
+
+  let default =
+    {
+      w_text = 1;
+      w_code_span = 1;
+      w_autolink = 1;
+      w_break = 1;
+      w_raw_html = 1;
+      w_inlines = 1;
+      w_emphasis = 1;
+      w_strong_emphasis = 1;
+      w_link = 1;
+      w_image = 1;
+      nonempty = false;
+    }
+end
+
+let gen_inline (ic : Inline_config.t) : Inline.t G.t =
+  let open Inline_config in
   let gen_leaf =
     [
-      (1, G.oneof_list text_egs);
-      (1, G.oneof_list code_span_egs);
-      (1, G.oneof_list autolink_egs);
-      (w_break, G.oneof_list break_egs);
-      (1, G.oneof_list raw_html_egs);
+      (ic.w_text, G.oneof_list text_egs);
+      (ic.w_code_span, G.oneof_list code_span_egs);
+      (ic.w_autolink, G.oneof_list autolink_egs);
+      (ic.w_break, G.oneof_list break_egs);
+      (ic.w_raw_html, G.oneof_list raw_html_egs);
     ]
     |> List.filter (fun (w, _) -> w > 0)
     |> G.oneof_weighted
+  in
+  let inlines_len n =
+    if ic.nonempty then G.int_range 1 (max 1 (n / 2)) else G.int_bound (n / 2)
   in
   G.(
     sized_size nat_small
@@ -78,17 +117,17 @@ let gen_inline ?(w_break = 1) () : Inline.t G.t =
             let strong_emph_gen =
               bind (self (n - 1)) (fun i -> oneof_list @@ mk_strong_emph_egs i)
             in
-            oneof_weighted
-              [
-                (1, gen_leaf);
-                ( 1,
-                  map inlines_of_is
-                    (list_size (int_bound (n / 2)) (self (n / 2))) );
-                (1, emph_gen);
-                (1, strong_emph_gen);
-                (1, map mk_link (self (n - 1)));
-                (1, map mk_image (self (n - 1)));
-              ]))
+            [
+              (1, gen_leaf);
+              ( ic.w_inlines,
+                map inlines_of_is (list_size (inlines_len n) (self (n / 2))) );
+              (ic.w_emphasis, emph_gen);
+              (ic.w_strong_emphasis, strong_emph_gen);
+              (ic.w_link, map mk_link (self (n - 1)));
+              (ic.w_image, map mk_image (self (n - 1)));
+            ]
+            |> List.filter (fun (w, _) -> w > 0)
+            |> oneof_weighted))
 
 (* Block
 =================== *)
@@ -120,17 +159,6 @@ let code_block_egs : Block.t list =
     ]
   |> List.map (fun cb -> Block.(Code_block (cb, Meta.none)))
 
-let gen_paragraph : Block.t G.t =
-  G.map
-    (fun inline -> Block.(Paragraph (Block.Paragraph.make inline, Meta.none)))
-    (gen_inline ())
-
-let gen_heading : Block.t G.t =
-  G.map
-    (fun (level, inline) ->
-      Block.(Heading (Block.Heading.make ~level inline, Meta.none)))
-    G.(pair (int_range 1 6) (gen_inline ~w_break:0 ()))
-
 let html_block_egs : Block.t list =
   [
     [ ("<div>", Meta.none) ];
@@ -143,34 +171,69 @@ module Config = struct
   type t = {
     no_direct_blank_line : bool;
     no_trailing_blank_line_in_blocks : bool;
+    no_empty_paragraph : bool;
+    no_empty_blocks : bool;
+    no_break_in_atx_heading : bool;
+    inline : Inline_config.t;
   }
 
   let empty =
-    { no_direct_blank_line = false; no_trailing_blank_line_in_blocks = false }
+    {
+      no_direct_blank_line = false;
+      no_trailing_blank_line_in_blocks = false;
+      no_empty_paragraph = false;
+      no_empty_blocks = false;
+      no_break_in_atx_heading = false;
+      inline = Inline_config.default;
+    }
 
-  let typed_md = { empty with no_trailing_blank_line_in_blocks = true }
+  let typed_md =
+    {
+      empty with
+      no_trailing_blank_line_in_blocks = true;
+      no_empty_paragraph = true;
+      no_empty_blocks = true;
+      no_break_in_atx_heading = true;
+    }
 end
+
+let gen_paragraph (config : Config.t) : Block.t G.t =
+  let ic = { config.inline with nonempty = config.no_empty_paragraph } in
+  G.map
+    (fun inline -> Block.(Paragraph (Block.Paragraph.make inline, Meta.none)))
+    (gen_inline ic)
+
+let gen_heading (config : Config.t) : Block.t G.t =
+  let w_break =
+    if config.no_break_in_atx_heading then 0 else config.inline.w_break
+  in
+  let ic = { config.inline with w_break } in
+  G.map
+    (fun (level, inline) ->
+      Block.(Heading (Block.Heading.make ~level inline, Meta.none)))
+    G.(pair (int_range 1 6) (gen_inline ic))
 
 type block_gen_state = { foo : int }
 
 let init_state : block_gen_state = { foo = 0 }
 
-let gen_leaf_block_ ?(w_blank_line = 1) ?(w_thematic_break = 1)
-    ?(w_code_block = 1) ?(w_html_block = 1) ?(w_paragraph = 1) ?(w_heading = 1)
-    () : Block.t G.t =
-  G.oneof_weighted
-    [
-      (w_blank_line, G.oneof_list blank_line_egs);
-      (w_thematic_break, G.oneof_list thematic_break_egs);
-      (w_code_block, G.oneof_list code_block_egs);
-      (w_html_block, G.oneof_list html_block_egs);
-      (w_paragraph, gen_paragraph);
-      (w_heading, gen_heading);
-    ]
+let gen_leaf_block_ ?(config = Config.empty) ?(w_blank_line = 1)
+    ?(w_thematic_break = 1) ?(w_code_block = 1) ?(w_html_block = 1)
+    ?(w_paragraph = 1) ?(w_heading = 1) () : Block.t G.t =
+  [
+    (w_blank_line, G.oneof_list blank_line_egs);
+    (w_thematic_break, G.oneof_list thematic_break_egs);
+    (w_code_block, G.oneof_list code_block_egs);
+    (w_html_block, G.oneof_list html_block_egs);
+    (w_paragraph, gen_paragraph config);
+    (w_heading, gen_heading config);
+  ]
+  |> List.filter (fun (w, _) -> w > 0)
+  |> G.oneof_weighted
 
 let gen_leaf_block (config : Config.t) st =
   let w_blank_line = if config.no_direct_blank_line then Some 0 else None in
-  gen_leaf_block_ ?w_blank_line ()
+  gen_leaf_block_ ~config ?w_blank_line ()
 
 let rec gen_block config st n =
   let open G in
@@ -201,61 +264,26 @@ let rec gen_block config st n =
 
 and gen_blocks config st n : Block.t G.t =
   let open G in
+  let gen_len =
+    if config.no_empty_blocks then int_range 1 (max 1 n) else int_bound n
+  in
   let (blocks : Block.t list t) =
     if config.no_trailing_blank_line_in_blocks then
       let config' = { config with no_direct_blank_line = true } in
-      list_size (int_bound n) (gen_block config' st n)
+      list_size gen_len (gen_block config' st n)
     else
       (* Note: here it's possible that blocks has length 0 or 1 *)
-      list_size (int_bound n) (gen_block config st n)
+      list_size gen_len (gen_block config st n)
   in
   map (fun bs -> Block.Blocks (bs, Meta.none)) blocks
 
 let mk_gen_block ?(config = Config.empty) () : Block.t G.t =
   G.(sized_size nat_small @@ gen_block config init_state)
 
-(* let gen_block ?(w_direct_blank_line = 1) ?(w_direct_thematic_break = 1)
-    ?(w_direct_code_block = 1) ?(w_direct_html_block = 1)
-    ?(w_direct_paragraph = 1) ?(w_direct_heading = 1) () : Block.t G.t =
-  G.(
-    sized_size nat_small
-    @@ fix (fun self (n : int) ->
-        match n with
-        | 0 ->
-            gen_block_leaf ~w_blank_line:w_direct_blank_line
-              ~w_thematic_break:w_direct_thematic_break
-              ~w_code_block:w_direct_code_block
-              ~w_html_block:w_direct_html_block ~w_paragraph:w_direct_paragraph
-              ~w_heading:w_direct_heading ()
-        | n ->
-            let blocks_of_bs bs = Block.Blocks (bs, Meta.none) in
-            let block_quote_of_b b =
-              Block.(Block_quote (Block.Block_quote.make b, Meta.none))
-            in
-            let gen_list_block =
-              let gen_item =
-                map
-                  (fun block -> (Block.List_item.make block, Meta.none))
-                  (self (n / 2))
-              in
-              map
-                (fun items ->
-                  Block.(
-                    List (Block.List'.make (`Unordered '-') items, Meta.none)))
-                (list_size (int_bound (n / 2)) gen_item)
-            in
-            oneof_weighted
-              [
-                (2, gen_block_leaf ());
-                ( 1,
-                  map blocks_of_bs
-                    (list_size (int_bound (n / 2)) (self (n / 2))) );
-                (1, map block_quote_of_b (self (n / 2)));
-                (1, gen_list_block);
-              ])) *)
-
 let%expect_test _ =
-  Pp_distr.pp_gen () Format.std_formatter (gen_inline ()) Stat.inline_stats;
+  Pp_distr.pp_gen () Format.std_formatter
+    (gen_inline Inline_config.default)
+    Stat.inline_stats;
   [%expect
     {|
                                              Boxplot

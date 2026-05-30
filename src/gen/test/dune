@@ -1,3 +1,4 @@
+; Tests for generators themselves
 (tests
  (names test_leaf_block)
  (libraries

@@ -44,6 +44,68 @@ let no_trailing_blank_line_in_blocks : Property.t =
   in
   { name; check }
 
+(** {1 No empty paragraph}
+
+    A [Paragraph] whose inline is empty ([Inlines []] / [Text ""]) renders to no
+    characters, so [parse(render(Paragraph empty))] yields a [Blank_line] (or
+    nothing), never a paragraph. A paragraph block only exists when there is
+    non-blank content to begin with, so the parser never emits an empty one.
+
+    Note this is {e contextual}: an empty [Inlines] is a legitimate value
+    elsewhere (it is [Inline.empty], and the parser emits it for empty table
+    cells) — the rule bites only when it is the body of a [Paragraph]. *)
+let no_empty_paragraph : Property.t =
+  let name = "no empty paragraph" in
+  let rec check : Block.t -> Property.result =
+   fun b ->
+    let here =
+      match b with
+      | Block.Paragraph (p, _) as para ->
+          if Inline.is_empty (Block.Paragraph.inline p) then
+            Property.Fail (b, [ ("paragraph", Block para) ])
+          else Pass
+      | _ -> Pass
+    in
+    match here with
+    | Property.Fail _ -> here
+    | Property.Pass ->
+        List.fold_left
+          (fun acc child ->
+            match acc with
+            | Property.Fail _ -> acc
+            | Property.Pass -> check child)
+          Property.Pass (child_blocks b)
+  in
+  { name; check }
+
+(** {1 No empty [Blocks]}
+
+    An empty [Blocks []] renders to nothing, so as a nested block it is never
+    reconstructed by the parser. (The empty document is
+    [Block.empty = Blocks []], but that is the root, not a nested block.) Same
+    family as {!no_empty_paragraph}. *)
+let no_empty_blocks : Property.t =
+  let name = "no empty blocks" in
+  let rec check : Block.t -> Property.result =
+   fun b ->
+    let here =
+      match b with
+      | Block.Blocks ([], _) as blocks ->
+          Property.Fail (b, [ ("blocks", Block blocks) ])
+      | _ -> Pass
+    in
+    match here with
+    | Property.Fail _ -> here
+    | Property.Pass ->
+        List.fold_left
+          (fun acc child ->
+            match acc with
+            | Property.Fail _ -> acc
+            | Property.Pass -> check child)
+          Property.Pass (child_blocks b)
+  in
+  { name; check }
+
 (** {1 Others} *)
 
 (* Layout.blanks is only spaces and tabs, no newline
