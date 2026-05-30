@@ -1,16 +1,18 @@
 
 --- Failure --------------------------------------------------------------------
 
-Test roundtrip failed (3 shrink steps):
+Test roundtrip failed (5 shrink steps):
 
-{ block: (Paragraph (Break hard))
-; cm: ┌──┐
-      │  │
-      └──┘
-; reparse: (Blocks Blank_line Blank_line)
-; reparse_cm: ┌──┐
-              │  │
-              └──┘
+{ block: (Paragraph (Link (Link (Text jia))))
+; cm: ┌─────────────────────────────────────────────────┐
+      │[[jia](https://example.com)](https://example.com)│
+      └─────────────────────────────────────────────────┘
+; reparse: (Paragraph
+            (Inlines (Text [) (Link (Text jia))
+             (Text "](https://example.com)")))
+; reparse_cm: ┌───────────────────────────────────────────────────┐
+              │\[[jia](https://example.com)\](https://example.com)│
+              └───────────────────────────────────────────────────┘
 }
 ================================================================================
 failure (1 tests failed, 0 tests errored, ran 1 tests)

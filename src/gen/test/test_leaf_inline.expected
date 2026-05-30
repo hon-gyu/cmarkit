@@ -1,16 +1,2 @@
-
---- Failure --------------------------------------------------------------------
-
-Test leaf inline roundtrip failed (1 shrink steps):
-
-{ i: (Break hard)
-; cm: ┌──┐
-      │  │
-      └──┘
-; i': None
-; cm': ┌────┐
-       │None│
-       └────┘
-}
 ================================================================================
-failure (1 tests failed, 0 tests errored, ran 1 tests)
+success (ran 1 tests)
