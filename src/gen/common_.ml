@@ -34,10 +34,26 @@ let metadata_concat ?(wrapped_name : (string * string) option) m1 m2 =
 let box_frame_default = true
 let to_commonmark b = b |> Doc.make |> Cmarkit_commonmark.of_doc
 
-let pp_cm ?(box_frame = box_frame_default) () fmt (cm : string) =
+let visible cm =
+  let b = Buffer.create (String.length cm) in
+  String.iter
+    (function
+      | '\n' -> Buffer.add_string b "\xe2\x86\xb5\n" (* ↵ + real newline *)
+      | ' ' -> Buffer.add_string b "\xc2\xb7" (* · *)
+      | '\t' -> Buffer.add_string b "\xe2\x87\xa5" (* ⇥ *)
+      | c -> Buffer.add_char b c)
+    cm;
+  Buffer.contents b
+
+let pp_cm ?(box_frame = box_frame_default) ?(transform_visible = true) () fmt
+    (cm : string) =
   if not box_frame then Format.fprintf fmt "%s" cm
   else
-    let b = PrintBox.(frame @@ text cm) in
+    let cm = if transform_visible then visible cm else cm in
+    let b =
+      PrintBox.(
+        frame @@ text_with_style Style.(default |> set_preformatted true) cm)
+    in
     Format.fprintf fmt "%a" PrintBox_text.pp b
 
 let rec pp_value ?(box_frame = box_frame_default) () fmt = function
