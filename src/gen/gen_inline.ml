@@ -89,12 +89,19 @@ module Iconfig = struct
     }
 end
 
+(**
+   @note{[
+   [Break] is intentionally not a leaf: it is a connective with no standalone
+   CommonMark witness (a lone/trailing break renders to whitespace and is
+   dropped on reparse). It belongs strictly between two non-break inlines; see
+   [w_break] for where it is reintroduced.
+   ]}
+ *)
 let gen_leaf (ic : Iconfig.t) =
   [
     (ic.w_text, G.oneof_list text_egs);
     (ic.w_code_span, G.oneof_list code_span_egs);
     (ic.w_autolink, G.oneof_list autolink_egs);
-    (ic.w_break, G.oneof_list break_egs);
     (ic.w_raw_html, G.oneof_list raw_html_egs);
   ]
   |> List.filter (fun (w, _) -> w > 0)
