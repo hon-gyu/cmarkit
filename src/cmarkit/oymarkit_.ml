@@ -39,6 +39,7 @@ include Parser
 (* Documents *)
 
 module Doc = Doc
+module Inline_parse = Inline_parse
 
 (* Maps and folds *)
 

@@ -2,12 +2,12 @@
 ; - Refactored into smaller modules
 ; - Expose internal via oymarkit_.ml module
 ; - Public interface is kept in oymarkit.ml and constrained by the original oymarkit.mli file
-; - Contains additional modules: Pp, Sexp_
+; - Contains additional modules: Inline_parse, Pp, Sexp_
 
 (library
  (name oymarkit_)
  (libraries cmarkit_data cmarkit_base qcheck)
- (modules oymarkit_ common inline block doc parser pp sexp_)
+ (modules oymarkit_ common inline block doc parser inline_parse pp sexp_)
  (inline_tests)
  (preprocess
   (pps ppx_jane ppx_expect ppx_deriving_qcheck)))
