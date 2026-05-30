@@ -162,7 +162,7 @@ and gen_blocks config st n : Block.t G.t =
 let mk_gen_block ?(config = Bconfig.empty) () : Block.t G.t =
   G.(sized_size nat_small @@ gen_block config init_state)
 
-let%expect_test _ =
+let%expect_test "Default config should give a sensible distribution" =
   Pp_distr.pp_gen ~display:`Boxplot () Format.std_formatter (mk_gen_block ())
     Stat.block_stats;
   [%expect

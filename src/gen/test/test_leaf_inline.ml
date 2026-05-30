@@ -4,6 +4,7 @@
  *)
 module P = Cmarkit_generator.Property
 module G = Cmarkit_generator.Gen_inline
+open Cmarkit_generator.Common_
 module Inline = Cmarkit_.Inline
 module Block = Cmarkit_.Block
 module Meta = Cmarkit_.Meta
@@ -21,21 +22,21 @@ let inline_equal a b = String.equal (canonical a) (canonical b)
 
 (* Render an inline by wrapping it in a paragraph (there is no inline-only renderer). *)
 let render i =
-  Block.Paragraph (Block.Paragraph.make i, Meta.none) |> P.to_commonmark
+  Block.Paragraph (Block.Paragraph.make i, Meta.none) |> to_commonmark
 
 (* Parse back at the inline level, bypassing block-structure parsing. *)
 let roundtrip i = Inline_parse.of_string (render i)
 
 let test_print i : string =
   let i' = roundtrip i in
-  let metadata : P.metadata =
+  let metadata : metadata =
     [
-      ("i", P.String (canonical i));
-      ("cm", P.Md (render i));
-      ("i'", P.String (canonical i'));
+      ("i", String (canonical i));
+      ("cm", Md (render i));
+      ("i'", String (canonical i'));
     ]
   in
-  Fmt.str "%a" P.pp_metadata metadata
+  Fmt.str "%a" pp_metadata metadata
 
 let () =
   let rand = Random.State.make [| 0 |] in

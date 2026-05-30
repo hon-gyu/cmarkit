@@ -153,7 +153,7 @@ let gen_inline (ic : Iconfig.t) : Inline.t G.t =
             |> List.filter (fun (w, _) -> w > 0)
             |> oneof_weighted))
 
-let%expect_test _ =
+let%expect_test "Default config should give a sensible distribution" =
   Pp_distr.pp_gen () Format.std_formatter
     (gen_inline Iconfig.default)
     Stat.inline_stats;

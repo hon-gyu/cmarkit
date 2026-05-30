@@ -2,55 +2,8 @@
   - make calculation of metadata lazy
 *)
 module Block = Cmarkit_.Block
-module Sexp = Cmarkit_.Sexp
-module Pp = Cmarkit_.Pp
-module Doc = Cmarkit_.Doc
 module Meta = Cmarkit_.Meta
-
-let use_sexp = true
-
-let pp_block fmt b =
-  if use_sexp then
-    Format.fprintf fmt "%a" Sexplib0.Sexp.pp_hum
-      ((Sexp.make_sexp_of ()).block b)
-  else Format.printf "%a" Pp.pp_block b
-
-type value =
-  | String of string
-  | Int of int
-  | Float of float
-  | Bool of bool
-  | Null
-  | Block of Block.t
-  | Md of string
-
-type metadata = (string * value) list
-
-let box_frame_default = true
-let to_commonmark b = b |> Doc.make |> Cmarkit_commonmark.of_doc
-
-let pp_cm ?(box_frame = box_frame_default) () fmt (cm : string) =
-  if not box_frame then Format.fprintf fmt "%s" cm
-  else
-    let b = PrintBox.(frame @@ text cm) in
-    Format.fprintf fmt "%a" PrintBox_text.pp b
-
-let pp_value ?(box_frame = box_frame_default) () fmt = function
-  | String s -> Format.fprintf fmt "%s" s
-  | Int i -> Format.fprintf fmt "%d" i
-  | Float f -> Format.fprintf fmt "%f" f
-  | Bool b -> Format.fprintf fmt "%b" b
-  | Null -> Format.fprintf fmt "null"
-  | Block b -> Format.fprintf fmt "%a" pp_block b
-  | Md s ->
-      if not box_frame then Format.fprintf fmt "%s" s
-      else
-        let b = PrintBox.(frame @@ text s) in
-        Format.fprintf fmt "%a" PrintBox_text.pp b
-
-let pp_metadata fmt m =
-  let pp_pair fmt (k, v) = Fmt.pf fmt "@[<h>%s:@ %a@]" k (pp_value ()) v in
-  Fmt.pf fmt "@[<v>{ %a@,}@]" (Fmt.list ~sep:(Fmt.any "@,; ") pp_pair) m
+open Common_
 
 type result = Pass | Fail of Block.t * metadata
 type t = { name : string; check : Block.t -> result }
@@ -83,27 +36,24 @@ let pp_fail t fmt b : unit =
   match t.check b with
   | Pass -> assert false
   | Fail (b, meta) ->
-    if false then
-      Fmt.pf fmt "@[<v>{ block: %a@,; cm: %a@,; %a@,}@]"
-        pp_block b
-        (pp_cm ()) (to_commonmark b)
-        (
-          if List.length meta = 0 then (fun _ _ -> ())
-          else (fun fmt m -> Fmt.pf fmt "metadata: %a" pp_metadata m)
-        )
-        meta
-    else
-      Fmt.pf fmt "@[<v>{ block: %a@,; cm: %a@,; %a@,}@]"
-        pp_block b
-        (pp_cm ()) (to_commonmark b)
-        (
-          let pp_pair fmt (k, v) = Fmt.pf fmt "@[<h>%s:@ %a@]" k (pp_value ()) v in
-          fun fmt m -> Fmt.pf fmt "%a" (Fmt.list ~sep:(Fmt.any "@,; ") pp_pair) m
-        )
-        meta
+      if false then
+        Fmt.pf fmt "@[<v>{ block: %a@,; cm: %a@,; %a@,}@]" pp_block b (pp_cm ())
+          (to_commonmark b)
+          (if List.length meta = 0 then fun _ _ -> ()
+           else fun fmt m -> Fmt.pf fmt "metadata: %a" pp_metadata m)
+          meta
+      else
+        Fmt.pf fmt "@[<v>{ block: %a@,; cm: %a@,; %a@,}@]" pp_block b (pp_cm ())
+          (to_commonmark b)
+          (let pp_pair fmt (k, v) =
+             Fmt.pf fmt "@[<h>%s:@ %a@]" k (pp_value ()) v
+           in
+           fun fmt m ->
+             Fmt.pf fmt "%a" (Fmt.list ~sep:(Fmt.any "@,; ") pp_pair) m)
+          meta
 
-let qcheck_test_of_t ?(count = 500) ?(negative = false) ?(gen=Gen.mk_gen_block ()) () (t : t) :
-    QCheck2.Test.t =
+let qcheck_test_of_t ?(count = 500) ?(negative = false)
+    ?(gen = Gen.mk_gen_block ()) () (t : t) : QCheck2.Test.t =
   let make_test =
     if not negative then QCheck2.Test.make ~name:t.name ~count
     else QCheck2.Test.make_neg ~name:t.name ~count
@@ -130,9 +80,6 @@ let check_eq ?(message : string option) ?(metadata = []) ~(expect : Block.t)
   if block_equal expect actual then Pass
   else fail ?message ~metadata ~expect actual
 
-let reparse (b : Block.t) : Block.t =
-  b |> to_commonmark |> Doc.of_string |> Doc.block
-
 (* Properties
   =========== *)
 
@@ -157,10 +104,7 @@ let roundtrip =
     let b' = reparse b in
     if block_equal b b' then Pass
     else
-      Fail (b, [
-        ("reparse", Block b');
-        ("reparse_cm", Md (to_commonmark b'))
-      ])
+      Fail (b, [ ("reparse", Block b'); ("reparse_cm", Md (to_commonmark b')) ])
   in
   { name = "roundtrip"; check }
 
