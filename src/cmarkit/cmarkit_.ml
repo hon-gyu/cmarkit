@@ -15,7 +15,7 @@ module Layout = Common_.Layout
 (* Extended modules *)
 module Pp = Pp
 module Sexp = Sexp
-module Inline_parse = Inline_parse
+module Inline_parse_api = Inline_parse_api
 
 type byte_pos = Textloc.byte_pos
 type line_span = Match.line_span =

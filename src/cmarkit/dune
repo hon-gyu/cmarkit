@@ -7,7 +7,18 @@
 (library
  (name cmarkit_)
  (libraries cmarkit_data cmarkit_base qcheck)
- (modules cmarkit_ common_ inline block doc parser inline_parse pp sexp)
+ (modules
+  cmarkit_
+  common_
+  inline
+  block
+  doc
+  parser_common_
+  inline_struct
+  parser
+  inline_parse_api
+  pp
+  sexp)
  (inline_tests)
  (preprocess
   (pps ppx_jane ppx_expect ppx_deriving_qcheck)))

@@ -1,17 +1,19 @@
 open Cmarkit_
 
+let inline_of_string = Inline_parse_api.of_string
+
 let fail_inline msg i =
   let sexp = (Sexp.make_sexp_of ()).inline i in
   failwith (Fmt.str "%s: %a" msg Sexplib0.Sexp.pp_hum sexp)
 
 let () =
-  match Inline_parse.of_string "__jia__" with
+  match inline_of_string "__jia__" with
   | Inline.Strong_emphasis ({ inline = Inline.Text ("jia", _); _ }, _) -> ()
   | i -> fail_inline "default parser should keep CommonMark strong emphasis" i
 
 let () =
   match
-    Inline_parse.of_string ~emphasis_delims:[ '_' ]
+    inline_of_string ~emphasis_delims:[ '_' ]
       ~strong_emphasis_delims:[ '*' ] "__jia__"
   with
   | Inline.Emphasis
@@ -26,7 +28,7 @@ let () =
 
 let () =
   match
-    Inline_parse.of_string ~emphasis_delims:[ '_' ]
+    inline_of_string ~emphasis_delims:[ '_' ]
       ~strong_emphasis_delims:[ '*' ] "*jia*"
   with
   | Inline.Text ("*jia*", _) -> ()
@@ -34,7 +36,7 @@ let () =
 
 let () =
   match
-    Inline_parse.of_string ~emphasis_delims:[ '_' ]
+    inline_of_string ~emphasis_delims:[ '_' ]
       ~strong_emphasis_delims:[ '*' ] "**jia**"
   with
   | Inline.Strong_emphasis ({ inline = Inline.Text ("jia", _); _ }, _) -> ()

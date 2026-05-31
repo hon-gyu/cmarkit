@@ -8,6 +8,7 @@
 module Meta = Cmarkit_base.Meta
 module Label = Common_.Label
 module Layout = Common_.Layout
+open Parser_common_
 open Parser
 
 type t = { nl : Layout.string; block : Block.t; defs : Label.defs }

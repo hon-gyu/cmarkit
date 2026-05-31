@@ -1,4 +1,4 @@
-(** Inline-level parsing.
+(** Inline-level parsing API.
 
     {@meta[
     ai-disclosure: "autonomous"
@@ -16,7 +16,8 @@
     original cmarkit modules. *)
 
 open Common_
-  open Parser
+open Parser_common_
+open Parser
 
 (* Cut [s] into the line spans the inline parser expects: one span per line
    (the newline between two lines is implicit), in *reverse* order — the inline
@@ -25,12 +26,9 @@ let line_spans s =
   let len = String.length s in
   let rec loop lineno start k acc =
     if k >= len then
-      { line_pos = (lineno, start); first = start; last = len - 1 }
-      :: acc
+      { line_pos = (lineno, start); first = start; last = len - 1 } :: acc
     else if s.[k] = '\n' then
-      let span =
-        { line_pos = (lineno, start); first = start; last = k - 1 }
-      in
+      let span = { line_pos = (lineno, start); first = start; last = k - 1 } in
       loop (lineno + 1) (k + 1) (k + 1) (span :: acc)
     else loop lineno start (k + 1) acc
   in

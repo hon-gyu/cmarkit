@@ -9,10 +9,8 @@ module Inline = Cmarkit_.Inline
 module Block = Cmarkit_.Block
 module Meta = Cmarkit_.Meta
 module Sexp = Cmarkit_.Sexp
-module Inline_parse = Cmarkit_.Inline_parse
 
-let sexp_of_inline : Inline.t -> Sexplib0.Sexp.t =
-  (Sexp.make_sexp_of ()).inline
+let sexp_of_inline : Inline.t -> Sexplib0.Sexp.t = (Sexp.make_sexp_of ()).inline
 
 let canonical (i : Inline.t) =
   Format.asprintf "%a" Sexplib0.Sexp.pp_hum
@@ -25,7 +23,7 @@ let render i =
   Block.Paragraph (Block.Paragraph.make i, Meta.none) |> to_commonmark
 
 (* Parse back at the inline level, bypassing block-structure parsing. *)
-let roundtrip i = Inline_parse.of_string (render i)
+let roundtrip i = Cmarkit_.Inline_parse_api.of_string (render i)
 
 let test_print i : string =
   let i' = roundtrip i in
