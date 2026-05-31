@@ -1,9 +1,16 @@
+(* Extended modules *)
+module Pp = Pp
+module Sexp = Sexp
+module Inline_struct = Inline_struct
+module Inline_parse_api = Inline_parse_api
+module Parser_common = Parser_common_
+
+[@@@ocamlformat "disable"]
+
 (*---------------------------------------------------------------------------
    Copyright (c) 2021 The cmarkit programmers. All rights reserved.
    SPDX-License-Identifier: ISC
   --------------------------------------------------------------------------- *)
-
-[@@@ocamlformat "disable"]
 
 module String_map = Map.Make (String)
 module Ascii = Cmarkit_base.Ascii
@@ -12,10 +19,6 @@ module Match = Cmarkit_base
 module Textloc = Cmarkit_base.Textloc
 module Meta = Cmarkit_base.Meta
 module Layout = Common_.Layout
-(* Extended modules *)
-module Pp = Pp
-module Sexp = Sexp
-module Inline_parse_api = Inline_parse_api
 
 type byte_pos = Textloc.byte_pos
 type line_span = Match.line_span =

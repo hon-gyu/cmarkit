@@ -1,5 +1,5 @@
 (tests
-  (names test_parser_config)
+  (names test_parser_config test_inline_struct)
   (libraries cmarkit_ fmt)
-  (preprocess (pps ppx_expect))
+  (preprocess (pps ppx_sexp_conv))
 )
