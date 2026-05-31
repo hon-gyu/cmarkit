@@ -3,807 +3,19 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-module String_map = Map.Make (String)
-module Ascii = Cmarkit_base.Ascii
-module Text = Cmarkit_base.Text
-module Match = Cmarkit_base
-module Textloc = Cmarkit_base.Textloc
-module Meta = Cmarkit_base.Meta
-module Layout = struct
-  type blanks = string
-  type nonrec string = string
-  type nonrec char = char
-  type count = int
-  type indent = int
-  let string ?(meta = Meta.none) s = s, meta
-  let empty = string ""
-end
+(** {1 Global flags for enabling/disabling Oymarkit-related features}
+    We tend to gate our modifications behind this flag so that we can keep a
+    clear distinction between original code and our features. *)
 
-type byte_pos = Textloc.byte_pos
-type line_span = Match.line_span =
-  (* Substring on a single line, hereafter abbreviated to span *)
-  { line_pos : Textloc.line_pos; first : byte_pos; last : byte_pos }
+let enable_oymarkit_ = ref true
+let is_oymarkit_enabled () = !enable_oymarkit_
+let set_enable_oymarkit b = enable_oymarkit_ := b
 
-type 'a node = 'a * Meta.t
+(** {1 Original Cmarkit parser implementation} *)
 
-module Block_line = struct
-  let _list_of_string flush s = (* cuts [s] on newlines *)
-    let rec loop s acc max start k =
-      if k > max then List.rev (flush s start max acc) else
-      if not (s.[k] = '\n' || s.[k] = '\r')
-      then loop s acc max start (k + 1) else
-      let acc = flush s start (k - 1) acc in
-      let next = k + 1 in
-      let start =
-        if s.[k] = '\r' && next <= max && s.[next] = '\n' then next + 1 else
-        next
-      in
-      loop s acc max start start
-    in
-    loop s [] (String.length s - 1) 0 0
+[@@@ocamlformat "disable"]
 
-  let flush ?(meta = Meta.none) s start last acc =
-    let sub = String.sub s start (last - start + 1) in
-    (sub, meta) :: acc
-
-  let flush_tight ?(meta = Meta.none) s start last acc =
-    (* If [s] has newlines, blanks after newlines are layout *)
-    if start > last then ("", ("", meta)) :: acc else
-    match acc with
-    | [] (* On the first line the blanks are legit *) ->
-        ("", (String.sub s start (last - start + 1), meta)) :: acc
-    | acc ->
-        let nb = Match.first_non_blank s ~last ~start in
-        (String.sub s start (nb - 1 - start + 1),
-         (String.sub s nb (last - nb + 1), meta)) :: acc
-
-  (* Block lines *)
-
-  type t = string node
-
-  let to_string = fst
-  let list_of_string ?meta s = _list_of_string (flush ?meta) s
-  let list_textloc = function
-  | [] -> Textloc.none | [(_, m)] -> Meta.textloc m
-  | (_, first) :: _ as l ->
-      let _, last = List.hd (List.rev l) in
-      Textloc.reloc ~first:(Meta.textloc first) ~last:(Meta.textloc last)
-
-  (* Tight lines *)
-
-  type tight = Layout.blanks * t
-
-  let tight_to_string l = fst (snd l)
-  let tight_list_of_string ?meta s = _list_of_string (flush_tight ?meta) s
-  let tight_list_textloc = function
-  | [] -> Textloc.none | [_, (_, m)] -> Meta.textloc m
-  | (_, (_, first)) :: _ as l ->
-      let (_, (_, last)) = List.hd (List.rev l) in
-      Textloc.reloc ~first:(Meta.textloc first) ~last:(Meta.textloc last)
-
-  (* Blank lines *)
-
-  type blank = Layout.blanks node
-end
-
-module Label = struct
-  type key = string
-  type t = { meta : Meta.t; key : key; text : Block_line.tight list }
-  let make ?(meta = Meta.none) ~key text = { key; text; meta }
-  let with_meta meta l = { l with meta }
-  let meta t = t.meta
-  let key t = t.key
-  let text t = t.text
-  let textloc t = Block_line.tight_list_textloc t.text
-  let text_to_string t =
-    String.concat " " (List.map Block_line.tight_to_string t.text)
-
-  let compare l0 l1 = String.compare l0.key l1.key
-
-  (* Definitions *)
-
-  module Map = Map.Make (String)
-  type def = ..
-  type defs = def Map.t
-
-  (* Resolvers *)
-
-  type context =
-  [ `Def of t option * t
-  | `Ref of [ `Link | `Image ] * t * (t option) ]
-
-  type resolver = context -> t option
-  let default_resolver = function
-  | `Def (None, k) -> Some k
-  | `Def (Some _, k) -> None
-  | `Ref (_, _, k) -> k
-end
-
-module Link_definition = struct
-  type layout =
-    { indent : Layout.indent;
-      angled_dest : bool;
-      before_dest : Block_line.blank list;
-      after_dest : Block_line.blank list;
-      title_open_delim : Layout.char;
-      after_title : Block_line.blank list; }
-
-  let layout_for_dest dest =
-    let needs_angles c = Ascii.is_control c || c = ' ' in
-    let angled_dest = String.exists needs_angles dest in
-    { indent = 0; angled_dest; before_dest = [];
-      after_dest = []; title_open_delim = '\"'; after_title = [] }
-
-  let default_layout =
-    { indent = 0; angled_dest = false; before_dest = [];
-      after_dest = []; title_open_delim = '\"'; after_title = [] }
-
-  type t =
-    { layout : layout;
-      label : Label.t option;
-      defined_label : Label.t option;
-      dest : string node option;
-      title : Block_line.tight list option; }
-
-  let make ?layout ?defined_label ?label ?dest ?title () =
-    let layout = match dest with
-    | None -> default_layout | Some (d, _) -> layout_for_dest d
-    in
-    let defined_label = match defined_label with None -> label | Some d -> d in
-    { layout; label; defined_label; dest; title }
-
-  let layout ld = ld.layout
-  let label ld = ld.label
-  let defined_label ld = ld.defined_label
-  let dest ld = ld.dest
-  let title ld = ld.title
-
-  type Label.def += Def of t node
-end
-
-module Inline = struct
-  type t = ..
-
-  module Autolink = struct
-    type t = { is_email : bool; link : string node; }
-    let is_email a = a.is_email
-    let link a = a.link
-    let make link =
-      let is_email =
-        let l = String.concat "" ["<"; fst link; ">"] in
-        match Match.autolink_email l ~last:(String.length l - 1) ~start:0 with
-        | None -> false | Some _ -> true
-      in
-      { is_email; link }
-  end
-
-  module Break = struct
-    type type' = [ `Hard | `Soft ]
-    type t =
-    { layout_before : Layout.blanks node;
-      type' : type';
-      layout_after : Layout.blanks node; }
-
-    let make
-        ?(layout_before = Layout.empty) ?(layout_after = Layout.empty) type'
-      =
-      { layout_before; type'; layout_after }
-
-    let type' b = b.type'
-    let layout_before b = b.layout_before
-    let layout_after b = b.layout_after
-  end
-
-  module Code_span = struct
-    type t =
-      { backtick_count : Layout.count;
-        code_layout : Block_line.tight list; }
-
-    let make ~backtick_count code_layout = { backtick_count; code_layout }
-
-    let min_backtick_count ~min counts =
-      let rec loop min = function
-      | c :: cs -> if min <> c then min else loop (c + 1) cs | [] -> min
-      in
-      loop min (List.sort Int.compare counts)
-
-    let of_string ?(meta = Meta.none) = function
-    | "" -> { backtick_count = 1 ; code_layout = ["", ("", meta)] }
-    | s ->
-        (* This finds out the needed backtick count, whether spaces are needed,
-           and treats blanks after newline as layout *)
-        let max = String.length s - 1 in
-        let need_sp = s.[0] = '`' || s.[max] = '`' in
-        let s = if need_sp then String.concat "" [" "; s; " "] else s in
-        let backtick_counts, code_layout =
-          let rec loop bt_counts acc max btc start k = match k > max with
-          | true ->
-              (* assert (btc = 0) because of [need_sp] *)
-              bt_counts,
-              if acc = [] then ["", (s, meta)] else
-              List.rev (Block_line.flush_tight ~meta s start max acc)
-          | false ->
-              if s.[k] = '`'
-              then loop bt_counts acc max (btc + 1) start (k + 1) else
-              let bt_counts = if btc > 0 then btc :: bt_counts else bt_counts in
-              if not (s.[k] = '\n' || s.[k] = '\r')
-              then loop bt_counts acc max 0 start (k + 1) else
-              let acc = Block_line.flush_tight ~meta s start (k - 1) acc in
-              let start =
-                if k + 1 <= max && s.[k] = '\r' && s.[k + 1] = '\n'
-                then k + 2 else k + 1
-              in
-              loop bt_counts acc max 0 start start
-          in
-          loop [] [] max 0 0 0
-        in
-        let backtick_count = min_backtick_count ~min:1 backtick_counts in
-        { backtick_count; code_layout }
-
-    let backtick_count cs = cs.backtick_count
-    let code_layout cs = cs.code_layout
-    let code cs =
-      (* Extract code, see https://spec.commonmark.org/0.31.2/#code-spans *)
-      let sp c = Char.equal c ' ' in
-      let s = List.map Block_line.tight_to_string cs.code_layout in
-      let s = String.concat " " s in
-      if s = "" then "" else
-      if s.[0] = ' ' && s.[String.length s - 1] = ' ' &&
-         not (String.for_all sp s)
-      then String.sub s 1 (String.length s - 2) else s
-  end
-
-  module Emphasis = struct
-    type inline = t
-    type t = { delim : Layout.char; inline : inline }
-    let make ?(delim = '*') inline = { delim; inline }
-    let inline e = e.inline
-    let delim e = e.delim
-  end
-
-  module Link = struct
-    type inline = t
-
-    type reference_layout = [ `Collapsed | `Full | `Shortcut ]
-    type reference =
-    [ `Inline of Link_definition.t node
-    | `Ref of reference_layout * Label.t * Label.t ]
-
-    type t = { text : inline; reference : reference; }
-
-    let make text reference = { text; reference }
-    let text l = l.text
-    let reference l = l.reference
-    let referenced_label l = match l.reference with
-    | `Inline _ -> None | `Ref (_, _, k) -> Some k
-
-    let reference_definition defs l = match l.reference with
-    | `Inline ld -> Some (Link_definition.Def ld)
-    | `Ref (_, _, def) -> Label.Map.find_opt (Label.key def) defs
-
-    let is_unsafe l =
-      let allowed_data_url l =
-        let allowed = ["image/gif"; "image/png"; "image/jpeg"; "image/webp"] in
-        (* Extract mediatype from data:[<mediatype>][;base64],<data> *)
-        match String.index_from_opt l 4 ',' with
-        | None -> false
-        | Some j ->
-            let k = match String.index_from_opt l 4 ';' with
-            | None -> j | Some k -> k
-            in
-            let t = String.sub l 5 (min j k - 5) in
-            List.mem t allowed
-      in
-      Ascii.caseless_starts_with ~prefix:"javascript:" l ||
-      Ascii.caseless_starts_with ~prefix:"vbscript:" l ||
-      Ascii.caseless_starts_with ~prefix:"file:" l ||
-      (Ascii.caseless_starts_with ~prefix:"data:" l && not (allowed_data_url l))
-  end
-
-  module Raw_html = struct
-    type t = Block_line.tight list
-  end
-
-  module Text = struct
-    type t = string
-  end
-
-  type t +=
-  | Autolink of Autolink.t node
-  | Break of Break.t node
-  | Code_span of Code_span.t node
-  | Emphasis of Emphasis.t node
-  | Image of Link.t node
-  | Inlines of t list node
-  | Link of Link.t node
-  | Raw_html of Raw_html.t node
-  | Strong_emphasis of Emphasis.t node
-  | Text of Text.t node
-
-  let empty = Inlines ([], Meta.none)
-
-  let err_unknown = "Unknown Cmarkit.Inline.t type extension"
-
-  (* Extensions *)
-
-  module Strikethrough = struct
-    type nonrec t = t
-    let make = Fun.id
-    let inline = Fun.id
-  end
-
-  module Math_span = struct
-    type t = { display : bool; tex_layout : Block_line.tight list; }
-    let make ~display tex_layout = { display; tex_layout }
-    let display ms = ms.display
-    let tex_layout ms = ms.tex_layout
-    let tex ms =
-      let s = List.map Block_line.tight_to_string ms.tex_layout in
-      String.concat " "s
-  end
-
-  type t +=
-  | Ext_strikethrough of Strikethrough.t node
-  | Ext_math_span of Math_span.t node
-
-  (* Functions on inlines *)
-
-  let is_empty = function
-  | Text ("", _) | Inlines ([], _) -> true | _ -> false
-
-  let ext_none _ = invalid_arg err_unknown
-  let meta ?(ext = ext_none) = function
-  | Autolink (_, m) | Break (_, m) | Code_span (_, m) | Emphasis (_, m)
-  | Image (_, m) | Inlines (_, m) | Link (_, m) | Raw_html (_, m)
-  | Strong_emphasis (_, m)  | Text (_, m) -> m
-  | Ext_strikethrough (_, m) -> m | Ext_math_span (_, m) -> m
-  | i -> ext i
-
-  let rec normalize ?(ext = ext_none) = function
-  | Autolink _ | Break _ | Code_span _ | Raw_html _ | Text _
-  | Inlines ([], _) | Ext_math_span _ as i -> i
-  | Image (l, m) -> Image ({ l with text = normalize ~ext l.text }, m)
-  | Link (l, m) -> Link ({ l with text = normalize ~ext l.text }, m)
-  | Inlines ([i], _) -> i
-  | Emphasis (e, m) ->
-      Emphasis ({ e with inline = normalize ~ext e.inline}, m)
-  | Strong_emphasis (e, m) ->
-      Strong_emphasis ({ e with inline = normalize ~ext e.inline}, m)
-  | Inlines (i :: is, m) ->
-      let rec loop acc = function
-      | Inlines (is', m) :: is -> loop acc (List.rev_append (List.rev is') is)
-      | Text (t', m') as i' :: is ->
-          begin match acc with
-          | Text (t, m) :: acc ->
-              let tl = Textloc.span (Meta.textloc m) (Meta.textloc m') in
-              let i = Text (t ^ t', Meta.with_textloc ~keep_id:true m tl) in
-              loop (i :: acc) is
-          | _ -> loop (normalize ~ext i' :: acc) is
-          end
-      | i :: is -> loop (normalize ~ext i :: acc) is
-      | [] -> List.rev acc
-      in
-      let is = loop [normalize ~ext i] is in
-      (match is with [i] -> i | _ -> Inlines (is, m))
-  | Ext_strikethrough (i, m) -> Ext_strikethrough (normalize ~ext i, m)
-  | i -> ext i
-
-  let ext_none ~break_on_soft = ext_none
-  let to_plain_text ?(ext = ext_none) ~break_on_soft i =
-    let push s acc = (s :: List.hd acc) :: List.tl acc in
-    let newline acc = [] :: (List.rev (List.hd acc)) :: List.tl acc in
-    let rec loop ~break_on_soft acc = function
-    | Autolink (a, _) :: is ->
-        let acc = push (String.concat "" ["<"; fst a.link; ">"]) acc in
-        loop ~break_on_soft acc is
-    | Break ({ type' = `Hard }, _) :: is ->
-        loop ~break_on_soft (newline acc) is
-    | Break ({ type' = `Soft }, _) :: is ->
-        let acc = if break_on_soft then newline acc else (push " " acc) in
-        loop ~break_on_soft acc is
-    | Code_span (cs, _) :: is ->
-        loop ~break_on_soft (push (Code_span.code cs) acc) is
-    | Emphasis ({ inline }, _) :: is | Strong_emphasis ({ inline }, _) :: is ->
-        loop ~break_on_soft acc (inline :: is)
-    | Inlines (is', _) :: is ->
-        loop ~break_on_soft acc (List.rev_append (List.rev is') is)
-    | Link (l, _) :: is | Image (l, _) :: is ->
-        loop ~break_on_soft acc (l.text :: is)
-    | Raw_html _ :: is ->
-        loop ~break_on_soft acc is
-    | Text (t, _) :: is ->
-        loop ~break_on_soft (push t acc) is
-    | Ext_strikethrough (i, _) :: is ->
-        loop ~break_on_soft acc (i :: is)
-    | Ext_math_span (m, _) :: is ->
-        loop ~break_on_soft (push (Math_span.tex m) acc) is
-    | i :: is ->
-        loop ~break_on_soft acc (ext ~break_on_soft i :: is)
-    | [] ->
-        List.rev ((List.rev (List.hd acc)) :: List.tl acc)
-    in
-    loop ~break_on_soft ([] :: []) [i]
-
-  let id ?buf ?ext i =
-    let text = to_plain_text ?ext ~break_on_soft:false i in
-    let s = String.concat "\n" (List.map (String.concat "") text) in
-    let b = match buf with
-    | Some b -> Buffer.reset b; b | None -> Buffer.create 256
-    in
-    let[@inline] collapse_blanks b ~prev_byte =
-      (* Collapses non initial white *)
-      if Ascii.is_blank prev_byte && Buffer.length b <> 0
-      then Buffer.add_char b '-'
-    in
-    let rec loop b s max ~prev_byte k =
-      if k > max then Buffer.contents b else
-      match s.[k] with
-      | ' ' | '\t' as prev_byte -> loop b s max ~prev_byte (k + 1)
-      | '_' | '-' as c ->
-          collapse_blanks b ~prev_byte;
-          Buffer.add_char b c;
-          loop b s max ~prev_byte:c (k + 1)
-      | c ->
-          let () = collapse_blanks b ~prev_byte in
-          let d = String.get_utf_8_uchar s k in
-          let u = Uchar.utf_decode_uchar d in
-          let u = match Uchar.to_int u with 0x0000 -> Uchar.rep | _ -> u in
-          let k' = k + Uchar.utf_decode_length d in
-          if Cmarkit_data.is_unicode_punctuation u
-          then loop b s max ~prev_byte:'\x00' k' else
-          let () = match Cmarkit_data.unicode_case_fold u with
-          | None -> Buffer.add_utf_8_uchar b u
-          | Some fold -> Buffer.add_string b fold
-          in
-          let prev_byte = s.[k] in
-          loop b s max ~prev_byte k'
-    in
-    loop b s (String.length s - 1) ~prev_byte:'\x00' 0
-end
-
-(* Blocks *)
-
-module Block = struct
-  type t = ..
-
-  module Blank_line = struct
-    type t = Layout.blanks
-  end
-
-  module Block_quote = struct
-    type nonrec t = { indent : Layout.indent; block : t; }
-    let make ?(indent = 0) block = { indent; block }
-    let indent bq = bq.indent
-    let block bq = bq.block
-  end
-
-  module Code_block = struct
-    type fenced_layout =
-      { indent : Layout.indent;
-        opening_fence : Layout.string node;
-        closing_fence : Layout.string node option; }
-
-    let default_fenced_layout =
-      { indent = 0;
-        opening_fence = Layout.empty;
-        closing_fence = Some Layout.empty }
-
-    type layout = [ `Indented | `Fenced of fenced_layout ]
-    type t =
-      { layout : layout;
-        info_string : string node option;
-        code : string node list; }
-
-    let make ?(layout = `Fenced default_fenced_layout) ?info_string code =
-      let layout = match info_string, layout with
-      | Some _, `Indented -> `Fenced default_fenced_layout
-      | _, layout -> layout
-      in
-      { layout; info_string; code }
-
-    let layout cb = cb.layout
-    let info_string cb = cb.info_string
-    let code cb = cb.code
-
-    let make_fence cb =
-      let rec loop char counts = function
-      | [] -> counts
-      | (c, _) :: cs ->
-          let max = String.length c - 1 in
-          let k = ref 0 in
-          while (!k <= max && c.[!k] = char) do incr k done;
-          loop char (if !k <> 0 then !k :: counts else counts) cs
-      in
-      let char = match cb.info_string with
-      | Some (i, _) when String.exists (Char.equal '`') i -> '~'
-      | None | Some _ -> '`'
-      in
-      let counts = loop char [] cb.code in
-      char,
-      Inline.Code_span.min_backtick_count (* not char specific *) ~min:3 counts
-
-    let language_of_info_string s =
-      let rec next_white s max i =
-        if i > max || Ascii.is_white s.[i] then i else
-        next_white s max (i + 1)
-      in
-      if s = "" then None else
-      let max = String.length s - 1 in
-      let white = next_white s max 0 in
-      let rem_first = Match.first_non_blank s ~last:max ~start:white in
-      let lang = String.sub s 0 white in
-      if lang = "" then None else
-      Some (lang, String.sub s rem_first (max - rem_first + 1))
-
-    let is_math_block = function
-    | None -> false | Some (i, _) -> match language_of_info_string i with
-    | Some ("math", _) -> true
-    | Some _ | None -> false
-  end
-
-  module Heading = struct
-    type atx_layout =
-      { indent : Layout.indent;
-        after_opening : Layout.blanks;
-        closing : Layout.string; }
-
-    let default_atx_layout = { indent = 0; after_opening = ""; closing = "" }
-
-    type setext_layout =
-      { leading_indent : Layout.indent;
-        trailing_blanks : Layout.blanks;
-        underline_indent : Layout.indent;
-        underline_count : Layout.count node;
-        underline_blanks : Layout.blanks; }
-
-    type layout = [ `Atx of atx_layout | `Setext of setext_layout ]
-    type id = [ `Auto of string | `Id of string ]
-    type t = { layout : layout; level : int; inline : Inline.t; id : id option }
-
-    let make ?id ?(layout = `Atx default_atx_layout) ~level inline =
-      let max = match layout with `Atx _ -> 6 | `Setext _ -> 2 in
-      let level = Int.max 1 (Int.min level max) in
-      {layout; level; inline; id}
-
-    let layout h = h.layout
-    let level h = h.level
-    let inline h = h.inline
-    let id h = h.id
-  end
-
-  module Html_block = struct
-    type t = string node list
-  end
-
-  module List_item = struct
-    type block = t
-    type t =
-      { before_marker : Layout.indent;
-        marker : Layout.string node;
-        after_marker : Layout.indent;
-        block : block;
-        ext_task_marker : Uchar.t node option }
-
-    let make
-        ?(before_marker = 0) ?(marker = Layout.empty) ?(after_marker = 1)
-        ?ext_task_marker block
-      =
-      { before_marker; marker; after_marker; block; ext_task_marker }
-
-    let block i = i.block
-    let before_marker i = i.before_marker
-    let marker i = i.marker
-    let after_marker i = i.after_marker
-    let ext_task_marker i = i.ext_task_marker
-    let task_status_of_task_marker u = match Uchar.to_int u with
-    | 0x0020 -> `Unchecked
-    | 0x0078 (* x *) | 0x0058 (* X *) | 0x2713 (* ✓ *) | 0x2714 (* ✔ *)
-    | 0x10102 (* 𐄂 *) | 0x1F5F8 (* 🗸*) -> `Checked
-    | 0x007E (* ~ *) -> `Cancelled
-    | _ -> `Other u
-  end
-
-  module List' = struct
-    type type' = [ `Unordered of Layout.char | `Ordered of int * Layout.char ]
-    type t =
-      { type' : type';
-        tight : bool;
-        items : List_item.t node list; }
-
-    let make ?(tight = true) type' items = { type'; tight; items }
-
-    let type' l = l.type'
-    let tight l = l.tight
-    let items l = l.items
-  end
-
-  module Paragraph = struct
-    type t =
-      { leading_indent : Layout.indent;
-        inline : Inline.t;
-        trailing_blanks : Layout.blanks; }
-
-    let make ?(leading_indent = 0) ?(trailing_blanks = "") inline =
-      { leading_indent; inline; trailing_blanks }
-
-    let inline p = p.inline
-    let leading_indent p = p.leading_indent
-    let trailing_blanks p = p.trailing_blanks
-  end
-
-  module Thematic_break = struct
-    type t = { indent : Layout.indent; layout : Layout.string }
-    let make ?(indent = 0) ?(layout = "---") () =  { indent; layout }
-    let indent t = t.indent
-    let layout t = t.layout
-  end
-
-  type t +=
-  | Blank_line of Layout.blanks node
-  | Block_quote of Block_quote.t node
-  | Blocks of t list node
-  | Code_block of Code_block.t node
-  | Heading of Heading.t node
-  | Html_block of Html_block.t node
-  | Link_reference_definition of Link_definition.t node
-  | List of List'.t node
-  | Paragraph of Paragraph.t node
-  | Thematic_break of Thematic_break.t node
-
-  let empty = Blocks ([], Meta.none)
-
-  (* Extensions *)
-
-  module Table = struct
-    type align = [ `Left | `Center | `Right ]
-    type sep = align option * Layout.count
-    type cell_layout = Layout.blanks * Layout.blanks
-    type row =
-    [ `Header of (Inline.t * cell_layout) list
-    | `Sep of sep node list
-    | `Data of (Inline.t * cell_layout) list ]
-
-    type t =
-      { indent : Layout.indent;
-        col_count : int;
-        rows : (row node * Layout.blanks) list }
-
-    let col_count rows =
-      let rec loop c = function
-      | (((`Header cols | `Data cols), _), _) :: rs ->
-          loop (Int.max (List.length cols) c) rs
-      | (((`Sep cols), _), _) :: rs ->
-          loop (Int.max (List.length cols) c) rs
-      | [] -> c
-      in
-      loop 0 rows
-
-    let make ?(indent = 0) rows = { indent; col_count = col_count rows; rows }
-    let indent t = t.indent
-    let col_count t = t.col_count
-    let rows t = t.rows
-
-    let parse_sep_row cs =
-      let rec loop acc = function
-      | [] -> Some (List.rev acc)
-      | (Inline.Text (s, meta), ("", "")) :: cs ->
-          if s = "" then None else
-          let max = String.length s - 1 in
-          let first_colon = s.[0] = ':' and  last_colon = s.[max] = ':' in
-          let first = if first_colon then 1 else 0 in
-          let last = if last_colon then max - 1 else max in
-          begin
-            match
-              for i = first to last do if s.[i] <> '-' then raise Exit; done
-            with
-            | exception Exit -> None
-            | () ->
-                let count = last - first + 1 in
-                let sep = match first_colon, last_colon with
-                | false, false -> None
-                | true, true -> Some `Center
-                | true, false -> Some `Left
-                | false, true -> Some `Right
-                in
-                loop (((sep, count), meta) :: acc) cs
-          end
-      | _ -> None
-      in
-      loop [] cs
-  end
-
-  module Footnote = struct
-    type nonrec t =
-      { indent : Layout.indent;
-        label : Label.t;
-        defined_label : Label.t option;
-        block : t }
-
-    let make ?(indent = 0) ?defined_label:d label block =
-      let defined_label = match d with None -> Some label | Some d -> d in
-      { indent; label; defined_label; block }
-
-    let indent fn = fn.indent
-    let label fn = fn.label
-    let defined_label fn = fn.defined_label
-    let block fn = fn.block
-
-    type Label.def += Def of t node
-    let stub label defined_label =
-      Def ({ indent = 0; label; defined_label; block = empty}, Meta.none)
-  end
-
-  type t +=
-  | Ext_math_block of Code_block.t node
-  | Ext_table of Table.t node
-  | Ext_footnote_definition of Footnote.t node
-
-  (* Functions on blocks *)
-
-  let err_unknown = "Unknown Cmarkit.Block.t type extension"
-
-  let ext_none _ = invalid_arg err_unknown
-  let meta ?(ext = ext_none) = function
-  | Blank_line (_, m) | Block_quote (_, m) | Blocks (_, m) | Code_block (_, m)
-  | Heading (_, m) | Html_block (_, m) | Link_reference_definition (_, m)
-  | List (_, m) | Paragraph (_, m) | Thematic_break (_, m)
-  | Ext_math_block (_, m) | Ext_table (_, m)
-  | Ext_footnote_definition (_, m) -> m
-  | b -> ext b
-
-  let rec normalize ?(ext = ext_none) = function
-  | Blank_line _ | Code_block _ | Heading _ | Html_block _
-  | Link_reference_definition _ | Paragraph _ | Thematic_break _
-  | Blocks ([], _) | Ext_math_block _ | Ext_table _ as b -> b
-  | Block_quote (b, m) ->
-      let b = { b with block = normalize ~ext b.block } in
-      Block_quote (b, m)
-  | List (l, m) ->
-      let item (i, meta) =
-        let block = List_item.block i in
-        { i with List_item.block = normalize ~ext block }, meta
-      in
-      List ({ l with items = List.map item l.items }, m)
-  | Blocks (b :: bs, m) ->
-      let rec loop acc = function
-      | Blocks (bs', m) :: bs -> loop acc (List.rev_append (List.rev bs') bs)
-      | b :: bs -> loop (normalize ~ext b :: acc) bs
-      | [] -> List.rev acc
-      in
-      let bs = loop [normalize ~ext b] bs in
-      (match bs with [b] -> b | _ -> Blocks (bs, m))
-  | Ext_footnote_definition (fn, m) ->
-      let fn = { fn with block = normalize ~ext fn.block } in
-      Ext_footnote_definition (fn, m)
-  | b -> ext b
-
-  let rec defs
-      ?(ext = fun b defs -> invalid_arg err_unknown) ?(init = Label.Map.empty)
-    = function
-    | Blank_line _ | Code_block _ | Heading _ | Html_block _
-    | Paragraph _ | Thematic_break _
-    | Ext_math_block _ | Ext_table _ -> init
-    | Block_quote (b, _) -> defs ~ext ~init (Block_quote.block b)
-    | Blocks (bs, _) -> List.fold_left (fun init b -> defs ~ext ~init b) init bs
-    | List (l, _) ->
-        let add init (i, _) = defs ~ext ~init (List_item.block i) in
-        List.fold_left add init l.items
-    | Link_reference_definition ld ->
-        begin match Link_definition.defined_label (fst ld) with
-        | None -> init
-        | Some def ->
-            Label.Map.add (Label.key def) (Link_definition.Def ld) init
-        end
-    | Ext_footnote_definition fn ->
-        let init = match Footnote.defined_label (fst fn) with
-        | None -> init
-        | Some def -> Label.Map.add (Label.key def) (Footnote.Def fn) init
-        in
-        defs ~ext ~init (Footnote.block (fst fn))
-    | b -> ext init b
-end
-
-(* Parsing *)
+open Common
 
 (* Closer indexes.
 
@@ -848,6 +60,63 @@ end
 
 type col = int
 let[@inline] next_tab_stop col = (col + 4) land (lnot 3)
+[@@@ocamlformat "enable"]
+
+(** Module for centralizing Oymarkit-related modifications *)
+module Oymarkit_mod = struct
+  type delim_set = { star : bool; underscore : bool }
+  type t = { emphasis_delims : delim_set; strong_emphasis_delims : delim_set }
+
+  let parse_emph_delims (delims : char list) : (delim_set, string) result =
+    let exception Early_return of string in
+    if delims = [] then Error "delims is empty"
+    else
+      let rec loop star underscore = function
+        | [] -> { star; underscore }
+        | '*' :: cs -> loop true underscore cs
+        | '_' :: cs -> loop star true cs
+        | invalid_char :: _ ->
+            raise
+              (Early_return
+                 (Printf.sprintf "must only contain '*' or '_', got '%c'"
+                    invalid_char))
+      in
+      try Ok (loop false false delims) with
+      | Early_return msg -> Error msg
+
+  let make ~emphasis_delims ~strong_emphasis_delims =
+    let emphasis_delims =
+      match parse_emph_delims emphasis_delims with
+      | Ok delims -> delims
+      | Error msg -> failwith (Printf.sprintf "emphasis_delims: %s" msg)
+    in
+    let strong_emphasis_delims =
+      match parse_emph_delims strong_emphasis_delims with
+      | Ok delims -> delims
+      | Error msg -> failwith (Printf.sprintf "strong_emphasis_delims: %s" msg)
+    in
+    { emphasis_delims; strong_emphasis_delims }
+
+  let delim_allowed delims = function
+    | '*' -> delims.star
+    | '_' -> delims.underscore
+    | _ -> false
+
+  (* Delimiter knobs restrict the number of characters that may be consumed
+     from a matching delimiter run. If strong emphasis is disallowed for the
+     character but emphasis is allowed, a run such as [__x__] falls back to
+     consuming one delimiter on each side, leaving the remaining pair to parse
+     as nested emphasis. *)
+  let emphasis_match_used t ~char ~opener_count ~closer_count =
+    if
+      closer_count >= 2 && opener_count >= 2
+      && delim_allowed t.strong_emphasis_delims char
+    then Some 2
+    else if delim_allowed t.emphasis_delims char then Some 1
+    else None
+end
+
+[@@@ocamlformat "disable"]
 
 (* Parser abstraction *)
 
@@ -860,6 +129,7 @@ type parser =
     nolayout : bool; (* do not compute layout fields if [true]. *)
     heading_auto_ids : bool; (* compute heading ids. *)
     nested_links : bool;
+    oymarkit_mod : Oymarkit_mod.t;
     mutable defs : Label.defs;
     resolver : Label.resolver;
     mutable cidx : Closer_index.t; (* For inline parsing. *)
@@ -879,11 +149,19 @@ type parser =
 let parser
     ?(defs = Label.Map.empty) ?(resolver = Label.default_resolver)
     ?(nested_links = false) ?(heading_auto_ids = false) ?(layout = false)
-    ?(locs = false) ?(file = Textloc.file_none) ~strict i
+    ?(locs = false) ?(file = Textloc.file_none)
+    (* Oymarkit begin *)
+    ?(emphasis_delims = [ '*'; '_' ])
+    ?(strong_emphasis_delims = [ '*'; '_' ])
+    (* Oymarkit end *)
+    ~strict i
   =
+  let oymarkit_mod = Oymarkit_mod.make ~emphasis_delims ~strong_emphasis_delims in
   let nolocs = not locs and nolayout = not layout and exts = not strict in
   { file; i; buf = Buffer.create 512; exts; nolocs; nolayout;
-    heading_auto_ids; nested_links; defs; resolver; cidx = Closer_index.empty;
+    heading_auto_ids; nested_links;
+    oymarkit_mod;
+    defs; resolver; cidx = Closer_index.empty;
     current_line_pos = 1, 0; current_line_last_char = -1; current_char = 0;
     current_char_col = 0; next_non_blank = 0; next_non_blank_col = 0;
     tab_consumed_cols = 0; }
@@ -1652,10 +930,26 @@ module Inline_struct = struct
     | Emphasis_marks marks as t :: toks ->
         let after = marks.start in
         if marks.may_close && marks_match ~marks ~opener then
-          let used = if marks.count >= 2 && opener.count >= 2 then 2 else 1 in
-          let to_last = marks.start - 1 in
-          let acc = rev_tokens_and_shorten_last_line ~to_last [] acc in
-          Either.Right (toks, line, used, acc, marks)
+          if is_oymarkit_enabled () then begin
+            match
+              Oymarkit_mod.emphasis_match_used p.oymarkit_mod
+                ~char:opener.char ~opener_count:opener.count
+                ~closer_count:marks.count
+            with
+            | Some used ->
+                let to_last = marks.start - 1 in
+                let acc = rev_tokens_and_shorten_last_line ~to_last [] acc in
+                Either.Right (toks, line, used, acc, marks)
+            | None ->
+                if has_emphasis_closer ~char:opener.char ~after p.cidx
+                then loop p toks line (t :: acc) ~opener
+                else Either.Left (List.rev_append (t :: acc) toks)
+          end else begin
+            let used = if marks.count >= 2 && opener.count >= 2 then 2 else 1 in
+            let to_last = marks.start - 1 in
+            let acc = rev_tokens_and_shorten_last_line ~to_last [] acc in
+            Either.Right (toks, line, used, acc, marks)
+          end
         else if marks.may_open && marks_has_precedence p ~marks ~opener then
           match try_emphasis p toks line ~opener:marks with
           | Either.Left toks -> loop p toks line acc ~opener
@@ -2982,224 +2276,3 @@ and block_struct_to_block p = function
 let block_struct_to_doc p (doc, meta) =
   match List.rev_map (block_struct_to_block p) doc with
   | [b] -> b | bs -> Block.Blocks (bs, meta)
-
-(* Documents *)
-
-module Doc = struct
-  type t = { nl : Layout.string; block : Block.t; defs : Label.defs }
-  let make ?(nl = "\n") ?(defs = Label.Map.empty) block = { nl; block; defs }
-  let empty = make (Block.Blocks ([], Meta.none))
-  let nl d = d.nl
-  let block d = d.block
-  let defs d = d.defs
-  let of_string
-      ?defs ?resolver ?nested_links ?heading_auto_ids ?layout ?locs ?file
-      ?(strict = true) s
-    =
-    let p =
-      parser ?defs ?resolver ?nested_links ?heading_auto_ids ?layout ?locs
-        ?file ~strict s
-    in
-    let nl, doc = Block_struct.parse p in
-    let block = block_struct_to_doc p doc in
-    make ~nl block ~defs:p.defs
-
-  let unicode_version = Cmarkit_data.unicode_version
-  let commonmark_version = "0.31.2"
-end
-
-(* Maps and folds *)
-
-module Mapper = struct
-  type 'a filter_map = 'a option
-  type 'a result = [ `Default | `Map of 'a filter_map ]
-  let default = `Default
-  let delete = `Map None
-  let ret v = `Map (Some v)
-
-  type t =
-    { inline_ext_default : Inline.t map;
-      block_ext_default : Block.t map;
-      inline : Inline.t mapper;
-      block : Block.t mapper }
-  and 'a map = t -> 'a -> 'a filter_map
-  and 'a mapper = t -> 'a -> 'a result
-
-  let none _ _ = `Default
-  let ext_inline_none _ _ = invalid_arg Inline.err_unknown
-  let ext_block_none _ _ = invalid_arg Block.err_unknown
-  let make
-      ?(inline_ext_default = ext_inline_none)
-      ?(block_ext_default = ext_block_none)
-      ?(inline = none) ?(block = none) ()
-    =
-    { inline_ext_default; block_ext_default; inline; block }
-
-  let inline_mapper m = m.inline
-  let block_mapper m = m.block
-  let inline_ext_default m = m.inline_ext_default
-  let block_ext_default m = m.block_ext_default
-
-  let ( let* ) = Option.bind
-
-  let rec map_inline m i = match m.inline m i with
-  | `Map i -> i
-  | `Default ->
-      let open Inline in
-      match i with
-      | Autolink _ | Break _ | Code_span _ | Raw_html _
-      | Text _ | Ext_math_span _ as i -> Some i
-      | Image (l, meta) ->
-          let text = Option.value ~default:Inline.empty (map_inline m l.text) in
-          Some (Image ({ l with text }, meta))
-      | Link (l, meta) ->
-          let* text = map_inline m l.text in
-          Some (Link ({ l with text }, meta))
-      | Emphasis (e, meta) ->
-          let* inline = map_inline m e.inline in
-          Some (Emphasis ({ e with inline }, meta))
-      | Strong_emphasis (e, meta) ->
-          let* inline = map_inline m e.inline in
-          Some (Strong_emphasis ({ e with inline}, meta))
-      | Inlines (is, meta) ->
-          (match List.filter_map (map_inline m) is with
-          | [] -> None | is -> Some (Inlines (is, meta)))
-      | Ext_strikethrough (s, meta) ->
-          let* inline = map_inline m s in
-          Some (Ext_strikethrough (inline, meta))
-      | ext -> m.inline_ext_default m ext
-
-  let rec map_block m b = match m.block m b with
-  | `Map b -> b
-  | `Default ->
-      let open Block in
-      match b with
-      | Blank_line _ | Code_block _ | Html_block _
-      | Link_reference_definition _ | Thematic_break _
-      | Ext_math_block _ as b -> Some b
-      | Heading (h, meta) ->
-          let inline = match map_inline m (Block.Heading.inline h) with
-          | None -> (* Can be empty *) Inline.Inlines ([], Meta.none)
-          | Some i -> i
-          in
-          Some (Heading ({ h with inline}, meta))
-      | Block_quote (b, meta) ->
-          let block = match map_block m b.block with
-          | None -> (* Can be empty *) Blocks ([], Meta.none) | Some b -> b
-          in
-          Some (Block_quote ({ b with block}, meta))
-      | Blocks (bs, meta) ->
-          (match List.filter_map (map_block m) bs with
-          | [] -> None | bs -> Some (Blocks (bs, meta)))
-      | List (l, meta) ->
-          let map_list_item m (i, meta) =
-            let* block = map_block m (List_item.block i) in
-            Some ({ i with block }, meta)
-          in
-          (match List.filter_map (map_list_item m) l.items with
-          | [] -> None | items -> Some (List ({ l with items }, meta)))
-      | Paragraph (p, meta) ->
-          let* inline = map_inline m (Paragraph.inline p) in
-          Some (Paragraph ({ p with inline }, meta))
-      | Ext_table (t, meta) ->
-          let map_col m (i, layout) = match map_inline m i with
-          | None -> (Inline.empty, layout) | Some i -> (i, layout)
-          in
-          let map_row (((r, meta), blanks) as row) = match r with
-          | `Header is -> (`Header (List.map (map_col m) is), meta), blanks
-          | `Sep _ -> row
-          | `Data is -> (`Data (List.map (map_col m) is), meta), blanks
-          in
-          let rows = List.map map_row t.rows in
-          Some (Ext_table ({ t with Table.rows }, meta))
-      | Ext_footnote_definition (fn, meta) ->
-          let block = match map_block m fn.block with
-          | None -> (* Can be empty *) Blocks ([], Meta.none) | Some b -> b
-          in
-          Some (Ext_footnote_definition ({ fn with block}, meta))
-      | ext -> m.block_ext_default m ext
-
-  let map_doc m d =
-    let map_block m b = Option.value ~default:Block.empty (map_block m b) in
-    (* XXX something better for defs should be devised here. *)
-    let map_def m = function
-    | Block.Footnote.Def (fn, meta) ->
-        let block = map_block m (Block.Footnote.block fn) in
-        Block.Footnote.Def ({ fn with block }, meta)
-    | def -> def
-    in
-    let block = map_block m (Doc.block d) in
-    let defs = Label.Map.map (map_def m) (Doc.defs d) in
-    { d with Doc.block; defs }
-end
-
-module Folder = struct
-  type 'a result = [ `Default | `Fold of 'a ]
-  let default = `Default
-  let ret v = `Fold v
-
-  type ('a, 'b) fold = 'b t -> 'b -> 'a -> 'b
-  and ('a, 'b) folder = 'b t -> 'b -> 'a -> 'b result
-  and 'a t =
-    { inline_ext_default : (Inline.t, 'a) fold;
-      block_ext_default : (Block.t, 'a) fold;
-      inline : (Inline.t, 'a) folder;
-      block : (Block.t, 'a) folder; }
-
-  let none _ _ _ = `Default
-  let ext_inline_none _ _ _ = invalid_arg Inline.err_unknown
-  let ext_block_none _ _ _ = invalid_arg Block.err_unknown
-  let make
-      ?(inline_ext_default = ext_inline_none)
-      ?(block_ext_default = ext_block_none)
-      ?(inline = none) ?(block = none) ()
-    =
-    { inline_ext_default; block_ext_default; inline; block }
-
-  let inline_folder f = f.inline
-  let block_folder f = f.block
-  let inline_ext_default f = f.inline_ext_default
-  let block_ext_default f = f.block_ext_default
-
-  let rec fold_inline f acc i = match f.inline f acc i with
-  | `Fold acc -> acc
-  | `Default ->
-      let open Inline in
-      match i with
-      | Autolink _ | Break _ | Code_span _ | Raw_html _ | Text _
-      | Ext_math_span _ -> acc
-      | Image (l, _) | Link (l, _) -> fold_inline f acc l.text
-      | Emphasis ({ inline }, _) -> fold_inline f acc inline
-      | Strong_emphasis ({ inline }, _) -> fold_inline f acc inline
-      | Inlines (is, _) -> List.fold_left (fold_inline f) acc is
-      | Ext_strikethrough (inline, _) -> fold_inline f acc inline
-  | ext -> f.inline_ext_default f acc ext
-
-  let rec fold_block f acc b = match f.block f acc b with
-  | `Fold acc -> acc
-  | `Default ->
-      let open Block in
-      match b with
-      | Blank_line _ | Code_block _ | Html_block _
-      | Link_reference_definition _ | Thematic_break _ | Ext_math_block _ -> acc
-      | Heading (h, _) -> fold_inline f acc (Block.Heading.inline h)
-      | Block_quote (bq, _) -> fold_block f acc bq.block
-      | Blocks (bs, _) -> List.fold_left (fold_block f) acc bs
-      | List (l, _) ->
-          let fold_list_item m acc (i, _) =
-            fold_block m acc (Block.List_item.block i)
-          in
-          List.fold_left (fold_list_item f) acc l.items
-      | Paragraph (p, _) -> fold_inline f acc (Block.Paragraph.inline p)
-      | Ext_table (t, _) ->
-          let fold_row acc ((r, _), _) = match r with
-          | (`Header is | `Data is) ->
-              List.fold_left (fun acc (i, _) -> fold_inline f acc i) acc is
-          | `Sep _ -> acc
-          in
-          List.fold_left fold_row acc t.Table.rows
-      | Ext_footnote_definition (fn, _) -> fold_block f acc fn.block
-      | ext -> f.block_ext_default f acc ext
-
-  let fold_doc f acc d = fold_block f acc (Doc.block d)
-end

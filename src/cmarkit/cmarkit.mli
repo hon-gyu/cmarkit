@@ -937,7 +937,7 @@ module Block : sig
 
   (** {1:blocks Blocks} *)
 
-  type t = ..
+  type t = Cmarkit_.Block.t = ..
   (** The type for blocks. *)
 
   (** Blank lines. *)
@@ -1337,7 +1337,7 @@ module Doc : sig
 
   (** {1:docs Documents} *)
 
-  type t
+  type t = Cmarkit_.Doc.t
   (** The type for CommonMark documents. *)
 
   val nl : t -> Layout.string
@@ -1366,7 +1366,8 @@ module Doc : sig
   val of_string :
     ?defs:Label.defs -> ?resolver:Label.resolver -> ?nested_links:bool ->
     ?heading_auto_ids:bool -> ?layout:bool -> ?locs:bool ->
-    ?file:Textloc.fpath -> ?strict:bool -> string -> t
+    ?file:Textloc.fpath -> ?emphasis_delims:char list ->
+    ?strong_emphasis_delims:char list -> ?strict:bool -> string -> t
     (** [of_string md] is a document from the UTF-8 encoded CommonMark
         document [md].
 
@@ -1400,6 +1401,16 @@ module Doc : sig
        embedding DSLs in link labels or destinations. Note that image
        links already allow link nesting as per CommonMark
        specification.}
+   {- [emphasis_delims] and [strong_emphasis_delims] specify the characters
+       allowed to delimit emphasis and strong emphasis respectively. Each list
+       must be non-empty and contain only ['*'] or ['_']. Both default to
+       [['*'; '_']], which preserves CommonMark behavior. If a matching
+       delimiter run could form strong emphasis but its character is not in
+       [strong_emphasis_delims], the parser may still consume one delimiter
+       from each side to form emphasis when the character is in
+       [emphasis_delims]. For example, with [emphasis_delims = ['_']] and
+       [strong_emphasis_delims = ['*']], [__x__] parses as nested emphasis
+       rather than strong emphasis.}
    {- If [resolver] is provided this is used resolve label definitions
       and references. See {{!Label.resolvers}here} for details. Defaults to
       {!Label.default_resolver}.}
@@ -1671,6 +1682,31 @@ let code_block_langs doc =
   let langs = Folder.fold_doc folder String_set.empty doc in
   String_set.elements langs
 ]} *)
+end
+
+(** {1:pp Debug pretty-printing} *)
+
+(** Structural pretty-printers for the AST.
+
+    These drop {!Meta.t} and most layout, and truncate inline previews.
+    Intended for debugging and as a coarse equality (compare the printed
+    forms). Not a faithful round-trip. *)
+module Pp : sig
+  val pp_block_with :
+    ?ext:(Format.formatter -> Block.t -> unit) ->
+    ?ext_inline:(break_on_soft:bool -> Inline.t -> Inline.t) ->
+    unit -> Format.formatter -> Block.t -> unit
+  (** [pp_block_with ?ext ?ext_inline () ppf b] prints [b]. [ext] handles
+      block extension constructors; [ext_inline] is forwarded to
+      {!Inline.to_plain_text}. *)
+
+  val pp_block : Format.formatter -> Block.t -> unit
+  (** [pp_block] is {!pp_block_with} with defaults. *)
+
+  val pp_inline_preview :
+    ?ext_inline:(break_on_soft:bool -> Inline.t -> Inline.t) ->
+    Format.formatter -> Inline.t -> unit
+  (** Truncated, plain-text preview of an inline. *)
 end
 
 (** {1:extensions Extensions}

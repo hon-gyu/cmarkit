@@ -1,0 +1,13 @@
+(library
+ (name cmarkit_tool)
+ (wrapped false)
+ (libraries
+    cmdliner
+    unix
+    cmarkit
+    cmarkit_renderer
+    cmarkit_latex
+    cmarkit_html
+    cmarkit_commonmark)
+ (preprocess (pps ppx_jane ppx_deriving_qcheck))
+)

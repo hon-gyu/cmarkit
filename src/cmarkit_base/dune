@@ -1,0 +1,4 @@
+(library
+  (name cmarkit_base)
+  (libraries cmarkit_data)
+)

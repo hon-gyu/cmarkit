@@ -1,0 +1,21 @@
+; Based on cmarkit.ml
+; - Refactored into smaller modules
+; - Expose internal via cmarkit_.ml module
+; - Public interface is kept in cmarkit.ml and constrained by the original cmarkit.mli file
+; - Contains additional modules: Inline_parse, Pp, Sexp_
+
+(library
+ (name cmarkit_)
+ (libraries cmarkit_data cmarkit_base qcheck)
+ (modules cmarkit_ common inline block doc parser inline_parse pp sexp)
+ (inline_tests)
+ (preprocess
+  (pps ppx_jane ppx_expect ppx_deriving_qcheck)))
+
+(library
+ (name cmarkit)
+ (libraries cmarkit_ cmarkit_data cmarkit_base qcheck)
+ (modules cmarkit)
+ (inline_tests)
+ (preprocess
+  (pps ppx_jane ppx_expect ppx_deriving_qcheck)))
