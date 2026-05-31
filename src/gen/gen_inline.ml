@@ -85,6 +85,7 @@ module Iconfig = struct
     w_link : int;
     w_image : int;
     no_empty_inlines : bool;
+    no_empty_emphasis : bool;
     (* When set, a [Link] never contains another [Link] at any nesting depth
        (even across an intervening image). *)
     no_nested_link : bool;
@@ -103,10 +104,11 @@ module Iconfig = struct
       w_link = 1;
       w_image = 1;
       no_empty_inlines = false;
+      no_empty_emphasis = false;
       no_nested_link = false;
     }
 
-  let typed = { default with no_nested_link = true }
+  let typed = { default with no_empty_emphasis = true; no_nested_link = true }
 end
 
 (**
@@ -148,11 +150,20 @@ let gen_inline (ic : Iconfig.t) : Inline.t G.t =
     | 0 -> gen_leaf ic
     | n ->
         let inlines_of_is is = Inline.Inlines (is, Meta.none) in
+        let emphasis_ic =
+          if ic.no_empty_emphasis then
+            { ic with no_empty_inlines = true; no_empty_emphasis = true }
+          else ic
+        in
         let emph_gen =
-          bind (child ic (n - 1)) (fun i -> oneof_list @@ mk_emph_egs i)
+          bind
+            (child emphasis_ic (n - 1))
+            (fun i -> oneof_list @@ mk_emph_egs i)
         in
         let strong_emph_gen =
-          bind (child ic (n - 1)) (fun i -> oneof_list @@ mk_strong_emph_egs i)
+          bind
+            (child emphasis_ic (n - 1))
+            (fun i -> oneof_list @@ mk_strong_emph_egs i)
         in
         (* CommonMark forbids a link inside a link at any depth. When
            [no_nested_link] is set, generate link content with links disabled

@@ -36,4 +36,21 @@ let rec no_nested_link : Inline.t -> bool = function
   | Inline.Inlines (is, _) -> List.for_all no_nested_link is
   | _ -> true
 
-let inline_typing_rules = [ no_nested_link ]
+(** {1 No empty emphasis}
+
+    The parser cannot emit empty emphasis or strong emphasis. Rendering
+    [Emphasis Inline.empty] produces bare delimiter characters such as [**],
+    which parse back as literal text rather than an emphasis node. *)
+
+let rec no_empty_emphasis : Inline.t -> bool = function
+  | Inline.Emphasis (e, _)
+  | Inline.Strong_emphasis (e, _) ->
+      let inline = Inline.Emphasis.inline e |> Inline.normalize in
+      (not (Inline.is_empty inline)) && no_empty_emphasis inline
+  | Inline.Link (l, _)
+  | Inline.Image (l, _) ->
+      no_empty_emphasis (Inline.Link.text l)
+  | Inline.Inlines (is, _) -> List.for_all no_empty_emphasis is
+  | _ -> true
+
+let inline_typing_rules = [ no_nested_link; no_empty_emphasis ]

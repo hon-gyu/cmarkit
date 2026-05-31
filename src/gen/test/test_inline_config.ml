@@ -59,3 +59,22 @@ let () =
        ~print:pp_inline
        (gen { GI.Iconfig.default with no_empty_inlines = false })
        (fun i -> not (Inline.is_empty i))
+
+(* no_empty_emphasis
+   ----------------- *)
+
+let () =
+  run
+  @@ QCheck2.Test.make
+       ~name:"no_empty_emphasis enabled ==> emphasis payloads are non-empty"
+       ~count ~print:pp_inline
+       (gen { GI.Iconfig.default with no_empty_emphasis = true })
+       TI.no_empty_emphasis
+
+let () =
+  run
+  @@ QCheck2.Test.make_neg
+       ~name:"no_empty_emphasis disabled ==> empty emphasis occurs" ~count
+       ~print:pp_inline
+       (gen { GI.Iconfig.default with no_empty_emphasis = false })
+       TI.no_empty_emphasis

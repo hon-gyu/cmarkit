@@ -3,16 +3,16 @@
 
 Test roundtrip failed (3 shrink steps):
 
-{ block: (Heading 1 (Image (Emphasis (Inlines))))
-; cm: ┌────────────────────────────────────┐
-      │#·![**](https://example.com/img.png)│
-      └────────────────────────────────────┘
+{ block: (Paragraph (Raw_html "<br />"))
+; cm: ┌──────┐
+      │<br·/>│
+      └──────┘
 ; "reparse":
-  (Heading 1 (Image (Text **)))
+  (Html_block "<br />")
 ; "reparse_cm":
-  ┌──────────────────────────────────────┐
-  │# ![\*\*](https://example.com/img.png)│
-  └──────────────────────────────────────┘
+  ┌──────┐
+  │<br />│
+  └──────┘
 }
 ================================================================================
 failure (1 tests failed, 0 tests errored, ran 1 tests)
