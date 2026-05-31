@@ -6,8 +6,8 @@
 [@@@ocamlformat "disable"]
 
 module Meta = Cmarkit_base.Meta
-module Label = Common.Label
-module Layout = Common.Layout
+module Label = Common_.Label
+module Layout = Common_.Layout
 open Parser
 
 type t = { nl : Layout.string; block : Block.t; defs : Label.defs }

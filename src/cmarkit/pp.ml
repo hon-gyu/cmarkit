@@ -3,7 +3,7 @@
    show structure and a preview of inline content, dropping [Meta.t] and
    most layout. Use [~ext] to handle user-defined [Block.t] extensions. *)
 
-open Common
+open Common_
 open Block
 
 let h_epls = "…"

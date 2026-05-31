@@ -11,7 +11,7 @@ module Text = Cmarkit_base.Text
 module Match = Cmarkit_base
 module Textloc = Cmarkit_base.Textloc
 module Meta = Cmarkit_base.Meta
-module Layout = Common.Layout
+module Layout = Common_.Layout
 (* Extended modules *)
 module Pp = Pp
 module Sexp = Sexp
@@ -24,9 +24,9 @@ type line_span = Match.line_span =
 
 type 'a node = 'a * Meta.t
 
-module Block_line = Common.Block_line
-module Label = Common.Label
-module Link_definition = Common.Link_definition
+module Block_line = Common_.Block_line
+module Label = Common_.Label
+module Link_definition = Common_.Link_definition
 
 module Inline = Inline
 

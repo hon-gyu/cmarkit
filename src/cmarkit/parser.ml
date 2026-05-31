@@ -15,7 +15,7 @@ let set_enable_oymarkit b = enable_oymarkit_ := b
 
 [@@@ocamlformat "disable"]
 
-open Common
+open Common_
 
 (* Closer indexes.
 

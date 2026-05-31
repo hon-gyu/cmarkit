@@ -5,7 +5,7 @@
 
 [@@@ocamlformat "disable"]
 
-open Common
+open Common_
 
 type t = ..
 
