@@ -15,7 +15,7 @@ let () =
 let () = Printf.printf "\n\n"
 
 let () =
-  let gen = G.(mk_gen_block ~config:Bconfig.empty ()) in
+  let gen = G.(mk_gen_block ~config:Bconfig.default ()) in
   let rand = Random.State.make [| 0 |] in
   ignore
   @@ QCheck_base_runner.run_tests ~colors:false ~rand

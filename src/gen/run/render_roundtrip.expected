@@ -1,16 +1,26 @@
 
 --- Failure --------------------------------------------------------------------
 
-Test roundtrip failed (4 shrink steps):
+Test roundtrip failed (12 shrink steps):
 
-{ block: (Paragraph (Inlines (Text jia)))
-; cm: ┌───┐
-      │jia│
-      └───┘
-; reparse: (Paragraph (Text jia))
-; reparse_cm: ┌───┐
-              │jia│
-              └───┘
+{ block: (Paragraph
+          (Link
+           (Inlines
+            (Emphasis (Image (Inlines (Code_span add) (Image (Text jia))))))))
+; cm: ┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
+      │[_![`add`![jia](https://example.com/img.png)](https://example.com/img.png)_](https://example.com)│
+      └─────────────────────────────────────────────────────────────────────────────────────────────────┘
+; "reparse":
+  (Paragraph
+   (Link
+    (Emphasis
+     (Image
+      (Inlines (Code_span add) (Image (Text jia))
+       (Text "](https://example.com/img.png)_](https://example.com)"))))))
+; "reparse_cm":
+  ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+  │[_![`add`![jia](https://example.com/img.png)\](https://example.com/img.png)\_\](https://example.com)](https://example.com/img.png)_](https://example.com)│
+  └─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 }
 ================================================================================
 failure (1 tests failed, 0 tests errored, ran 1 tests)
