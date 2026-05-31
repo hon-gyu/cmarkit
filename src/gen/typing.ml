@@ -112,6 +112,53 @@ let no_empty_blocks : Property.t =
   in
   { name; check }
 
+(** {1 No HTML-block-starting paragraph}
+
+    A paragraph whose rendered first line starts with CommonMark HTML block
+    syntax is not reconstructed as a paragraph: block parsing classifies the
+    line as an [Html_block] before inline raw HTML is considered. *)
+
+let paragraph_starts_html_block (p : Block.Paragraph.t) : bool =
+  let block = Block.Paragraph (p, Meta.none) in
+  let cm = Common_.to_commonmark block in
+  let last =
+    match String.index_opt cm '\n' with
+    | None -> String.length cm - 1
+    | Some i -> i - 1
+  in
+  if last < 0 then false
+  else
+    let start = Match.first_non_blank cm ~last ~start:0 in
+    start <= last
+    &&
+    match Match.html_block_start cm ~last ~start with
+    | Match.Html_block_line _ -> true
+    | _ -> false
+
+let no_html_block_starting_paragraph : Property.t =
+  let name = "no HTML-block-starting paragraph" in
+  let rec check : Block.t -> Property.result =
+   fun b ->
+    let here =
+      match b with
+      | Block.Paragraph (p, _) as para ->
+          if paragraph_starts_html_block p then
+            Property.Fail (b, [ ("paragraph", Block para) ])
+          else Pass
+      | _ -> Pass
+    in
+    match here with
+    | Property.Fail _ -> here
+    | Property.Pass ->
+        List.fold_left
+          (fun acc child ->
+            match acc with
+            | Property.Fail _ -> acc
+            | Property.Pass -> check child)
+          Property.Pass (child_blocks b)
+  in
+  { name; check }
+
 (* All rules aggregated *)
 let typed : Property.t =
   let p =
@@ -119,7 +166,8 @@ let typed : Property.t =
       none
       (* & no_trailing_blank_line_in_blocks *)
       & no_empty_paragraph
-      & no_empty_blocks)
+      & no_empty_blocks
+      & no_html_block_starting_paragraph)
   in
   let name' = "typed: " ^ p.name in
   { p with name = name' }

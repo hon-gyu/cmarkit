@@ -86,6 +86,7 @@ module Iconfig = struct
     w_image : int;
     no_empty_inlines : bool;
     no_empty_emphasis : bool;
+    no_html_block_start : bool;
     (* When set, a [Link] never contains another [Link] at any nesting depth
        (even across an intervening image). *)
     no_nested_link : bool;
@@ -105,6 +106,7 @@ module Iconfig = struct
       w_image = 1;
       no_empty_inlines = false;
       no_empty_emphasis = false;
+      no_html_block_start = false;
       no_nested_link = false;
     }
 
@@ -124,7 +126,8 @@ let gen_leaf (ic : Iconfig.t) =
     (ic.w_text, G.oneof_list text_egs);
     (ic.w_code_span, G.oneof_list code_span_egs);
     (ic.w_autolink, G.oneof_list autolink_egs);
-    (ic.w_raw_html, G.oneof_list raw_html_egs);
+    ( (if ic.no_html_block_start then 0 else ic.w_raw_html),
+      G.oneof_list raw_html_egs );
   ]
   |> List.filter (fun (w, _) -> w > 0)
   |> G.oneof_weighted
@@ -174,8 +177,18 @@ let gen_inline (ic : Iconfig.t) : Inline.t G.t =
         [
           (1, gen_leaf ic);
           ( ic.w_inlines,
-            map inlines_of_is (list_size (inlines_len ic n) (child ic (n / 2)))
-          );
+            let gen_is =
+              if ic.no_html_block_start then
+                let first = child ic (n / 2) in
+                let rest =
+                  list_size
+                    (int_bound (n / 2))
+                    (child { ic with no_html_block_start = false } (n / 2))
+                in
+                map2 (fun i is -> i :: is) first rest
+              else list_size (inlines_len ic n) (child ic (n / 2))
+            in
+            map inlines_of_is gen_is );
           (ic.w_emphasis, emph_gen);
           (ic.w_strong_emphasis, strong_emph_gen);
           (ic.w_link, map mk_link (child link_ic (n - 1)));

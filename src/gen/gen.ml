@@ -50,6 +50,7 @@ module Bconfig = struct
     no_trailing_blank_line_in_blocks : bool;
     no_empty_paragraph : bool;
     no_empty_blocks : bool;
+    no_html_block_starting_paragraph : bool;
     no_break_in_atx_heading : bool;
     inline : Iconfig.t;
   }
@@ -60,6 +61,7 @@ module Bconfig = struct
       no_trailing_blank_line_in_blocks = false;
       no_empty_paragraph = false;
       no_empty_blocks = false;
+      no_html_block_starting_paragraph = false;
       no_break_in_atx_heading = false;
       inline = Iconfig.typed;
     }
@@ -79,6 +81,7 @@ module Bconfig = struct
       empty with
       no_empty_paragraph = true;
       no_empty_blocks = true;
+      no_html_block_starting_paragraph = true;
       no_break_in_atx_heading = true;
       inline = Iconfig.typed;
       (* *)
@@ -88,7 +91,11 @@ end
 
 let gen_paragraph (config : Bconfig.t) : Block.t G.t =
   let ic =
-    { config.inline with no_empty_inlines = config.no_empty_paragraph }
+    {
+      config.inline with
+      no_empty_inlines = config.no_empty_paragraph;
+      no_html_block_start = config.no_html_block_starting_paragraph;
+    }
   in
   G.map
     (fun inline -> Block.(Paragraph (Block.Paragraph.make inline, Meta.none)))

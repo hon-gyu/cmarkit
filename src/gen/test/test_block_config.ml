@@ -70,3 +70,24 @@ let () =
             (enable (fun c ->
                  { c with no_trailing_blank_line_in_blocks = false })))
        () T.no_trailing_blank_line_in_blocks
+
+(* no_html_block_starting_paragraph
+   -------------------------------- *)
+
+let () =
+  run
+  @@ P.qcheck_test_of_t ~count
+       ~gen:
+         (gen
+            (enable (fun c ->
+                 { c with no_html_block_starting_paragraph = true })))
+       () T.no_html_block_starting_paragraph
+
+let () =
+  run
+  @@ P.qcheck_test_of_t ~count ~negative:true
+       ~gen:
+         (gen
+            (enable (fun c ->
+                 { c with no_html_block_starting_paragraph = false })))
+       () T.no_html_block_starting_paragraph
