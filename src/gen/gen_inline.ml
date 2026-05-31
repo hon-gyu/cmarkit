@@ -41,12 +41,16 @@ let (break_egs : Inline.t list) =
   Inline.Break.[ make `Hard; make `Soft ]
   |> List.map (fun pl -> Inline.(Break (pl, Meta.none)))
 
-let mk_emph_egs i : Inline.t list =
-  Inline.Emphasis.[ make ~delim:'*' i; make ~delim:'_' i ]
+let mk_emph_egs ?(delims = [ '*'; '_' ]) () i : Inline.t list =
+  if not (List.for_all (fun c -> List.mem c [ '*'; '_' ]) delims) then
+    raise (Invalid_argument "Delim must be among ['*'; '_']");
+  Inline.Emphasis.(List.map (fun c -> make ~delim:c i) delims)
   |> List.map (fun pl -> Inline.(Emphasis (pl, Meta.none)))
 
-let mk_strong_emph_egs i : Inline.t list =
-  Inline.Emphasis.[ make ~delim:'*' i; make ~delim:'_' i ]
+let mk_strong_emph_egs ?(delims = [ '*'; '_' ]) () i : Inline.t list =
+  if not (List.for_all (fun c -> List.mem c [ '*'; '_' ]) delims) then
+    raise (Invalid_argument "Delim must be among ['*'; '_']");
+  Inline.Emphasis.(List.map (fun c -> make ~delim:c i) delims)
   |> List.map (fun pl -> Inline.(Strong_emphasis (pl, Meta.none)))
 
 let mk_link i : Inline.t =
@@ -87,9 +91,15 @@ module Iconfig = struct
     no_empty_inlines : bool;
     no_empty_emphasis : bool;
     no_html_block_start : bool;
-    (* When set, a [Link] never contains another [Link] at any nesting depth
-       (even across an intervening image). *)
     no_nested_link : bool;
+        (** When set, a [Link] never contains another [Link] at any nesting
+            depth (even across an intervening image). This is explicitly
+            required in Commonmark Spec *)
+    different_delim_char_for_emph_and_strong_empha : bool;
+        (** Avoid the ambiguity in parsing emphasis/strong emphasis runs.
+            Otherwise, the following AST has no witness markdown: (Paragraph
+            (Emphasis (Emphasis (Emphasis (Text jia))))) `***jia***` It will
+            always to parsed to Emphasis (Emphasis (Text jia)) *)
   }
 
   let default =
@@ -108,9 +118,16 @@ module Iconfig = struct
       no_empty_emphasis = false;
       no_html_block_start = false;
       no_nested_link = false;
+      different_delim_char_for_emph_and_strong_empha = false;
     }
 
-  let typed = { default with no_empty_emphasis = true; no_nested_link = true }
+  let typed =
+    {
+      default with
+      no_empty_emphasis = true;
+      no_nested_link = true;
+      different_delim_char_for_emph_and_strong_empha = true;
+    }
 end
 
 (**
@@ -138,6 +155,11 @@ let gen_inline (ic : Iconfig.t) : Inline.t G.t =
   let inlines_len ic n =
     if ic.no_empty_inlines then int_range 1 (max 1 (n / 2))
     else int_bound (n / 2)
+  in
+  let mk_emph_egs, mk_strong_emph_egs =
+    if ic.different_delim_char_for_emph_and_strong_empha then
+      (mk_emph_egs ~delims:[ '_' ] (), mk_strong_emph_egs ~delims:[ '*' ] ())
+    else (mk_emph_egs (), mk_strong_emph_egs ())
   in
   (* [ic] is threaded through the recursion (à la [gen.ml]'s [config]) so a
      subtree can be generated under a tightened config.
