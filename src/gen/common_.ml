@@ -4,11 +4,12 @@ module Pp = Cmarkit_.Pp
 module Doc = Cmarkit_.Doc
 
 let use_sexp = true
+let sexp_of_block = (Sexp.make_sexp_of ()).block
+let sexp_of_inline = (Sexp.make_sexp_of ()).inline
 
 let pp_block fmt b =
   if use_sexp then
-    Format.fprintf fmt "%a" Sexplib0.Sexp.pp_hum
-      ((Sexp.make_sexp_of ()).block b)
+    Format.fprintf fmt "%a" Sexplib0.Sexp.pp_hum (sexp_of_block b)
   else Format.printf "%a" Pp.pp_block b
 
 type value =

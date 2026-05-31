@@ -111,7 +111,12 @@ let qcheck_test_of_t ?(count = 500) ?(negative = false)
 =========== *)
 
 let normalize_block_inlines (b : Block.t) : Block.t =
-  let inline _ i = Mapper.ret (Inline.normalize i) in
+  let rec inline_fix i =
+    let i' = Inline.normalize i in
+    if Sexplib0.Sexp.equal (sexp_of_inline i) (sexp_of_inline i') then i'
+    else inline_fix i'
+  in
+  let inline _ i = Mapper.ret (inline_fix i) in
   let mapper = Mapper.make ~inline () in
   Mapper.map_block mapper b |> Option.value ~default:Block.empty
 

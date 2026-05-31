@@ -3,16 +3,16 @@
 
 Test roundtrip failed (5 shrink steps):
 
-{ block: (Paragraph (Emphasis (Inlines (Inlines (Text jia)))))
-; cm: ┌─────┐
-      │*jia*│
-      └─────┘
+{ block: (Paragraph (Emphasis (Emphasis (Inlines (Emphasis (Text jia))))))
+; cm: ┌─────────┐
+      │***jia***│
+      └─────────┘
 ; "reparse":
-  (Paragraph (Emphasis (Text jia)))
+  (Paragraph (Emphasis (Strong_emphasis (Text jia))))
 ; "reparse_cm":
-  ┌─────┐
-  │*jia*│
-  └─────┘
+  ┌─────────┐
+  │***jia***│
+  └─────────┘
 }
 ================================================================================
 failure (1 tests failed, 0 tests errored, ran 1 tests)
