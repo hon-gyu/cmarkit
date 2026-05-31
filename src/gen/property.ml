@@ -7,8 +7,12 @@
   - make calculation of metadata lazy
 *)
 module Block = Cmarkit_.Block
+module Inline = Cmarkit_.Inline
+module Mapper = Cmarkit_.Mapper
 module Meta = Cmarkit_.Meta
 open Common_
+
+(** {1 Property Type} *)
 
 type result = Pass | Fail of Block.t * metadata
 type t = { name : string; check : Block.t -> result }
@@ -101,10 +105,20 @@ let qcheck_test_of_t ?(count = 500) ?(negative = false)
       with
       | Failed_precondition -> QCheck2.assume_fail ())
 
+(** {1 Helpers} *)
+
 (* Helpers
 =========== *)
 
-let canonical b : string = Format.asprintf "%a" pp_block (Block.normalize b)
+let normalize_block_inlines (b : Block.t) : Block.t =
+  let inline _ i = Mapper.ret (Inline.normalize i) in
+  let mapper = Mapper.make ~inline () in
+  Mapper.map_block mapper b |> Option.value ~default:Block.empty
+
+let canonical b : string =
+  b |> Block.normalize |> normalize_block_inlines
+  |> Format.asprintf "%a" pp_block
+
 let block_equal a b = String.equal (canonical a) (canonical b)
 
 let check_eq ?(message : string option) ?(metadata = []) ~(expect : Block.t)
