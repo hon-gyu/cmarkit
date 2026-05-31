@@ -149,15 +149,17 @@ let normalize_idempotent =
     This is the most important property for generators as it ensures that the
     block structure is valid, i.e. can be emitted by the parser from a piece of
     CommonMark. *)
-let roundtrip =
+let roundtrip_with ?emphasis_delims ?strong_emphasis_delims () =
   let check =
    fun b ->
-    let b' = reparse b in
+    let b' = reparse ?emphasis_delims ?strong_emphasis_delims b in
     if block_equal b b' then Pass
     else
       Fail (b, [ ("reparse", Block b'); ("reparse_cm", Md (to_commonmark b')) ])
   in
   { name = "roundtrip"; check }
+
+let roundtrip = roundtrip_with ()
 
 (** [render b = to_commonmark (parse (to_commonmark b))] as strings. *)
 let render_determinism =

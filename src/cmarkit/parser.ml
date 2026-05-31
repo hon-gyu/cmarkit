@@ -3,6 +3,16 @@
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(** {1 Global flags for enabling/disabling Oymarkit-related features}
+    We tend to gate our modifications behind this flag so that we can keep a
+    clear distinction between original code and our features. *)
+
+let enable_oymarkit_ = ref true
+let is_oymarkit_enabled () = !enable_oymarkit_
+let set_enable_oymarkit b = enable_oymarkit_ := b
+
+(** {1 Original Cmarkit parser implementation} *)
+
 [@@@ocamlformat "disable"]
 
 open Common
@@ -50,6 +60,63 @@ end
 
 type col = int
 let[@inline] next_tab_stop col = (col + 4) land (lnot 3)
+[@@@ocamlformat "enable"]
+
+(** Module for centralizing Oymarkit-related modifications *)
+module Oymarkit_mod = struct
+  type delim_set = { star : bool; underscore : bool }
+  type t = { emphasis_delims : delim_set; strong_emphasis_delims : delim_set }
+
+  let parse_emph_delims (delims : char list) : (delim_set, string) result =
+    let exception Early_return of string in
+    if delims = [] then Error "delims is empty"
+    else
+      let rec loop star underscore = function
+        | [] -> { star; underscore }
+        | '*' :: cs -> loop true underscore cs
+        | '_' :: cs -> loop star true cs
+        | invalid_char :: _ ->
+            raise
+              (Early_return
+                 (Printf.sprintf "must only contain '*' or '_', got '%c'"
+                    invalid_char))
+      in
+      try Ok (loop false false delims) with
+      | Early_return msg -> Error msg
+
+  let make ~emphasis_delims ~strong_emphasis_delims =
+    let emphasis_delims =
+      match parse_emph_delims emphasis_delims with
+      | Ok delims -> delims
+      | Error msg -> failwith (Printf.sprintf "emphasis_delims: %s" msg)
+    in
+    let strong_emphasis_delims =
+      match parse_emph_delims strong_emphasis_delims with
+      | Ok delims -> delims
+      | Error msg -> failwith (Printf.sprintf "strong_emphasis_delims: %s" msg)
+    in
+    { emphasis_delims; strong_emphasis_delims }
+
+  let delim_allowed delims = function
+    | '*' -> delims.star
+    | '_' -> delims.underscore
+    | _ -> false
+
+  (* Delimiter knobs restrict the number of characters that may be consumed
+     from a matching delimiter run. If strong emphasis is disallowed for the
+     character but emphasis is allowed, a run such as [__x__] falls back to
+     consuming one delimiter on each side, leaving the remaining pair to parse
+     as nested emphasis. *)
+  let emphasis_match_used t ~char ~opener_count ~closer_count =
+    if
+      closer_count >= 2 && opener_count >= 2
+      && delim_allowed t.strong_emphasis_delims char
+    then Some 2
+    else if delim_allowed t.emphasis_delims char then Some 1
+    else None
+end
+
+[@@@ocamlformat "disable"]
 
 (* Parser abstraction *)
 
@@ -62,6 +129,7 @@ type parser =
     nolayout : bool; (* do not compute layout fields if [true]. *)
     heading_auto_ids : bool; (* compute heading ids. *)
     nested_links : bool;
+    oymarkit_mod : Oymarkit_mod.t;
     mutable defs : Label.defs;
     resolver : Label.resolver;
     mutable cidx : Closer_index.t; (* For inline parsing. *)
@@ -81,11 +149,19 @@ type parser =
 let parser
     ?(defs = Label.Map.empty) ?(resolver = Label.default_resolver)
     ?(nested_links = false) ?(heading_auto_ids = false) ?(layout = false)
-    ?(locs = false) ?(file = Textloc.file_none) ~strict i
+    ?(locs = false) ?(file = Textloc.file_none)
+    (* Oymarkit begin *)
+    ?(emphasis_delims = [ '*'; '_' ])
+    ?(strong_emphasis_delims = [ '*'; '_' ])
+    (* Oymarkit end *)
+    ~strict i
   =
+  let oymarkit_mod = Oymarkit_mod.make ~emphasis_delims ~strong_emphasis_delims in
   let nolocs = not locs and nolayout = not layout and exts = not strict in
   { file; i; buf = Buffer.create 512; exts; nolocs; nolayout;
-    heading_auto_ids; nested_links; defs; resolver; cidx = Closer_index.empty;
+    heading_auto_ids; nested_links;
+    oymarkit_mod;
+    defs; resolver; cidx = Closer_index.empty;
     current_line_pos = 1, 0; current_line_last_char = -1; current_char = 0;
     current_char_col = 0; next_non_blank = 0; next_non_blank_col = 0;
     tab_consumed_cols = 0; }
@@ -854,10 +930,26 @@ module Inline_struct = struct
     | Emphasis_marks marks as t :: toks ->
         let after = marks.start in
         if marks.may_close && marks_match ~marks ~opener then
-          let used = if marks.count >= 2 && opener.count >= 2 then 2 else 1 in
-          let to_last = marks.start - 1 in
-          let acc = rev_tokens_and_shorten_last_line ~to_last [] acc in
-          Either.Right (toks, line, used, acc, marks)
+          if is_oymarkit_enabled () then begin
+            match
+              Oymarkit_mod.emphasis_match_used p.oymarkit_mod
+                ~char:opener.char ~opener_count:opener.count
+                ~closer_count:marks.count
+            with
+            | Some used ->
+                let to_last = marks.start - 1 in
+                let acc = rev_tokens_and_shorten_last_line ~to_last [] acc in
+                Either.Right (toks, line, used, acc, marks)
+            | None ->
+                if has_emphasis_closer ~char:opener.char ~after p.cidx
+                then loop p toks line (t :: acc) ~opener
+                else Either.Left (List.rev_append (t :: acc) toks)
+          end else begin
+            let used = if marks.count >= 2 && opener.count >= 2 then 2 else 1 in
+            let to_last = marks.start - 1 in
+            let acc = rev_tokens_and_shorten_last_line ~to_last [] acc in
+            Either.Right (toks, line, used, acc, marks)
+          end
         else if marks.may_open && marks_has_precedence p ~marks ~opener then
           match try_emphasis p toks line ~opener:marks with
           | Either.Left toks -> loop p toks line acc ~opener

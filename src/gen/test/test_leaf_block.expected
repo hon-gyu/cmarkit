@@ -1,18 +1,19 @@
 
 --- Failure --------------------------------------------------------------------
 
-Test roundtrip failed (2 shrink steps):
+Test roundtrip failed (4 shrink steps):
 
-{ block: (Paragraph (Emphasis (Emphasis (Text jia))))
-; cm: ┌───────┐
-      │__jia__│
-      └───────┘
+{ block: (Paragraph
+          (Link (Inlines (Emphasis (Text jia)) (Emphasis (Text jia)))))
+; cm: ┌─────────────────────────────────┐
+      │[_jia__jia_](https://example.com)│
+      └─────────────────────────────────┘
 ; "reparse":
-  (Paragraph (Strong_emphasis (Text jia)))
+  (Paragraph (Link (Emphasis (Text jia__jia))))
 ; "reparse_cm":
-  ┌───────┐
-  │__jia__│
-  └───────┘
+  ┌───────────────────────────────────┐
+  │[_jia\_\_jia_](https://example.com)│
+  └───────────────────────────────────┘
 }
 ================================================================================
 failure (1 tests failed, 0 tests errored, ran 1 tests)

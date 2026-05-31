@@ -18,11 +18,11 @@ let block d = d.block
 let defs d = d.defs
 let of_string
     ?defs ?resolver ?nested_links ?heading_auto_ids ?layout ?locs ?file
-    ?(strict = true) s
+    ?emphasis_delims ?strong_emphasis_delims ?(strict = true) s
   =
   let p =
     parser ?defs ?resolver ?nested_links ?heading_auto_ids ?layout ?locs
-      ?file ~strict s
+      ?emphasis_delims ?strong_emphasis_delims ?file ~strict s
   in
   let nl, doc = Block_struct.parse p in
   let block = block_struct_to_doc p doc in

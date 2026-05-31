@@ -78,5 +78,7 @@ let pp_metadata fmt m =
   let pp_pair fmt (k, v) = Fmt.pf fmt "@[<v>\"%s\":@ %a@]" k (pp_value ()) v in
   Fmt.pf fmt "@[<v>{ %a@,}@]" (Fmt.list ~sep:(Fmt.any "@,; ") pp_pair) m
 
-let reparse (b : Block.t) : Block.t =
-  b |> to_commonmark |> Doc.of_string |> Doc.block
+let reparse ?emphasis_delims ?strong_emphasis_delims (b : Block.t) : Block.t =
+  b |> to_commonmark
+  |> Doc.of_string ?emphasis_delims ?strong_emphasis_delims
+  |> Doc.block

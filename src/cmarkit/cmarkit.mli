@@ -1366,7 +1366,8 @@ module Doc : sig
   val of_string :
     ?defs:Label.defs -> ?resolver:Label.resolver -> ?nested_links:bool ->
     ?heading_auto_ids:bool -> ?layout:bool -> ?locs:bool ->
-    ?file:Textloc.fpath -> ?strict:bool -> string -> t
+    ?file:Textloc.fpath -> ?emphasis_delims:char list ->
+    ?strong_emphasis_delims:char list -> ?strict:bool -> string -> t
     (** [of_string md] is a document from the UTF-8 encoded CommonMark
         document [md].
 
@@ -1400,6 +1401,16 @@ module Doc : sig
        embedding DSLs in link labels or destinations. Note that image
        links already allow link nesting as per CommonMark
        specification.}
+   {- [emphasis_delims] and [strong_emphasis_delims] specify the characters
+       allowed to delimit emphasis and strong emphasis respectively. Each list
+       must be non-empty and contain only ['*'] or ['_']. Both default to
+       [['*'; '_']], which preserves CommonMark behavior. If a matching
+       delimiter run could form strong emphasis but its character is not in
+       [strong_emphasis_delims], the parser may still consume one delimiter
+       from each side to form emphasis when the character is in
+       [emphasis_delims]. For example, with [emphasis_delims = ['_']] and
+       [strong_emphasis_delims = ['*']], [__x__] parses as nested emphasis
+       rather than strong emphasis.}
    {- If [resolver] is provided this is used resolve label definitions
       and references. See {{!Label.resolvers}here} for details. Defaults to
       {!Label.default_resolver}.}
