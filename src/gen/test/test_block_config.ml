@@ -14,7 +14,7 @@ module G = Cmarkit_generator.Gen
 
 let count = 1000
 let gen cfg = G.mk_gen_block ~config:cfg ()
-let enable f = f G.Bconfig.empty
+let enable f = f G.Bconfig.default
 
 let run test =
   let rand = Random.State.make [| 0 |] in

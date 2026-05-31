@@ -55,7 +55,7 @@ module Bconfig = struct
     inline : Iconfig.t;
   }
 
-  let empty =
+  let default =
     {
       no_direct_blank_line = false;
       no_trailing_blank_line_in_blocks = false;
@@ -78,7 +78,7 @@ module Bconfig = struct
   *)
   let typed_md =
     {
-      empty with
+      default with
       no_empty_paragraph = true;
       no_empty_blocks = true;
       no_html_block_starting_paragraph = true;
@@ -115,7 +115,7 @@ type block_gen_state = { foo : int }
 
 let init_state : block_gen_state = { foo = 0 }
 
-let gen_leaf_block_ ?(config = Bconfig.empty) ?(w_blank_line = 1)
+let gen_leaf_block_ ?(config = Bconfig.default) ?(w_blank_line = 1)
     ?(w_thematic_break = 1) ?(w_code_block = 1) ?(w_html_block = 1)
     ?(w_paragraph = 1) ?(w_heading = 1) () : Block.t G.t =
   [
@@ -175,7 +175,7 @@ and gen_blocks config st n : Block.t G.t =
   in
   map (fun bs -> Block.Blocks (bs, Meta.none)) blocks
 
-let mk_gen_block ?(config = Bconfig.empty) () : Block.t G.t =
+let mk_gen_block ?(config = Bconfig.default) () : Block.t G.t =
   G.(sized_size nat_small @@ gen_block config init_state)
 
 let%expect_test "Default config should give a sensible distribution" =

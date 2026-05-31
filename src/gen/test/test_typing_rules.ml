@@ -17,7 +17,7 @@ open Cmarkit_generator.Common_
 
 let gen =
   let open QCheck2.Gen in
-  let+ b = G.mk_gen_block ~config:G.Bconfig.empty () in
+  let+ b = G.mk_gen_block ~config:G.Bconfig.default () in
   reparse b
 
 let () =
