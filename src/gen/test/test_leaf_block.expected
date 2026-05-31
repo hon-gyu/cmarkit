@@ -1,18 +1,18 @@
 
 --- Failure --------------------------------------------------------------------
 
-Test roundtrip failed (3 shrink steps):
+Test roundtrip failed (5 shrink steps):
 
-{ block: (Paragraph (Raw_html "<br />"))
-; cm: ┌──────┐
-      │<br·/>│
-      └──────┘
+{ block: (Paragraph (Emphasis (Inlines (Inlines (Text jia)))))
+; cm: ┌─────┐
+      │*jia*│
+      └─────┘
 ; "reparse":
-  (Html_block "<br />")
+  (Paragraph (Emphasis (Text jia)))
 ; "reparse_cm":
-  ┌──────┐
-  │<br />│
-  └──────┘
+  ┌─────┐
+  │*jia*│
+  └─────┘
 }
 ================================================================================
 failure (1 tests failed, 0 tests errored, ran 1 tests)

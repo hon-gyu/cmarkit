@@ -46,12 +46,20 @@ let html_block_egs : Block.t list =
 
 module Bconfig = struct
   type t = {
+    (* Pure block rules
+    -------------------- *)
     no_direct_blank_line : bool;
     no_trailing_blank_line_in_blocks : bool;
     no_empty_paragraph : bool;
     no_empty_blocks : bool;
+    (* inline <-> block interaction rules
+    -------------------- *)
     no_html_block_starting_paragraph : bool;
+        (** A html tag at the start of a paragraph will be parsed to a HTML
+            block. *)
     no_break_in_atx_heading : bool;
+    (* Pure inline rules
+    -------------------- *)
     inline : Iconfig.t;
   }
 
@@ -61,7 +69,7 @@ module Bconfig = struct
       no_trailing_blank_line_in_blocks = false;
       no_empty_paragraph = false;
       no_empty_blocks = false;
-      no_html_block_starting_paragraph = false;
+      no_html_block_starting_paragraph = true;
       no_break_in_atx_heading = false;
       inline = Iconfig.typed;
     }
