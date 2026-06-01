@@ -860,6 +860,26 @@ module Inline : sig
     (** [inline s] is the inline with a strikethrough. *)
   end
 
+  (** Inline containers. *)
+  module Inline_container : sig
+    type inline := t
+
+    type kind = Highlight | Superscript | Subscript | Inserted | Deleted
+    (** The kinds of oymarkit-owned inline containers. *)
+
+    type t
+    (** The type for inline-container extensions. *)
+
+    val make : kind -> inline -> t
+    (** [make kind i] is an inline-container of kind [kind] around [i]. *)
+
+    val kind : t -> kind
+    (** [kind c] is [c]'s inline-container kind. *)
+
+    val inline : t -> inline
+    (** [inline c] is [c]'s contained inline. *)
+  end
+
   (** Math span. *)
   module Math_span : sig
     type t
@@ -885,6 +905,7 @@ module Inline : sig
 
   type t +=
   | Ext_strikethrough of Strikethrough.t node
+  | Ext_inline_container of Inline_container.t node
   | Ext_math_span of Math_span.t node (** *)
   (** The supported inline extensions. These inlines are only parsed when
       {!Doc.of_string} is called with [strict:false]. *)
@@ -1380,7 +1401,7 @@ module Doc : sig
     ?file:Textloc.fpath -> ?emphasis_delims:char list ->
     ?strong_emphasis_delims:char list -> ?intraword_emphasis:bool ->
     ?marked_emphasis_delims:bool -> ?strong_emphasis_width:int ->
-    ?strict:bool -> string -> t
+    ?inline_containers:bool -> ?strict:bool -> string -> t
     (** [of_string md] is a document from the UTF-8 encoded CommonMark
         document [md].
 
@@ -1433,6 +1454,10 @@ module Doc : sig
    {- [strong_emphasis_width] specifies how many delimiter characters are
       consumed from each side to form strong emphasis. It must be [1] or [2].
       The default is [2], which preserves CommonMark behavior.}
+   {- If [inline_containers] is [true], explicit oymarkit inline-container
+      forms are parsed: [{=highlight=}], [{^sup^}], [{~sub~}],
+      [{+inserted+}], and [{-deleted-}]. The default is [false], which
+      preserves CommonMark behavior.}
    {- If [resolver] is provided this is used resolve label definitions
       and references. See {{!Label.resolvers}here} for details. Defaults to
       {!Label.default_resolver}.}

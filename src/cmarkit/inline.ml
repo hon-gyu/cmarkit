@@ -184,6 +184,15 @@ module Strikethrough = struct
   let inline = Fun.id
 end
 
+module Inline_container = struct
+  type inline = t
+  type kind = Highlight | Superscript | Subscript | Inserted | Deleted
+  type t = { kind : kind; inline : inline }
+  let make kind inline = { kind; inline }
+  let kind c = c.kind
+  let inline c = c.inline
+end
+
 module Math_span = struct
   type t = { display : bool; tex_layout : Block_line.tight list; }
   let make ~display tex_layout = { display; tex_layout }
@@ -196,6 +205,7 @@ end
 
 type t +=
 | Ext_strikethrough of Strikethrough.t node
+| Ext_inline_container of Inline_container.t node
 | Ext_math_span of Math_span.t node
 
 (* Functions on inlines *)
@@ -208,7 +218,8 @@ let meta ?(ext = ext_none) = function
 | Autolink (_, m) | Break (_, m) | Code_span (_, m) | Emphasis (_, m)
 | Image (_, m) | Inlines (_, m) | Link (_, m) | Raw_html (_, m)
 | Strong_emphasis (_, m)  | Text (_, m) -> m
-| Ext_strikethrough (_, m) -> m | Ext_math_span (_, m) -> m
+| Ext_strikethrough (_, m) | Ext_inline_container (_, m) -> m
+| Ext_math_span (_, m) -> m
 | i -> ext i
 
 let rec normalize ?(ext = ext_none) = function
@@ -238,6 +249,10 @@ let rec normalize ?(ext = ext_none) = function
     let is = loop [normalize ~ext i] is in
     (match is with [i] -> i | _ -> Inlines (is, m))
 | Ext_strikethrough (i, m) -> Ext_strikethrough (normalize ~ext i, m)
+| Ext_inline_container (c, m) ->
+    let inline = normalize ~ext (Inline_container.inline c) in
+    let c = Inline_container.make (Inline_container.kind c) inline in
+    Ext_inline_container (c, m)
 | i -> ext i
 
 let ext_none ~break_on_soft = ext_none
@@ -267,6 +282,8 @@ let to_plain_text ?(ext = ext_none) ~break_on_soft i =
       loop ~break_on_soft (push t acc) is
   | Ext_strikethrough (i, _) :: is ->
       loop ~break_on_soft acc (i :: is)
+  | Ext_inline_container (c, _) :: is ->
+      loop ~break_on_soft acc (Inline_container.inline c :: is)
   | Ext_math_span (m, _) :: is ->
       loop ~break_on_soft (push (Math_span.tex m) acc) is
   | i :: is ->

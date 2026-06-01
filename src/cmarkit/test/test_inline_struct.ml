@@ -42,6 +42,32 @@ module Inline_struct = struct
   }
   [@@deriving sexp_of]
 
+  type inline_container_marks = Inline_struct_.inline_container_marks = {
+    start : byte_pos;
+    char : char;
+    kind : Inline.Inline_container.kind;
+    may_open : bool;
+    may_close : bool;
+  }
+
+  let sexp_of_inline_container_kind = function
+    | Inline.Inline_container.Highlight -> Sexplib0.Sexp.Atom "Highlight"
+    | Inline.Inline_container.Superscript -> Sexplib0.Sexp.Atom "Superscript"
+    | Inline.Inline_container.Subscript -> Sexplib0.Sexp.Atom "Subscript"
+    | Inline.Inline_container.Inserted -> Sexplib0.Sexp.Atom "Inserted"
+    | Inline.Inline_container.Deleted -> Sexplib0.Sexp.Atom "Deleted"
+
+  let sexp_of_inline_container_marks m =
+    let open Sexplib0.Sexp in
+    List
+      [
+        List [ Atom "start"; sexp_of_byte_pos m.start ];
+        List [ Atom "char"; Sexplib0.Sexp_conv.sexp_of_char m.char ];
+        List [ Atom "kind"; sexp_of_inline_container_kind m.kind ];
+        List [ Atom "may_open"; Sexplib0.Sexp_conv.sexp_of_bool m.may_open ];
+        List [ Atom "may_close"; Sexplib0.Sexp_conv.sexp_of_bool m.may_close ];
+      ]
+
   type strikethrough_marks = Inline_struct_.strikethrough_marks = {
     start : byte_pos;
     may_open : bool;
@@ -61,6 +87,7 @@ module Inline_struct = struct
     | Autolink_or_html_start of { start : byte_pos }
     | Backticks of { start : byte_pos; count : int; escaped : bool }
     | Emphasis_marks of emphasis_marks
+    | Inline_container_marks of inline_container_marks
     | Inline of {
         start : byte_pos;
         inline : inline;
@@ -93,11 +120,12 @@ let print_sexp sexp = Format.printf "%a@." Sexplib0.Sexp.pp_hum sexp
 let print_tokens (tokens : token list) =
   print_sexp ([%sexp_of: token list] tokens)
 
-let tokens_of_string ?intraword_emphasis ?marked_emphasis_delims s =
+let tokens_of_string ?intraword_emphasis ?marked_emphasis_delims
+    ?inline_containers s =
   let line_spans = Inline_parse_api.line_spans s in
   let parser =
     Cmarkit_.Parser_common.parser ?intraword_emphasis ?marked_emphasis_delims
-      ~strict:true s
+      ?inline_containers ~strict:true s
   in
   let p, lines = (parser, line_spans) in
   let _layout, _meta, lines = strip_paragraph p lines in
@@ -109,6 +137,10 @@ let tokens_of_string ?intraword_emphasis ?marked_emphasis_delims s =
 let commonmark_of_inline inline =
   inline |> Block.Paragraph.make |> fun p ->
   Block.Paragraph (p, Meta.none) |> Doc.make |> Cmarkit_commonmark.of_doc
+
+let inline_container kind inline =
+  Inline.Ext_inline_container
+    (Inline.Inline_container.make kind inline, Meta.none)
 
 let () =
   show_sep ~title:"basic inline parse" ();
@@ -193,6 +225,37 @@ let () =
   print_newline ()
 
 let () =
+  show_sep ~title:"inline container parse" ();
+  show_sep ~h2:true ~title:"default" ();
+  print_sexp ([%sexp_of: inline] (Inline_parse_api.of_string "{=hello=}"));
+  print_newline ();
+  show_sep ~h2:true ~title:"inline_containers:true tokens" ();
+  print_tokens (tokens_of_string ~inline_containers:true "{=hello=}");
+  print_newline ();
+  show_sep ~h2:true ~title:"inline_containers:true parse" ();
+  print_sexp
+    ([%sexp_of: inline]
+       (Inline_parse_api.of_string ~inline_containers:true "{=hello=}"));
+  print_sexp
+    ([%sexp_of: inline]
+       (Inline_parse_api.of_string ~inline_containers:true "{^hello^}"));
+  print_sexp
+    ([%sexp_of: inline]
+       (Inline_parse_api.of_string ~inline_containers:true "{~hello~}"));
+  print_sexp
+    ([%sexp_of: inline]
+       (Inline_parse_api.of_string ~inline_containers:true "{+hello+}"));
+  print_sexp
+    ([%sexp_of: inline]
+       (Inline_parse_api.of_string ~inline_containers:true "{-hello-}"));
+  print_newline ();
+  show_sep ~h2:true ~title:"nested inline payload" ();
+  print_sexp
+    ([%sexp_of: inline]
+       (Inline_parse_api.of_string ~inline_containers:true "{=a *b*=}"));
+  print_newline ()
+
+let () =
   show_sep ~title:"marked emphasis delimiter commonmark rendering" ();
   show_sep ~h2:true ~title:"without markers" ();
   print_string
@@ -213,4 +276,25 @@ let () =
   print_string
     (Cmarkit_commonmark.of_doc
        (Doc.of_string ~marked_emphasis_delims:true "{_hello_}"));
+  print_newline ()
+
+let () =
+  show_sep ~title:"inline container AST support" ();
+  show_sep ~h2:true ~title:"sexp" ();
+  print_sexp
+    ([%sexp_of: inline]
+       (inline_container Inline.Inline_container.Highlight
+          (Inline.Text ("hello", Meta.none))));
+  print_newline ();
+  show_sep ~h2:true ~title:"commonmark rendering" ();
+  let render kind =
+    print_string
+      (commonmark_of_inline
+         (inline_container kind (Inline.Text ("hello", Meta.none))))
+  in
+  render Inline.Inline_container.Highlight;
+  render Inline.Inline_container.Superscript;
+  render Inline.Inline_container.Subscript;
+  render Inline.Inline_container.Inserted;
+  render Inline.Inline_container.Deleted;
   print_newline ()

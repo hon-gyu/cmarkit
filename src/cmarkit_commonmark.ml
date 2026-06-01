@@ -278,6 +278,21 @@ let strikethrough c s =
   let i = Inline.Strikethrough.inline s in
   C.string c "~~"; C.inline c i; C.string c "~~"
 
+let inline_container c ic =
+  let delim =
+    match Inline.Inline_container.kind ic with
+    | Inline.Inline_container.Highlight -> '='
+    | Inline.Inline_container.Superscript -> '^'
+    | Inline.Inline_container.Subscript -> '~'
+    | Inline.Inline_container.Inserted -> '+'
+    | Inline.Inline_container.Deleted -> '-'
+  in
+  C.byte c '{';
+  C.byte c delim;
+  C.inline c (Inline.Inline_container.inline ic);
+  C.byte c delim;
+  C.byte c '}'
+
 let math_span c ms =
   let sep = if Inline.Math_span.display ms then "$$" else "$" in
   C.string c sep;
@@ -296,6 +311,7 @@ let inline c = function
 | Inline.Strong_emphasis (e, _) -> strong_emphasis c e; true
 | Inline.Text (t, _) -> text c t; true
 | Inline.Ext_strikethrough (s, _) -> strikethrough c s; true
+| Inline.Ext_inline_container (ic, _) -> inline_container c ic; true
 | Inline.Ext_math_span (m, _) -> math_span c m; true
 | _ -> C.string c "<!-- Unknown Cmarkit inline -->"; true
 

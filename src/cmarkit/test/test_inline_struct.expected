@@ -79,6 +79,31 @@ strong_emphasis_width:1
 ----------
 (Strong_emphasis (Text hello))
 
+inline container parse
+==========
+default
+----------
+(Text {=hello=})
+
+inline_containers:true tokens
+----------
+((Inline_container_marks
+  ((start 0) (char =) (kind Highlight) (may_open true) (may_close false)))
+ (Inline_container_marks
+  ((start 7) (char =) (kind Highlight) (may_open false) (may_close true))))
+
+inline_containers:true parse
+----------
+(Inline_container Highlight (Text hello))
+(Inline_container Superscript (Text hello))
+(Inline_container Subscript (Text hello))
+(Inline_container Inserted (Text hello))
+(Inline_container Deleted (Text hello))
+
+nested inline payload
+----------
+(Inline_container Highlight (Inlines (Text "a ") (Emphasis (Text b))))
+
 marked emphasis delimiter commonmark rendering
 ==========
 without markers
@@ -90,3 +115,12 @@ with markers
 parsed marked delimiters
 ----------
 {_hello_}
+inline container AST support
+==========
+sexp
+----------
+(Inline_container Highlight (Text hello))
+
+commonmark rendering
+----------
+{=hello=}{^hello^}{~hello~}{+hello+}{-hello-}

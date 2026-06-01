@@ -110,6 +110,18 @@ and inline ~indent:n ppf = function
     let i = Inline.Strikethrough.inline s in
     pf ppf "@[<v>%a@,%a@]"
       (loc "Strikethrough" ~indent:n) m (inline ~indent:(n + 2)) i
+| Inline.Ext_inline_container (c, m) ->
+    let label =
+      match Inline.Inline_container.kind c with
+      | Inline.Inline_container.Highlight -> "Highlight"
+      | Inline.Inline_container.Superscript -> "Superscript"
+      | Inline.Inline_container.Subscript -> "Subscript"
+      | Inline.Inline_container.Inserted -> "Inserted"
+      | Inline.Inline_container.Deleted -> "Deleted"
+    in
+    pf ppf "@[<v>%a@,%a@]"
+      (loc label ~indent:n) m
+      (inline ~indent:(n + 2)) (Inline.Inline_container.inline c)
 | Inline.Ext_math_span (ms, m) ->
     let display = Inline.Math_span.display ms in
     let line = tight_block_line "Math span line" ~indent:(n + 2) in

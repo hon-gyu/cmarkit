@@ -1,3 +1,5 @@
+[@@@ocamlformat "disable"]
+
 (*---------------------------------------------------------------------------
    Copyright (c) 2021 The cmarkit programmers. All rights reserved.
    SPDX-License-Identifier: ISC
@@ -221,6 +223,20 @@ let math_span c ms =
   tight_block_lines c tex;
   C.string c (if Inline.Math_span.display ms then "\\]" else "\\)")
 
+let inline_container c ic =
+  let inline = Inline.Inline_container.inline ic in
+  match Inline.Inline_container.kind ic with
+  | Inline.Inline_container.Highlight ->
+      C.string c "\\emph{"; C.inline c inline; C.byte c '}'
+  | Inline.Inline_container.Superscript ->
+      C.string c "\\textsuperscript{"; C.inline c inline; C.byte c '}'
+  | Inline.Inline_container.Subscript ->
+      C.string c "\\textsubscript{"; C.inline c inline; C.byte c '}'
+  | Inline.Inline_container.Inserted ->
+      C.string c "\\uline{"; C.inline c inline; C.byte c '}'
+  | Inline.Inline_container.Deleted ->
+      C.string c "\\sout{"; C.inline c inline; C.byte c '}'
+
 let inline c = function
 | Inline.Autolink (a, _) -> autolink c a; true
 | Inline.Break (b, _) -> break c b; true
@@ -233,6 +249,7 @@ let inline c = function
 | Inline.Strong_emphasis (e, _) -> strong_emphasis c e; true
 | Inline.Text (t, _) -> text c t; true
 | Inline.Ext_strikethrough (s, _) -> strikethrough c s; true
+| Inline.Ext_inline_container (ic, _) -> inline_container c ic; true
 | Inline.Ext_math_span (ms, _) -> math_span c ms; true
 | _ -> comment c "Unknown Cmarkit inline"; true
 
