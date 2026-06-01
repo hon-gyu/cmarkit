@@ -1,1 +1,25 @@
+basic inline parse
+==========
 ((0 "") (Emphasis (Text hello)))
+
+
+intraword emphasis knob tokenization
+==========
+default
+----------
+((Emphasis_marks
+  ((start 1) (char *) (count 1) (may_open true) (may_close true)))
+ (Emphasis_marks
+  ((start 3) (char *) (count 1) (may_open true) (may_close true))))
+
+intraword_emphasis:false
+----------
+()
+
+boundary emphasis still tokenizes
+----------
+((Emphasis_marks
+  ((start 0) (char *) (count 1) (may_open true) (may_close false)))
+ (Emphasis_marks
+  ((start 6) (char *) (count 1) (may_open false) (may_close true))))
+

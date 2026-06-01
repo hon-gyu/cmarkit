@@ -66,7 +66,12 @@ let[@inline] next_tab_stop col = (col + 4) land (lnot 3)
 (** Module for centralizing Oymarkit-related modifications *)
 module Oymarkit_mod = struct
   type delim_set = { star : bool; underscore : bool }
-  type t = { emphasis_delims : delim_set; strong_emphasis_delims : delim_set }
+
+  type t = {
+    emphasis_delims : delim_set;
+    strong_emphasis_delims : delim_set;
+    intraword_emphasis : bool;
+  }
 
   let parse_emph_delims (delims : char list) : (delim_set, string) result =
     let exception Early_return of string in
@@ -85,7 +90,7 @@ module Oymarkit_mod = struct
       try Ok (loop false false delims) with
       | Early_return msg -> Error msg
 
-  let make ~emphasis_delims ~strong_emphasis_delims =
+  let make ~emphasis_delims ~strong_emphasis_delims ~intraword_emphasis =
     let emphasis_delims =
       match parse_emph_delims emphasis_delims with
       | Ok delims -> delims
@@ -96,7 +101,7 @@ module Oymarkit_mod = struct
       | Ok delims -> delims
       | Error msg -> failwith (Printf.sprintf "strong_emphasis_delims: %s" msg)
     in
-    { emphasis_delims; strong_emphasis_delims }
+    { emphasis_delims; strong_emphasis_delims; intraword_emphasis }
 
   let delim_allowed delims = function
     | '*' -> delims.star
@@ -115,6 +120,25 @@ module Oymarkit_mod = struct
     then Some 2
     else if delim_allowed t.emphasis_delims char then Some 1
     else None
+
+  let emphasis_may_open_close t ~char ~is_left_flanking ~is_right_flanking
+      ~prev_white ~next_white ~prev_punct ~next_punct =
+    let may_open =
+      (char = '*' && is_left_flanking) ||
+      (char = '_' && is_left_flanking &&
+        (not is_right_flanking || prev_punct))
+    in
+    let may_close =
+      (char = '*' && is_right_flanking) ||
+      (char = '_' && is_right_flanking &&
+        (not is_left_flanking || next_punct))
+    in
+    if t.intraword_emphasis then (may_open, may_close)
+    else
+      let intraword =
+        not (prev_white || next_white || prev_punct || next_punct)
+      in
+      if intraword then (false, false) else (may_open, may_close)
 end
 
 [@@@ocamlformat "disable"]
@@ -154,10 +178,14 @@ let parser
     (* Oymarkit begin *)
     ?(emphasis_delims = [ '*'; '_' ])
     ?(strong_emphasis_delims = [ '*'; '_' ])
+    ?(intraword_emphasis = true)
     (* Oymarkit end *)
     ~strict i
   =
-  let oymarkit_mod = Oymarkit_mod.make ~emphasis_delims ~strong_emphasis_delims in
+  let oymarkit_mod =
+    Oymarkit_mod.make ~emphasis_delims ~strong_emphasis_delims
+      ~intraword_emphasis
+  in
   let nolocs = not locs and nolayout = not layout and exts = not strict in
   { file; i; buf = Buffer.create 512; exts; nolocs; nolayout;
     heading_auto_ids; nested_links;

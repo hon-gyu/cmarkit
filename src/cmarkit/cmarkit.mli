@@ -1367,7 +1367,8 @@ module Doc : sig
     ?defs:Label.defs -> ?resolver:Label.resolver -> ?nested_links:bool ->
     ?heading_auto_ids:bool -> ?layout:bool -> ?locs:bool ->
     ?file:Textloc.fpath -> ?emphasis_delims:char list ->
-    ?strong_emphasis_delims:char list -> ?strict:bool -> string -> t
+    ?strong_emphasis_delims:char list -> ?intraword_emphasis:bool ->
+    ?strict:bool -> string -> t
     (** [of_string md] is a document from the UTF-8 encoded CommonMark
         document [md].
 
@@ -1411,6 +1412,9 @@ module Doc : sig
        [emphasis_delims]. For example, with [emphasis_delims = ['_']] and
        [strong_emphasis_delims = ['*']], [__x__] parses as nested emphasis
        rather than strong emphasis.}
+   {- If [intraword_emphasis] is [false], emphasis delimiter runs between two
+       non-whitespace, non-punctuation characters cannot open or close
+       emphasis. The default is [true], which preserves CommonMark behavior.}
    {- If [resolver] is provided this is used resolve label definitions
       and references. See {{!Label.resolvers}here} for details. Defaults to
       {!Label.default_resolver}.}

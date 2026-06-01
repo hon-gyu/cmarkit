@@ -39,6 +39,7 @@ module Inline_struct = struct
     may_close : bool;
   }
   [@@deriving sexp_of]
+
   type strikethrough_marks = Inline_struct_.strikethrough_marks = {
     start : byte_pos;
     may_open : bool;
@@ -79,14 +80,71 @@ end
 
 open Inline_struct
 
+let show_sep ?(h2 = false) ?(title = "") () =
+  let sep = String.init 10 (fun _ -> if h2 then '-' else '=') in
+  if not (String.equal title "") then Format.printf "%s@.%s@." title sep
+  else Format.printf "%s@." sep
+
+let print_newline () = print_endline ""
+
 let print_sexp sexp = Format.printf "%a@." Sexplib0.Sexp.pp_hum sexp
 
 let print_tokens (tokens : token list) =
   print_sexp ([%sexp_of: token list] tokens)
 
+let tokens_of_string ?intraword_emphasis s =
+  let line_spans = Inline_parse_api.line_spans s in
+  let parser =
+    Cmarkit_.Parser_common.parser ?intraword_emphasis ~strict:true s
+  in
+  let p, lines = (parser, line_spans) in
+  let _layout, _meta, lines = strip_paragraph p lines in
+  let _cidx, toks, _first_line =
+    tokenize ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i lines
+  in
+  toks
+
 let () =
+  show_sep ~title:"basic inline parse" ();
   let s = "*hello*" in
   let line_spans = Inline_parse_api.line_spans s in
   let parser = Cmarkit_.Parser_common.parser ~strict:true s in
-  let (res : (byte_pos * string) * inline) = parse parser line_spans in
-  print_sexp ([%sexp_of: (byte_pos * string) * inline] res)
+  (* let (res : (byte_pos * string) * inline) = parse parser line_spans in *)
+  let (res : (byte_pos * string) * inline) =
+    begin
+      let p, lines = (parser, line_spans) in
+      let layout, meta, lines = strip_paragraph p lines in
+      let cidx, toks, first_line =
+        tokenize ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i lines
+      in
+      p.cidx <- cidx;
+      (* let is, _had_link = parse_tokens p toks first_line in *)
+      let is, _had_link =
+        begin
+          let toks, had_link = first_pass p toks first_line in
+          let toks = second_pass p toks first_line in
+          (last_pass p toks first_line, had_link)
+        end
+      in
+      let inline =
+        match is with
+        | [ i ] -> i
+        | is -> Inline.Inlines (is, meta)
+      in
+      (layout, inline)
+    end
+  in
+  print_sexp ([%sexp_of: (byte_pos * string) * inline] res);
+  print_endline "\n"
+
+let () =
+  show_sep ~title:"intraword emphasis knob tokenization" ();
+  show_sep ~h2:true ~title:"default" ();
+  print_tokens (tokens_of_string "a*b*c");
+  print_newline ();
+  show_sep ~h2:true ~title:"intraword_emphasis:false" ();
+  print_tokens (tokens_of_string ~intraword_emphasis:false "a*b*c");
+  print_newline ();
+  show_sep ~h2:true ~title:"boundary emphasis still tokenizes" ();
+  print_tokens (tokens_of_string ~intraword_emphasis:false "*hello*");
+  print_newline ();

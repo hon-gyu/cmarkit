@@ -168,7 +168,7 @@ let try_add_image_link_start_token acc s line ~start =
   if next > line.last || s.[next] <> '[' then acc, next else
   Link_start { start; image = true } :: acc, next + 1
 
-let try_add_emphasis_token acc s line ~start =
+let try_add_emphasis_token ?oymarkit_mod acc s line ~start =
   let first = line.first and last = line.last and char = s.[start] in
   let run_last = Match.run_of ~char ~last s ~start:(start + 1) in
   let count = run_last - start + 1 in
@@ -186,13 +186,25 @@ let try_add_emphasis_token acc s line ~start =
   in
   let next = run_last + 1 in
   if not is_left_flanking && not is_right_flanking then acc, next else
-  let may_open =
-    (char = '*' && is_left_flanking) ||
-    (char = '_' && is_left_flanking && (not is_right_flanking || prev_punct))
-  in
-  let may_close =
-    (char = '*' && is_right_flanking) ||
-    (char = '_' && is_right_flanking && (not is_left_flanking || next_punct))
+  let may_open, may_close =
+    match oymarkit_mod with
+    | Some oymarkit_mod when is_oymarkit_enabled () ->
+        begin Oymarkit_mod.emphasis_may_open_close oymarkit_mod ~char
+          ~is_left_flanking ~is_right_flanking ~prev_white ~next_white
+          ~prev_punct ~next_punct
+        end [@ocamlformat "enable"]
+    | _ ->
+        let may_open =
+          (char = '*' && is_left_flanking) ||
+          (char = '_' && is_left_flanking &&
+            (not is_right_flanking || prev_punct))
+        in
+        let may_close =
+          (char = '*' && is_right_flanking) ||
+          (char = '_' && is_right_flanking &&
+            (not is_left_flanking || next_punct))
+        in
+        may_open, may_close
   in
   if not may_open && not may_close then acc, next else
   Emphasis_marks { start; char; count; may_open; may_close } :: acc, next
@@ -227,7 +239,7 @@ let try_add_math_span_marks_token acc s line ~start =
   if not may_open && not may_close then acc, next else
   Math_span_marks { start; count; may_open; may_close } :: acc, next
 
-let tokenize ~exts s lines =
+let tokenize ?oymarkit_mod ~exts s lines =
   (* For inlines this is where we conditionalize for extensions. All code
       paths after that no longer check for p.exts: there just won't be
       extension data to process if [exts] was not [true] here. *)
@@ -249,7 +261,7 @@ let tokenize ~exts s lines =
             in a code span or not. This is the reason why this comes
             after the case for '`'. *)
         acc, k + 1
-    | '*' | '_' -> try_add_emphasis_token acc s line ~start:k
+    | '*' | '_' -> try_add_emphasis_token ?oymarkit_mod acc s line ~start:k
     | ']' -> Right_brack { start = k } :: acc, k + 1
     | '[' -> Link_start { start = k; image = false } :: acc, k + 1
     | '!' -> try_add_image_link_start_token acc s line ~start:k
@@ -860,7 +872,9 @@ let strip_paragraph p lines =
 
 let parse p lines =
   let layout, meta, lines = strip_paragraph p lines in
-  let cidx, toks, first_line = tokenize ~exts:p.exts p.i lines in
+  let cidx, toks, first_line =
+    tokenize ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i lines
+  in
   p.cidx <- cidx;
   let is, _had_link = parse_tokens p toks first_line in
   let inline = match is with [i] -> i | is -> Inline.Inlines (is, meta) in
@@ -954,7 +968,9 @@ let rec parse_cols p line acc toks k = match toks with
     assert false
 
 let parse_table_row p line =
-  let cidx, toks, first_line = tokenize ~exts:p.exts p.i [line] in
+  let cidx, toks, first_line =
+    tokenize ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i [line]
+  in
   p.cidx <- cidx;
   let toks, _had_link = first_pass p toks first_line in
   let toks = second_pass p toks first_line in
