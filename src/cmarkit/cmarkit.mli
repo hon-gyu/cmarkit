@@ -710,9 +710,14 @@ module Inline : sig
         {{:https://spec.commonmark.org/0.31.2/#emphasis-and-strong-emphasis}
         emphasis and strong emphasis}. *)
 
-    val make : ?delim:Layout.char -> inline -> t
+    val make :
+      ?delim:Layout.char -> ?open_marker:bool -> ?close_marker:bool ->
+      inline -> t
     (** [make i] is an emphasis on [i]. [delim] is the delimiter
-        used it should be either ['*'] or ['_']. *)
+        used it should be either ['*'] or ['_']. If [open_marker] is [true],
+        the CommonMark renderer emits an opening marker before the opening
+        delimiter. If [close_marker] is [true], it emits a closing marker after
+        the closing delimiter. Both default to [false]. *)
 
     val inline : t -> inline
     (** [inline e] is the emphasised inline. *)
@@ -720,6 +725,12 @@ module Inline : sig
     val delim : t -> Layout.char
     (** [delim e] is the delimiter used for emphasis, should be
         either ['*'] or ['_']. *)
+
+    val open_marker : t -> bool
+    (** [open_marker e] is [true] if [e] uses an opener marker. *)
+
+    val close_marker : t -> bool
+    (** [close_marker e] is [true] if [e] uses a closer marker. *)
   end
 
   (** Links. *)

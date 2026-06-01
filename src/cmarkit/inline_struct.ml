@@ -389,10 +389,14 @@ let link_token p ~first ~last ~first_line ~last_line ~image link =
   let inline = if image then Inline.Image link else Inline.Link link in
   Inline { start = first; inline; endline = last_line; next = last + 1 }
 
-let emphasis_token p ?delim ~first ~last ~first_line ~last_line ~strong emph =
+let emphasis_token p ?delim ?(open_marker = false) ?(close_marker = false)
+    ~first ~last ~first_line ~last_line ~strong emph =
   let textloc = textloc_of_lines p ~first ~last ~first_line ~last_line in
   let delim = match delim with None -> p.i.[first] | Some delim -> delim in
-  let e = { Inline.Emphasis.delim; inline = emph}, meta p textloc in
+  let e =
+    { Inline.Emphasis.delim; inline = emph; open_marker; close_marker }
+    , meta p textloc
+  in
   let i = if strong then Inline.Strong_emphasis e else Inline.Emphasis e in
   Inline { start = first; inline = i ; endline = last_line; next = last + 1 }
 
@@ -794,7 +798,8 @@ and try_emphasis p start_toks start_line ~opener =
       let toks =
         let strong = used = 2 in
         emphasis_token p ~delim:opener.char ~first ~last ~first_line
-          ~last_line ~strong emph ::
+          ~last_line ~strong ~open_marker:opener.open_marker
+          ~close_marker:closer.close_marker emph ::
         toks
       in
       let toks =

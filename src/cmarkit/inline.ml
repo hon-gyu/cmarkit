@@ -1,9 +1,9 @@
+[@@@ocamlformat "disable"]
+
 (*---------------------------------------------------------------------------
    Copyright (c) 2021 The cmarkit programmers. All rights reserved.
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
-
-[@@@ocamlformat "disable"]
 
 open Common_
 
@@ -100,10 +100,17 @@ end
 
 module Emphasis = struct
   type inline = t
-  type t = { delim : Layout.char; inline : inline }
-  let make ?(delim = '*') inline = { delim; inline }
+  type t =
+    { delim : Layout.char;
+      inline : inline;
+      open_marker : bool;
+      close_marker : bool }
+  let make ?(delim = '*') ?(open_marker = false) ?(close_marker = false) inline
+    = { delim; inline; open_marker; close_marker }
   let inline e = e.inline
   let delim e = e.delim
+  let open_marker e = e.open_marker
+  let close_marker e = e.close_marker
 end
 
 module Link = struct

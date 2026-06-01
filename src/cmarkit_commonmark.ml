@@ -1,3 +1,5 @@
+[@@@ocamlformat "disable"]
+
 (*---------------------------------------------------------------------------
    Copyright (c) 2023 The cmarkit programmers. All rights reserved.
    SPDX-License-Identifier: ISC
@@ -201,16 +203,29 @@ let code_span c cs =
   nchars c (Inline.Code_span.backtick_count cs) '`';
   tight_block_lines c (Inline.Code_span.code_layout cs);
   nchars c (Inline.Code_span.backtick_count cs) '`'
+[@@@ocamlformat "enable"]
+
+let marked_emphasis_open c e =
+  if Inline.Emphasis.open_marker e then C.byte c '{'
+
+let marked_emphasis_close c e =
+  if Inline.Emphasis.close_marker e then C.byte c '}'
+
+[@@@ocamlformat "disable"]
 
 let emphasis c e =
   let delim = Inline.Emphasis.delim e and i = Inline.Emphasis.inline e in
   let delim = if not (delim = '*' || delim = '_') then '*' else delim in
-  C.byte c delim; C.inline c i; C.byte c delim
+  marked_emphasis_open c e;
+  C.byte c delim; C.inline c i; C.byte c delim;
+  marked_emphasis_close c e
 
 let strong_emphasis c e =
   let delim = Inline.Emphasis.delim e and i = Inline.Emphasis.inline e in
   let delim = if not (delim = '*' || delim = '_') then '*' else delim in
-  C.byte c delim;  C.byte c delim; C.inline c i; C.byte c delim; C.byte c delim
+  marked_emphasis_open c e;
+  C.byte c delim; C.byte c delim; C.inline c i; C.byte c delim; C.byte c delim;
+  marked_emphasis_close c e
 
 let link_title c open_delim title = match title with
 | None -> ()

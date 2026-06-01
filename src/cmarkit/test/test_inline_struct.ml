@@ -88,7 +88,6 @@ let show_sep ?(h2 = false) ?(title = "") () =
   else Format.printf "%s@." sep
 
 let print_newline () = print_endline ""
-
 let print_sexp sexp = Format.printf "%a@." Sexplib0.Sexp.pp_hum sexp
 
 let print_tokens (tokens : token list) =
@@ -97,8 +96,8 @@ let print_tokens (tokens : token list) =
 let tokens_of_string ?intraword_emphasis ?marked_emphasis_delims s =
   let line_spans = Inline_parse_api.line_spans s in
   let parser =
-    Cmarkit_.Parser_common.parser ?intraword_emphasis
-      ?marked_emphasis_delims ~strict:true s
+    Cmarkit_.Parser_common.parser ?intraword_emphasis ?marked_emphasis_delims
+      ~strict:true s
   in
   let p, lines = (parser, line_spans) in
   let _layout, _meta, lines = strip_paragraph p lines in
@@ -106,6 +105,10 @@ let tokens_of_string ?intraword_emphasis ?marked_emphasis_delims s =
     tokenize ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i lines
   in
   toks
+
+let commonmark_of_inline inline =
+  inline |> Block.Paragraph.make |> fun p ->
+  Block.Paragraph (p, Meta.none) |> Doc.make |> Cmarkit_commonmark.of_doc
 
 let () =
   show_sep ~title:"basic inline parse" ();
@@ -170,12 +173,33 @@ let () =
 let () =
   show_sep ~title:"marked emphasis delimiter parse" ();
   show_sep ~h2:true ~title:"default" ();
-  print_sexp
-    ([%sexp_of: inline]
-       (Inline_parse_api.of_string "{_hello_}"));
+  print_sexp ([%sexp_of: inline] (Inline_parse_api.of_string "{_hello_}"));
   print_newline ();
   show_sep ~h2:true ~title:"marked_emphasis_delims:true" ();
   print_sexp
     ([%sexp_of: inline]
        (Inline_parse_api.of_string ~marked_emphasis_delims:true "{_hello_}"));
+  print_newline ()
+
+let () =
+  show_sep ~title:"marked emphasis delimiter commonmark rendering" ();
+  show_sep ~h2:true ~title:"without markers" ();
+  print_string
+    (commonmark_of_inline
+       (Inline.Emphasis
+          ( Inline.Emphasis.make ~delim:'_' (Inline.Text ("hello", Meta.none)),
+            Meta.none )));
+  print_newline ();
+  show_sep ~h2:true ~title:"with markers" ();
+  print_string
+    (commonmark_of_inline
+       (Inline.Emphasis
+          ( Inline.Emphasis.make ~delim:'_' ~open_marker:true ~close_marker:true
+              (Inline.Text ("hello", Meta.none)),
+            Meta.none )));
+  print_newline ();
+  show_sep ~h2:true ~title:"parsed marked delimiters" ();
+  print_string
+    (Cmarkit_commonmark.of_doc
+       (Doc.of_string ~marked_emphasis_delims:true "{_hello_}"));
   print_newline ()

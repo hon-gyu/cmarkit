@@ -69,3 +69,14 @@ marked_emphasis_delims:true
 ----------
 (Emphasis (Text hello))
 
+marked emphasis delimiter commonmark rendering
+==========
+without markers
+----------
+_hello_
+with markers
+----------
+{_hello_}
+parsed marked delimiters
+----------
+{_hello_}
