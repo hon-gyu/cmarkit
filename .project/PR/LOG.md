@@ -24,6 +24,14 @@
   - Shows marked delimiter parsing.
   - Shows CommonMark rendering for direct AST and parsed marked delimiters.
 
+- Added `?strong_emphasis_width` parser knob.
+  - Default remains CommonMark-compatible at width `2`.
+  - Width `1` lets a permitted strong-emphasis delimiter form strong emphasis
+    from a single delimiter character.
+  - The emphasis matcher now returns a semantic match decision, not only the
+    number of consumed delimiters.
+  - Added parser-config and `.expected` style tests for default vs width `1`.
+
 ## Verification
 
 - `dune runtest src/cmarkit/test`
@@ -32,11 +40,13 @@
 
 ## Next step
 
-Implement configurable one-character strong emphasis.
+Add the typed oymarkit inline-container AST extension shape.
 
 Expected shape:
 
-- Keep CommonMark default: strong emphasis consumes two delimiters.
-- Add an explicit parser knob for strong-emphasis delimiter width.
-- Change emphasis matching to return a semantic decision, not only a consumed delimiter count, so `used = 1` can still mean strong emphasis when the knob allows it.
-- Add `.expected` tests showing default CommonMark behavior and knob-enabled one-character strong behavior.
+- Add a shared inline-container kind for highlight, superscript, subscript,
+  inserted text, and deleted text.
+- Use cmarkit's extensible `Inline.t` mechanism with typed oymarkit-owned
+  payloads.
+- Update core support code that must know about the new inline cases:
+  normalization, mapping/folding, sexp/debug output, and renderers as needed.
