@@ -79,30 +79,52 @@ strong_emphasis_width:1
 ----------
 (Strong_emphasis (Text hello))
 
-inline container parse
+extra inline container parse
 ==========
 default
 ----------
 (Text {=hello=})
 
-inline_containers:true tokens
+extra_inline_containers:explicit tokens
 ----------
-((Inline_container_marks
-  ((start 0) (char =) (kind Highlight) (may_open true) (may_close false)))
- (Inline_container_marks
-  ((start 7) (char =) (kind Highlight) (may_open false) (may_close true))))
+((Extra_inline_container_marks
+  ((start 0) (char =) (kind Highlight) (curly true) (may_open true)
+   (may_close false)))
+ (Extra_inline_container_marks
+  ((start 7) (char =) (kind Highlight) (curly true) (may_open false)
+   (may_close true))))
 
-inline_containers:true parse
+extra_inline_containers:explicit parse
 ----------
-(Inline_container Highlight (Text hello))
-(Inline_container Superscript (Text hello))
-(Inline_container Subscript (Text hello))
-(Inline_container Inserted (Text hello))
-(Inline_container Deleted (Text hello))
+(Extra_inline_container Highlight (Text hello))
+(Extra_inline_container Superscript (Text hello))
+(Extra_inline_container Subscript (Text hello))
+(Extra_inline_container Inserted (Text hello))
+(Extra_inline_container Deleted (Text hello))
 
 nested inline payload
 ----------
-(Inline_container Highlight (Inlines (Text "a ") (Emphasis (Text b))))
+(Extra_inline_container Highlight (Inlines (Text "a ") (Emphasis (Text b))))
+
+optional curly shorthand
+----------
+(Extra_inline_container Highlight (Text hello))
+
+first closed opener wins
+----------
+(Inlines (Extra_inline_container Highlight (Text "a ^b")) (Text " c^"))
+
+nested extra containers
+----------
+(Extra_inline_container Highlight
+ (Inlines (Text "a ") (Extra_inline_container Superscript (Text b))
+  (Text " c")))
+
+nested same-kind extra containers
+----------
+(Extra_inline_container Highlight
+ (Inlines (Text "a ") (Extra_inline_container Highlight (Text b))
+  (Text " c")))
 
 marked emphasis delimiter commonmark rendering
 ==========
@@ -115,11 +137,11 @@ with markers
 parsed marked delimiters
 ----------
 {_hello_}
-inline container AST support
+extra inline container AST support
 ==========
 sexp
 ----------
-(Inline_container Highlight (Text hello))
+(Extra_inline_container Highlight (Text hello))
 
 commonmark rendering
 ----------

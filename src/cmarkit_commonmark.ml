@@ -278,18 +278,18 @@ let strikethrough c s =
   let i = Inline.Strikethrough.inline s in
   C.string c "~~"; C.inline c i; C.string c "~~"
 
-let inline_container c ic =
+let extra_inline_container c ic =
   let delim =
-    match Inline.Inline_container.kind ic with
-    | Inline.Inline_container.Highlight -> '='
-    | Inline.Inline_container.Superscript -> '^'
-    | Inline.Inline_container.Subscript -> '~'
-    | Inline.Inline_container.Inserted -> '+'
-    | Inline.Inline_container.Deleted -> '-'
+    match Inline.Extra_inline_container.kind ic with
+    | Inline.Extra_inline_container.Highlight -> '='
+    | Inline.Extra_inline_container.Superscript -> '^'
+    | Inline.Extra_inline_container.Subscript -> '~'
+    | Inline.Extra_inline_container.Inserted -> '+'
+    | Inline.Extra_inline_container.Deleted -> '-'
   in
   C.byte c '{';
   C.byte c delim;
-  C.inline c (Inline.Inline_container.inline ic);
+  C.inline c (Inline.Extra_inline_container.inline ic);
   C.byte c delim;
   C.byte c '}'
 
@@ -311,7 +311,7 @@ let inline c = function
 | Inline.Strong_emphasis (e, _) -> strong_emphasis c e; true
 | Inline.Text (t, _) -> text c t; true
 | Inline.Ext_strikethrough (s, _) -> strikethrough c s; true
-| Inline.Ext_inline_container (ic, _) -> inline_container c ic; true
+| Inline.Ext_extra_inline_container (ic, _) -> extra_inline_container c ic; true
 | Inline.Ext_math_span (m, _) -> math_span c m; true
 | _ -> C.string c "<!-- Unknown Cmarkit inline -->"; true
 

@@ -89,17 +89,17 @@ let sexp_of_inline_core : inline_sexp =
     | Inline.Inlines (is, m) -> m, Sexp.List (Atom "Inlines" :: List.map is ~f:recurse)
     | Inline.Ext_strikethrough (s, m) ->
       m, Sexp.List [ Atom "Strikethrough"; recurse (Inline.Strikethrough.inline s) ]
-    | Inline.Ext_inline_container (c, m) ->
+    | Inline.Ext_extra_inline_container (c, m) ->
       let kind =
-        match Inline.Inline_container.kind c with
-        | Inline.Inline_container.Highlight -> "Highlight"
-        | Inline.Inline_container.Superscript -> "Superscript"
-        | Inline.Inline_container.Subscript -> "Subscript"
-        | Inline.Inline_container.Inserted -> "Inserted"
-        | Inline.Inline_container.Deleted -> "Deleted"
+        match Inline.Extra_inline_container.kind c with
+        | Inline.Extra_inline_container.Highlight -> "Highlight"
+        | Inline.Extra_inline_container.Superscript -> "Superscript"
+        | Inline.Extra_inline_container.Subscript -> "Subscript"
+        | Inline.Extra_inline_container.Inserted -> "Inserted"
+        | Inline.Extra_inline_container.Deleted -> "Deleted"
       in
-      m, Sexp.List [ Atom "Inline_container"; Atom kind;
-                     recurse (Inline.Inline_container.inline c) ]
+      m, Sexp.List [ Atom "Extra_inline_container"; Atom kind;
+                     recurse (Inline.Extra_inline_container.inline c) ]
     | Inline.Ext_math_span (ms, m) ->
       m, Sexp.List [ Atom "Math_span"; Atom (Inline.Math_span.tex ms) ]
     | _ -> Meta.none, Sexp.Atom "<unknown-inline>"

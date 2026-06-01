@@ -223,18 +223,18 @@ let math_span c ms =
   tight_block_lines c tex;
   C.string c (if Inline.Math_span.display ms then "\\]" else "\\)")
 
-let inline_container c ic =
-  let inline = Inline.Inline_container.inline ic in
-  match Inline.Inline_container.kind ic with
-  | Inline.Inline_container.Highlight ->
+let extra_inline_container c ic =
+  let inline = Inline.Extra_inline_container.inline ic in
+  match Inline.Extra_inline_container.kind ic with
+  | Inline.Extra_inline_container.Highlight ->
       C.string c "\\emph{"; C.inline c inline; C.byte c '}'
-  | Inline.Inline_container.Superscript ->
+  | Inline.Extra_inline_container.Superscript ->
       C.string c "\\textsuperscript{"; C.inline c inline; C.byte c '}'
-  | Inline.Inline_container.Subscript ->
+  | Inline.Extra_inline_container.Subscript ->
       C.string c "\\textsubscript{"; C.inline c inline; C.byte c '}'
-  | Inline.Inline_container.Inserted ->
+  | Inline.Extra_inline_container.Inserted ->
       C.string c "\\uline{"; C.inline c inline; C.byte c '}'
-  | Inline.Inline_container.Deleted ->
+  | Inline.Extra_inline_container.Deleted ->
       C.string c "\\sout{"; C.inline c inline; C.byte c '}'
 
 let inline c = function
@@ -249,7 +249,7 @@ let inline c = function
 | Inline.Strong_emphasis (e, _) -> strong_emphasis c e; true
 | Inline.Text (t, _) -> text c t; true
 | Inline.Ext_strikethrough (s, _) -> strikethrough c s; true
-| Inline.Ext_inline_container (ic, _) -> inline_container c ic; true
+| Inline.Ext_extra_inline_container (ic, _) -> extra_inline_container c ic; true
 | Inline.Ext_math_span (ms, _) -> math_span c ms; true
 | _ -> comment c "Unknown Cmarkit inline"; true
 

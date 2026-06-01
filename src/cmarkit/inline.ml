@@ -184,9 +184,41 @@ module Strikethrough = struct
   let inline = Fun.id
 end
 
-module Inline_container = struct
+module Extra_inline_container = struct
   type inline = t
   type kind = Highlight | Superscript | Subscript | Inserted | Deleted
+
+  module Config = struct
+    type syntax = Disabled | Curly_required | Curly_optional
+
+    type t =
+      { highlight : syntax;
+        superscript : syntax;
+        subscript : syntax;
+        inserted : syntax;
+        deleted : syntax }
+
+    let make
+        ?(highlight = Disabled) ?(superscript = Disabled)
+        ?(subscript = Disabled) ?(inserted = Disabled) ?(deleted = Disabled) ()
+      =
+      { highlight; superscript; subscript; inserted; deleted }
+
+    let disabled = make ()
+
+    let explicit =
+      make ~highlight:Curly_required ~superscript:Curly_required
+        ~subscript:Curly_required ~inserted:Curly_required
+        ~deleted:Curly_required ()
+
+    let syntax t = function
+    | Highlight -> t.highlight
+    | Superscript -> t.superscript
+    | Subscript -> t.subscript
+    | Inserted -> t.inserted
+    | Deleted -> t.deleted
+  end
+
   type t = { kind : kind; inline : inline }
   let make kind inline = { kind; inline }
   let kind c = c.kind
@@ -205,7 +237,7 @@ end
 
 type t +=
 | Ext_strikethrough of Strikethrough.t node
-| Ext_inline_container of Inline_container.t node
+| Ext_extra_inline_container of Extra_inline_container.t node
 | Ext_math_span of Math_span.t node
 
 (* Functions on inlines *)
@@ -218,7 +250,7 @@ let meta ?(ext = ext_none) = function
 | Autolink (_, m) | Break (_, m) | Code_span (_, m) | Emphasis (_, m)
 | Image (_, m) | Inlines (_, m) | Link (_, m) | Raw_html (_, m)
 | Strong_emphasis (_, m)  | Text (_, m) -> m
-| Ext_strikethrough (_, m) | Ext_inline_container (_, m) -> m
+| Ext_strikethrough (_, m) | Ext_extra_inline_container (_, m) -> m
 | Ext_math_span (_, m) -> m
 | i -> ext i
 
@@ -249,10 +281,10 @@ let rec normalize ?(ext = ext_none) = function
     let is = loop [normalize ~ext i] is in
     (match is with [i] -> i | _ -> Inlines (is, m))
 | Ext_strikethrough (i, m) -> Ext_strikethrough (normalize ~ext i, m)
-| Ext_inline_container (c, m) ->
-    let inline = normalize ~ext (Inline_container.inline c) in
-    let c = Inline_container.make (Inline_container.kind c) inline in
-    Ext_inline_container (c, m)
+| Ext_extra_inline_container (c, m) ->
+    let inline = normalize ~ext (Extra_inline_container.inline c) in
+    let c = Extra_inline_container.make (Extra_inline_container.kind c) inline in
+    Ext_extra_inline_container (c, m)
 | i -> ext i
 
 let ext_none ~break_on_soft = ext_none
@@ -282,8 +314,8 @@ let to_plain_text ?(ext = ext_none) ~break_on_soft i =
       loop ~break_on_soft (push t acc) is
   | Ext_strikethrough (i, _) :: is ->
       loop ~break_on_soft acc (i :: is)
-  | Ext_inline_container (c, _) :: is ->
-      loop ~break_on_soft acc (Inline_container.inline c :: is)
+  | Ext_extra_inline_container (c, _) :: is ->
+      loop ~break_on_soft acc (Extra_inline_container.inline c :: is)
   | Ext_math_span (m, _) :: is ->
       loop ~break_on_soft (push (Math_span.tex m) acc) is
   | i :: is ->

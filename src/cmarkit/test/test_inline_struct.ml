@@ -42,28 +42,30 @@ module Inline_struct = struct
   }
   [@@deriving sexp_of]
 
-  type inline_container_marks = Inline_struct_.inline_container_marks = {
+  type extra_inline_container_marks = Inline_struct_.extra_inline_container_marks = {
     start : byte_pos;
     char : char;
-    kind : Inline.Inline_container.kind;
+    kind : Inline.Extra_inline_container.kind;
+    curly : bool;
     may_open : bool;
     may_close : bool;
   }
 
-  let sexp_of_inline_container_kind = function
-    | Inline.Inline_container.Highlight -> Sexplib0.Sexp.Atom "Highlight"
-    | Inline.Inline_container.Superscript -> Sexplib0.Sexp.Atom "Superscript"
-    | Inline.Inline_container.Subscript -> Sexplib0.Sexp.Atom "Subscript"
-    | Inline.Inline_container.Inserted -> Sexplib0.Sexp.Atom "Inserted"
-    | Inline.Inline_container.Deleted -> Sexplib0.Sexp.Atom "Deleted"
+  let sexp_of_extra_inline_container_kind = function
+    | Inline.Extra_inline_container.Highlight -> Sexplib0.Sexp.Atom "Highlight"
+    | Inline.Extra_inline_container.Superscript -> Sexplib0.Sexp.Atom "Superscript"
+    | Inline.Extra_inline_container.Subscript -> Sexplib0.Sexp.Atom "Subscript"
+    | Inline.Extra_inline_container.Inserted -> Sexplib0.Sexp.Atom "Inserted"
+    | Inline.Extra_inline_container.Deleted -> Sexplib0.Sexp.Atom "Deleted"
 
-  let sexp_of_inline_container_marks m =
+  let sexp_of_extra_inline_container_marks m =
     let open Sexplib0.Sexp in
     List
       [
         List [ Atom "start"; sexp_of_byte_pos m.start ];
         List [ Atom "char"; Sexplib0.Sexp_conv.sexp_of_char m.char ];
-        List [ Atom "kind"; sexp_of_inline_container_kind m.kind ];
+        List [ Atom "kind"; sexp_of_extra_inline_container_kind m.kind ];
+        List [ Atom "curly"; Sexplib0.Sexp_conv.sexp_of_bool m.curly ];
         List [ Atom "may_open"; Sexplib0.Sexp_conv.sexp_of_bool m.may_open ];
         List [ Atom "may_close"; Sexplib0.Sexp_conv.sexp_of_bool m.may_close ];
       ]
@@ -87,7 +89,7 @@ module Inline_struct = struct
     | Autolink_or_html_start of { start : byte_pos }
     | Backticks of { start : byte_pos; count : int; escaped : bool }
     | Emphasis_marks of emphasis_marks
-    | Inline_container_marks of inline_container_marks
+    | Extra_inline_container_marks of extra_inline_container_marks
     | Inline of {
         start : byte_pos;
         inline : inline;
@@ -120,12 +122,14 @@ let print_sexp sexp = Format.printf "%a@." Sexplib0.Sexp.pp_hum sexp
 let print_tokens (tokens : token list) =
   print_sexp ([%sexp_of: token list] tokens)
 
+module Extra_config = Inline.Extra_inline_container.Config
+
 let tokens_of_string ?intraword_emphasis ?marked_emphasis_delims
-    ?inline_containers s =
+    ?extra_inline_containers s =
   let line_spans = Inline_parse_api.line_spans s in
   let parser =
     Cmarkit_.Parser_common.parser ?intraword_emphasis ?marked_emphasis_delims
-      ?inline_containers ~strict:true s
+      ?extra_inline_containers ~strict:true s
   in
   let p, lines = (parser, line_spans) in
   let _layout, _meta, lines = strip_paragraph p lines in
@@ -138,9 +142,9 @@ let commonmark_of_inline inline =
   inline |> Block.Paragraph.make |> fun p ->
   Block.Paragraph (p, Meta.none) |> Doc.make |> Cmarkit_commonmark.of_doc
 
-let inline_container kind inline =
-  Inline.Ext_inline_container
-    (Inline.Inline_container.make kind inline, Meta.none)
+let extra_inline_container kind inline =
+  Inline.Ext_extra_inline_container
+    (Inline.Extra_inline_container.make kind inline, Meta.none)
 
 let () =
   show_sep ~title:"basic inline parse" ();
@@ -225,34 +229,71 @@ let () =
   print_newline ()
 
 let () =
-  show_sep ~title:"inline container parse" ();
+  show_sep ~title:"extra inline container parse" ();
   show_sep ~h2:true ~title:"default" ();
   print_sexp ([%sexp_of: inline] (Inline_parse_api.of_string "{=hello=}"));
   print_newline ();
-  show_sep ~h2:true ~title:"inline_containers:true tokens" ();
-  print_tokens (tokens_of_string ~inline_containers:true "{=hello=}");
+  show_sep ~h2:true ~title:"extra_inline_containers:explicit tokens" ();
+  print_tokens
+    (tokens_of_string ~extra_inline_containers:Extra_config.explicit
+       "{=hello=}");
   print_newline ();
-  show_sep ~h2:true ~title:"inline_containers:true parse" ();
+  show_sep ~h2:true ~title:"extra_inline_containers:explicit parse" ();
   print_sexp
     ([%sexp_of: inline]
-       (Inline_parse_api.of_string ~inline_containers:true "{=hello=}"));
+       (Inline_parse_api.of_string
+          ~extra_inline_containers:Extra_config.explicit "{=hello=}"));
   print_sexp
     ([%sexp_of: inline]
-       (Inline_parse_api.of_string ~inline_containers:true "{^hello^}"));
+       (Inline_parse_api.of_string
+          ~extra_inline_containers:Extra_config.explicit "{^hello^}"));
   print_sexp
     ([%sexp_of: inline]
-       (Inline_parse_api.of_string ~inline_containers:true "{~hello~}"));
+       (Inline_parse_api.of_string
+          ~extra_inline_containers:Extra_config.explicit "{~hello~}"));
   print_sexp
     ([%sexp_of: inline]
-       (Inline_parse_api.of_string ~inline_containers:true "{+hello+}"));
+       (Inline_parse_api.of_string
+          ~extra_inline_containers:Extra_config.explicit "{+hello+}"));
   print_sexp
     ([%sexp_of: inline]
-       (Inline_parse_api.of_string ~inline_containers:true "{-hello-}"));
+       (Inline_parse_api.of_string
+          ~extra_inline_containers:Extra_config.explicit "{-hello-}"));
   print_newline ();
   show_sep ~h2:true ~title:"nested inline payload" ();
   print_sexp
     ([%sexp_of: inline]
-       (Inline_parse_api.of_string ~inline_containers:true "{=a *b*=}"));
+       (Inline_parse_api.of_string
+          ~extra_inline_containers:Extra_config.explicit "{=a *b*=}"));
+  print_newline ();
+  let shorthand =
+    Extra_config.make ~highlight:Extra_config.Curly_optional
+      ~superscript:Extra_config.Curly_optional ()
+  in
+  show_sep ~h2:true ~title:"optional curly shorthand" ();
+  print_sexp
+    ([%sexp_of: inline]
+       (Inline_parse_api.of_string ~extra_inline_containers:shorthand
+          "=hello="));
+  print_newline ();
+  show_sep ~h2:true ~title:"first closed opener wins" ();
+  print_sexp
+    ([%sexp_of: inline]
+       (Inline_parse_api.of_string ~extra_inline_containers:shorthand
+          "=a ^b= c^"));
+  print_newline ();
+  show_sep ~h2:true ~title:"nested extra containers" ();
+  print_sexp
+    ([%sexp_of: inline]
+       (Inline_parse_api.of_string ~extra_inline_containers:shorthand
+          "=a ^b^ c="));
+  print_newline ();
+  show_sep ~h2:true ~title:"nested same-kind extra containers" ();
+  print_sexp
+    ([%sexp_of: inline]
+       (Inline_parse_api.of_string
+          ~extra_inline_containers:Extra_config.explicit
+          "{=a {=b=} c=}"));
   print_newline ()
 
 let () =
@@ -279,22 +320,22 @@ let () =
   print_newline ()
 
 let () =
-  show_sep ~title:"inline container AST support" ();
+  show_sep ~title:"extra inline container AST support" ();
   show_sep ~h2:true ~title:"sexp" ();
   print_sexp
     ([%sexp_of: inline]
-       (inline_container Inline.Inline_container.Highlight
+       (extra_inline_container Inline.Extra_inline_container.Highlight
           (Inline.Text ("hello", Meta.none))));
   print_newline ();
   show_sep ~h2:true ~title:"commonmark rendering" ();
   let render kind =
     print_string
       (commonmark_of_inline
-         (inline_container kind (Inline.Text ("hello", Meta.none))))
+         (extra_inline_container kind (Inline.Text ("hello", Meta.none))))
   in
-  render Inline.Inline_container.Highlight;
-  render Inline.Inline_container.Superscript;
-  render Inline.Inline_container.Subscript;
-  render Inline.Inline_container.Inserted;
-  render Inline.Inline_container.Deleted;
+  render Inline.Extra_inline_container.Highlight;
+  render Inline.Extra_inline_container.Superscript;
+  render Inline.Extra_inline_container.Subscript;
+  render Inline.Extra_inline_container.Inserted;
+  render Inline.Extra_inline_container.Deleted;
   print_newline ()

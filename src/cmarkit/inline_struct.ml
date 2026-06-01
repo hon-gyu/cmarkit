@@ -31,10 +31,11 @@ type emphasis_marks =
     open_marker : bool;
     close_marker : bool }
 
-type inline_container_marks =
+type extra_inline_container_marks =
   { start : byte_pos;
     char : char;
-    kind : Inline.Inline_container.kind;
+    kind : Inline.Extra_inline_container.kind;
+    curly : bool;
     may_open : bool;
     may_close : bool }
 
@@ -56,7 +57,7 @@ type token =
       count : int;
       escaped : bool }
 | Emphasis_marks of emphasis_marks
-| Inline_container_marks of inline_container_marks
+| Extra_inline_container_marks of extra_inline_container_marks
 | Inline of
     { start : byte_pos;
       inline : Inline.t;
@@ -76,7 +77,7 @@ type token =
 
 let token_start = function
 | Autolink_or_html_start { start } | Backticks { start }
-| Emphasis_marks { start } | Inline_container_marks { start }
+| Emphasis_marks { start } | Extra_inline_container_marks { start }
 | Inline { start } -> start |  Link_start { start }
 | Newline { start } | Right_brack { start } -> start
 | Right_paren { start } -> start
@@ -98,8 +99,13 @@ let emphasis_closer_pos ~char ~after cidx =
 let has_emphasis_closer ~char ~after cidx =
   Closer_index.closer_exists (Closer.Emphasis_marks char) ~after cidx
 
-let has_inline_container_closer ~char ~after cidx =
-  Closer_index.closer_exists (Closer.Inline_container_marks char) ~after cidx
+let extra_inline_container_closer_pos ~char ~curly ~after cidx =
+  Closer_index.closer_pos
+    (Closer.Extra_inline_container_marks (char, curly)) ~after cidx
+
+let has_extra_inline_container_closer ~char ~curly ~after cidx =
+  Closer_index.closer_exists
+    (Closer.Extra_inline_container_marks (char, curly)) ~after cidx
 
 let has_strikethrough_closer ~after cidx =
   Closer_index.closer_exists Closer.Strikethrough_marks ~after cidx
@@ -121,9 +127,11 @@ let rev_token_list_and_make_closer_index toks =
   | Emphasis_marks { start; char; may_close = true } as t :: toks ->
       let cidx = Closer_index.add (Closer.Emphasis_marks char) start cidx in
       loop cidx (t :: acc) toks
-  | Inline_container_marks { start; char; may_close = true } as t :: toks ->
+  | Extra_inline_container_marks
+      { start; char; curly; may_close = true; _ } as t :: toks ->
       let cidx =
-        Closer_index.add (Closer.Inline_container_marks char) start cidx
+        Closer_index.add
+          (Closer.Extra_inline_container_marks (char, curly)) start cidx
       in
       loop cidx (t :: acc) toks
   | Strikethrough_marks { start; may_close = true } as t :: toks ->
@@ -265,48 +273,80 @@ let try_add_marked_emphasis_closer_token oymarkit_mod acc s line ~start =
   then try_add_emphasis_token ~oymarkit_mod acc s line ~start
   else try_add_emphasis_token ~oymarkit_mod ~close_marker:true acc s line ~start
 
-let inline_container_kind_of_char = function
-| '=' -> Some Inline.Inline_container.Highlight
-| '^' -> Some Inline.Inline_container.Superscript
-| '~' -> Some Inline.Inline_container.Subscript
-| '+' -> Some Inline.Inline_container.Inserted
-| '-' -> Some Inline.Inline_container.Deleted
+let extra_inline_container_kind_of_char = function
+| '=' -> Some Inline.Extra_inline_container.Highlight
+| '^' -> Some Inline.Extra_inline_container.Superscript
+| '~' -> Some Inline.Extra_inline_container.Subscript
+| '+' -> Some Inline.Extra_inline_container.Inserted
+| '-' -> Some Inline.Extra_inline_container.Deleted
 | _ -> None
 
-let try_add_inline_container_opener_token oymarkit_mod acc s line ~start =
-  let next = start + 1 in
-  if
-    next > line.last
-    || (not (Oymarkit_mod.inline_containers oymarkit_mod))
-  then None
-  else
-    match inline_container_kind_of_char s.[next] with
-    | None -> None
-    | Some kind ->
-        Some
-          ( Inline_container_marks
-              { start; char = s.[next]; kind; may_open = true;
-                may_close = false }
-            :: acc,
-            next + 1 )
+let extra_inline_container_syntax oymarkit_mod kind =
+  Oymarkit_mod.extra_inline_container_syntax oymarkit_mod kind
 
-let try_add_inline_container_closer_token oymarkit_mod acc s line ~start =
-  let marker = start + 1 in
-  if
-    marker > line.last
-    || (not (Oymarkit_mod.inline_containers oymarkit_mod))
-    || s.[marker] <> '}'
-  then None
+let try_add_extra_inline_container_opener_token oymarkit_mod acc s line ~start =
+  let next = start + 1 in
+  if next > line.last then None
   else
-    match inline_container_kind_of_char s.[start] with
+    match extra_inline_container_kind_of_char s.[next] with
     | None -> None
     | Some kind ->
-        Some
-          ( Inline_container_marks
-              { start; char = s.[start]; kind; may_open = false;
-                may_close = true }
-            :: acc,
-            marker + 1 )
+        let open Inline.Extra_inline_container.Config in
+        begin match extra_inline_container_syntax oymarkit_mod kind with
+        | Disabled -> None
+        | Curly_required | Curly_optional ->
+            Some
+              ( Extra_inline_container_marks
+                  { start; char = s.[next]; kind; curly = true;
+                    may_open = true; may_close = false }
+                :: acc,
+                next + 1 )
+        end
+
+let try_add_extra_inline_container_closer_token oymarkit_mod acc s line ~start =
+  let marker = start + 1 in
+  if marker > line.last || s.[marker] <> '}' then None
+  else
+    match extra_inline_container_kind_of_char s.[start] with
+    | None -> None
+    | Some kind ->
+        let open Inline.Extra_inline_container.Config in
+        begin match extra_inline_container_syntax oymarkit_mod kind with
+        | Disabled -> None
+        | Curly_required | Curly_optional ->
+            Some
+              ( Extra_inline_container_marks
+                  { start; char = s.[start]; kind; curly = true;
+                    may_open = false; may_close = true }
+                :: acc,
+                marker + 1 )
+        end
+
+let try_add_extra_inline_container_marks_token oymarkit_mod acc s line ~start =
+  match extra_inline_container_kind_of_char s.[start] with
+  | None -> None
+  | Some kind ->
+      let open Inline.Extra_inline_container.Config in
+      begin match extra_inline_container_syntax oymarkit_mod kind with
+      | Disabled | Curly_required -> None
+      | Curly_optional ->
+          let first = line.first and last = line.last in
+          let prev_uchar = Match.prev_uchar s ~first ~before:start in
+          let next_uchar = Match.next_uchar s ~last ~after:start in
+          let may_close =
+            not (Cmarkit_data.is_unicode_whitespace prev_uchar)
+          in
+          let may_open =
+            not (Cmarkit_data.is_unicode_whitespace next_uchar)
+          in
+          if not may_open && not may_close then None else
+          Some
+            ( Extra_inline_container_marks
+                { start; char = s.[start]; kind; curly = false; may_open;
+                  may_close }
+              :: acc,
+              start + 1 )
+      end
 
 [@@@ocamlformat "disable"]
 
@@ -366,7 +406,7 @@ let tokenize ?oymarkit_mod ~exts s lines =
         begin match oymarkit_mod with
         | Some oymarkit_mod when is_oymarkit_enabled () ->
             begin match
-              try_add_inline_container_opener_token oymarkit_mod acc s line
+              try_add_extra_inline_container_opener_token oymarkit_mod acc s line
                 ~start:k
             with
             | Some r -> r
@@ -392,11 +432,18 @@ let tokenize ?oymarkit_mod ~exts s lines =
         begin match oymarkit_mod with
         | Some oymarkit_mod when is_oymarkit_enabled () ->
             begin match
-              try_add_inline_container_closer_token oymarkit_mod acc s line
+              try_add_extra_inline_container_closer_token oymarkit_mod acc s line
                 ~start:k
             with
             | Some r -> r
-            | None -> acc, k + 1
+            | None ->
+                begin match
+                  try_add_extra_inline_container_marks_token oymarkit_mod acc s
+                    line ~start:k
+                with
+                | Some r -> r
+                | None -> acc, k + 1
+                end
             end
         | _ -> acc, k + 1
         end
@@ -404,14 +451,24 @@ let tokenize ?oymarkit_mod ~exts s lines =
         begin match oymarkit_mod with
         | Some oymarkit_mod when is_oymarkit_enabled () ->
             begin match
-              try_add_inline_container_closer_token oymarkit_mod acc s line
+              try_add_extra_inline_container_closer_token oymarkit_mod acc s line
                 ~start:k
             with
             | Some r -> r
             | None ->
-                if exts then try_add_strikethrough_marks_token acc s line
-                    ~start:k
-                else acc, k + 1
+                if exts && k < line.last && s.[k + 1] = '~'
+                then try_add_strikethrough_marks_token acc s line ~start:k
+                else
+                  begin match
+                    try_add_extra_inline_container_marks_token oymarkit_mod acc
+                      s line ~start:k
+                  with
+                  | Some r -> r
+                  | None ->
+                      if exts then
+                        try_add_strikethrough_marks_token acc s line ~start:k
+                      else acc, k + 1
+                  end
             end
         | _ ->
             if exts then try_add_strikethrough_marks_token acc s line ~start:k
@@ -500,10 +557,10 @@ let ext_strikethrough_token p ~first ~last ~first_line ~last_line s =
   let inline = Inline.Ext_strikethrough (s, meta p textloc) in
   Inline { start = first; inline; endline = last_line; next = last + 1 }
 
-let ext_inline_container_token p ~kind ~first ~last ~first_line ~last_line i =
+let ext_extra_inline_container_token p ~kind ~first ~last ~first_line ~last_line i =
   let textloc = textloc_of_lines p ~first ~last ~first_line ~last_line in
-  let c = Inline.Inline_container.make kind i in
-  let inline = Inline.Ext_inline_container (c, meta p textloc) in
+  let c = Inline.Extra_inline_container.make kind i in
+  let inline = Inline.Ext_extra_inline_container (c, meta p textloc) in
   Inline { start = first; inline; endline = last_line; next = last + 1 }
 
 let ext_math_span_token p ~count ~first ~last ~first_line ~last_line rspans =
@@ -959,40 +1016,58 @@ and try_strikethrough p start_toks start_line ~opener =
       in
       Either.Right (toks, line)
 
-and find_inline_container_text p toks start_line ~opener =
+and find_extra_inline_container_text p toks start_line ~opener =
+  let closer_pos =
+    match
+      extra_inline_container_closer_pos ~char:opener.char ~curly:opener.curly
+        ~after:opener.start p.cidx
+    with
+    | Some pos -> pos
+    | None -> assert false
+  in
   let rec loop p toks line acc = match toks with
   | [] -> Either.Left (List.rev acc)
-  | Inline_container_marks marks :: toks ->
-      if marks.may_close && marks.char = opener.char then
+  | Extra_inline_container_marks marks :: toks ->
+      if
+        marks.may_close && marks.char = opener.char
+        && marks.curly = opener.curly
+      then
         let to_last = marks.start - 1 in
         let acc = rev_tokens_and_shorten_last_line ~to_last [] acc in
         Either.Right (toks, line, acc, marks)
       else if marks.may_open then
-        match try_inline_container p toks line ~opener:marks with
-        | Either.Left toks -> loop p toks line acc
-        | Either.Right (toks, line) -> loop p toks line acc
-      else if has_inline_container_closer ~char:opener.char ~after:marks.start
-        p.cidx
-      then loop p toks line (Inline_container_marks marks :: acc)
-      else
-        Either.Left
-          (List.rev_append (Inline_container_marks marks :: acc) toks)
+        begin match
+          extra_inline_container_closer_pos ~char:marks.char
+            ~curly:marks.curly ~after:marks.start p.cidx
+        with
+        | Some nested_closer_pos when nested_closer_pos <= closer_pos ->
+            begin match try_extra_inline_container p toks line ~opener:marks with
+            | Either.Left toks -> loop p toks line acc
+            | Either.Right (toks, line) -> loop p toks line acc
+            end
+        | None | Some _ ->
+            loop p toks line (Extra_inline_container_marks marks :: acc)
+        end
+      else loop p toks line (Extra_inline_container_marks marks :: acc)
   | Newline { newline = l } as t :: toks -> loop p toks l (t :: acc)
   | Inline { endline = l } as t :: toks -> loop p toks l (t :: acc)
   | t :: toks -> loop p toks line (t :: acc)
   in
   loop p toks start_line []
 
-and try_inline_container p start_toks start_line ~opener =
+and try_extra_inline_container p start_toks start_line ~opener =
   let start = opener.start in
-  if not (has_inline_container_closer ~char:opener.char ~after:start p.cidx)
+  if
+    not
+      (has_extra_inline_container_closer ~char:opener.char
+         ~curly:opener.curly ~after:start p.cidx)
   then Either.Left start_toks else
-  match find_inline_container_text p start_toks start_line ~opener with
+  match find_extra_inline_container_text p start_toks start_line ~opener with
   | Either.Left _ as r -> r
   | Either.Right (toks, line, contained_toks, closer) ->
       let first_line = start_line and last_line = line in
       let text =
-        let first = start + 2 in
+        let first = start + (if opener.curly then 2 else 1) in
         let last = closer.start - 1 in
         let text_start =
           let last =
@@ -1005,8 +1080,9 @@ and try_inline_container p start_toks start_line ~opener =
         inlines_inline p text ~first ~last ~first_line ~last_line
       in
       let toks =
-        let first = opener.start and last = closer.start + 1 in
-        ext_inline_container_token p ~kind:opener.kind ~first ~last
+        let first = opener.start in
+        let last = closer.start + (if closer.curly then 1 else 0) in
+        ext_extra_inline_container_token p ~kind:opener.kind ~first ~last
           ~first_line ~last_line text
         :: toks
       in
@@ -1027,9 +1103,9 @@ and second_pass p toks line =
       | Either.Left toks -> loop p toks line acc
       | Either.Right (toks, line) -> loop p toks line acc
       end
-  | Inline_container_marks ({ may_open } as opener) :: toks ->
+  | Extra_inline_container_marks ({ may_open } as opener) :: toks ->
       if not may_open then loop p toks line acc else
-      begin match try_inline_container p toks line ~opener with
+      begin match try_extra_inline_container p toks line ~opener with
       | Either.Left toks -> loop p toks line acc
       | Either.Right (toks, line) -> loop p toks line acc
       end
@@ -1061,7 +1137,7 @@ and last_pass p toks line =
       loop toks endline acc next
   | (Backticks _ | Autolink_or_html_start _ | Link_start _ | Right_brack _
     | Emphasis_marks _ | Right_paren _ | Strikethrough_marks _
-    | Inline_container_marks _ | Math_span_marks _) :: _ ->
+    | Extra_inline_container_marks _ | Math_span_marks _) :: _ ->
       assert false
   in
   loop toks line [] line.first
@@ -1167,7 +1243,7 @@ let rec finish_col p line blanks_before is toks k = match toks with
     end
 | (Backticks _ | Autolink_or_html_start _ | Link_start _ | Right_brack _
   | Emphasis_marks _ | Right_paren _ | Strikethrough_marks _
-  | Inline_container_marks _ | Math_span_marks _ | Newline _ ) :: _ ->
+  | Extra_inline_container_marks _ | Math_span_marks _ | Newline _ ) :: _ ->
     assert false
 
 let rec parse_cols p line acc toks k = match toks with
@@ -1187,7 +1263,7 @@ let rec parse_cols p line acc toks k = match toks with
     end
 | (Backticks _ | Autolink_or_html_start _ | Link_start _ | Right_brack _
   | Emphasis_marks _ | Right_paren _ | Strikethrough_marks _
-  | Inline_container_marks _ | Math_span_marks _ | Newline _ ) :: _ ->
+  | Extra_inline_container_marks _ | Math_span_marks _ | Newline _ ) :: _ ->
     assert false
 
 let parse_table_row p line =
