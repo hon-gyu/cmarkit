@@ -20,12 +20,12 @@ let defs d = d.defs
 let of_string
     ?defs ?resolver ?nested_links ?heading_auto_ids ?layout ?locs ?file
     ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis
-    ?(strict = true) s
+    ?marked_emphasis_delims ?(strict = true) s
   =
   let p =
     parser ?defs ?resolver ?nested_links ?heading_auto_ids ?layout ?locs
       ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis ?file
-      ~strict s
+      ?marked_emphasis_delims ~strict s
   in
   let nl, doc = Block_struct.parse p in
   let block = block_struct_to_doc p doc in

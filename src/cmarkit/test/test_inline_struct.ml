@@ -37,6 +37,8 @@ module Inline_struct = struct
     count : int;
     may_open : bool;
     may_close : bool;
+    open_marker : bool;
+    close_marker : bool;
   }
   [@@deriving sexp_of]
 
@@ -92,10 +94,11 @@ let print_sexp sexp = Format.printf "%a@." Sexplib0.Sexp.pp_hum sexp
 let print_tokens (tokens : token list) =
   print_sexp ([%sexp_of: token list] tokens)
 
-let tokens_of_string ?intraword_emphasis s =
+let tokens_of_string ?intraword_emphasis ?marked_emphasis_delims s =
   let line_spans = Inline_parse_api.line_spans s in
   let parser =
-    Cmarkit_.Parser_common.parser ?intraword_emphasis ~strict:true s
+    Cmarkit_.Parser_common.parser ?intraword_emphasis
+      ?marked_emphasis_delims ~strict:true s
   in
   let p, lines = (parser, line_spans) in
   let _layout, _meta, lines = strip_paragraph p lines in
@@ -147,4 +150,32 @@ let () =
   print_newline ();
   show_sep ~h2:true ~title:"boundary emphasis still tokenizes" ();
   print_tokens (tokens_of_string ~intraword_emphasis:false "*hello*");
+  print_newline ()
+
+let () =
+  show_sep ~title:"marked emphasis delimiter tokenization" ();
+  show_sep ~h2:true ~title:"default" ();
+  print_tokens (tokens_of_string "{_hello_}");
   print_newline ();
+  show_sep ~h2:true ~title:"marked_emphasis_delims:true" ();
+  print_tokens (tokens_of_string ~marked_emphasis_delims:true "{_hello_}");
+  print_newline ();
+  show_sep ~h2:true ~title:"forced opener cannot close" ();
+  print_tokens (tokens_of_string ~marked_emphasis_delims:true "a{_b_");
+  print_newline ();
+  show_sep ~h2:true ~title:"forced closer cannot open" ();
+  print_tokens (tokens_of_string ~marked_emphasis_delims:true "_b_}a");
+  print_newline ()
+
+let () =
+  show_sep ~title:"marked emphasis delimiter parse" ();
+  show_sep ~h2:true ~title:"default" ();
+  print_sexp
+    ([%sexp_of: inline]
+       (Inline_parse_api.of_string "{_hello_}"));
+  print_newline ();
+  show_sep ~h2:true ~title:"marked_emphasis_delims:true" ();
+  print_sexp
+    ([%sexp_of: inline]
+       (Inline_parse_api.of_string ~marked_emphasis_delims:true "{_hello_}"));
+  print_newline ()

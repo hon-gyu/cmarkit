@@ -1368,7 +1368,7 @@ module Doc : sig
     ?heading_auto_ids:bool -> ?layout:bool -> ?locs:bool ->
     ?file:Textloc.fpath -> ?emphasis_delims:char list ->
     ?strong_emphasis_delims:char list -> ?intraword_emphasis:bool ->
-    ?strict:bool -> string -> t
+    ?marked_emphasis_delims:bool -> ?strict:bool -> string -> t
     (** [of_string md] is a document from the UTF-8 encoded CommonMark
         document [md].
 
@@ -1415,6 +1415,9 @@ module Doc : sig
    {- If [intraword_emphasis] is [false], emphasis delimiter runs between two
        non-whitespace, non-punctuation characters cannot open or close
        emphasis. The default is [true], which preserves CommonMark behavior.}
+   {- If [marked_emphasis_delims] is [true], [{*] and [{_] mark emphasis
+       delimiters as opener-only, and [*}] and [_}] mark them as closer-only.
+       The default is [false], which preserves CommonMark behavior.}
    {- If [resolver] is provided this is used resolve label definitions
       and references. See {{!Label.resolvers}here} for details. Defaults to
       {!Label.default_resolver}.}

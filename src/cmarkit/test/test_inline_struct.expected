@@ -8,9 +8,11 @@ intraword emphasis knob tokenization
 default
 ----------
 ((Emphasis_marks
-  ((start 1) (char *) (count 1) (may_open true) (may_close true)))
+  ((start 1) (char *) (count 1) (may_open true) (may_close true)
+   (open_marker false) (close_marker false)))
  (Emphasis_marks
-  ((start 3) (char *) (count 1) (may_open true) (may_close true))))
+  ((start 3) (char *) (count 1) (may_open true) (may_close true)
+   (open_marker false) (close_marker false))))
 
 intraword_emphasis:false
 ----------
@@ -19,7 +21,51 @@ intraword_emphasis:false
 boundary emphasis still tokenizes
 ----------
 ((Emphasis_marks
-  ((start 0) (char *) (count 1) (may_open true) (may_close false)))
+  ((start 0) (char *) (count 1) (may_open true) (may_close false)
+   (open_marker false) (close_marker false)))
  (Emphasis_marks
-  ((start 6) (char *) (count 1) (may_open false) (may_close true))))
+  ((start 6) (char *) (count 1) (may_open false) (may_close true)
+   (open_marker false) (close_marker false))))
+
+marked emphasis delimiter tokenization
+==========
+default
+----------
+((Emphasis_marks
+  ((start 1) (char _) (count 1) (may_open true) (may_close false)
+   (open_marker false) (close_marker false)))
+ (Emphasis_marks
+  ((start 7) (char _) (count 1) (may_open false) (may_close true)
+   (open_marker false) (close_marker false))))
+
+marked_emphasis_delims:true
+----------
+((Emphasis_marks
+  ((start 1) (char _) (count 1) (may_open true) (may_close false)
+   (open_marker true) (close_marker false)))
+ (Emphasis_marks
+  ((start 7) (char _) (count 1) (may_open false) (may_close true)
+   (open_marker false) (close_marker true))))
+
+forced opener cannot close
+----------
+((Emphasis_marks
+  ((start 4) (char _) (count 1) (may_open false) (may_close true)
+   (open_marker false) (close_marker false))))
+
+forced closer cannot open
+----------
+((Emphasis_marks
+  ((start 0) (char _) (count 1) (may_open true) (may_close false)
+   (open_marker false) (close_marker false))))
+
+marked emphasis delimiter parse
+==========
+default
+----------
+(Inlines (Text {) (Emphasis (Text hello)) (Text }))
+
+marked_emphasis_delims:true
+----------
+(Emphasis (Text hello))
 

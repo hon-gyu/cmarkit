@@ -27,7 +27,9 @@ type emphasis_marks =
     char : char;
     count : int;
     may_open : bool;
-    may_close : bool }
+    may_close : bool;
+    open_marker : bool;
+    close_marker : bool }
 
 type strikethrough_marks =
   { start : byte_pos;
@@ -168,12 +170,18 @@ let try_add_image_link_start_token acc s line ~start =
   if next > line.last || s.[next] <> '[' then acc, next else
   Link_start { start; image = true } :: acc, next + 1
 
-let try_add_emphasis_token ?oymarkit_mod acc s line ~start =
-  let first = line.first and last = line.last and char = s.[start] in
-  let run_last = Match.run_of ~char ~last s ~start:(start + 1) in
-  let count = run_last - start + 1 in
+let try_add_emphasis_token
+    ?oymarkit_mod ?(open_marker = false) ?(close_marker = false) acc s line
+    ~start
+  =
+  let first = line.first and last = line.last in
+  let delim_start = if open_marker then start + 1 else start in
+  let char = s.[delim_start] in
+  let run_last = Match.run_of ~char ~last s ~start:(delim_start + 1) in
+  let count = run_last - delim_start + 1 in
+  let marker_last = if close_marker then run_last + 1 else run_last in
   let prev_uchar = Match.prev_uchar s ~first ~before:start in
-  let next_uchar = Match.next_uchar s ~last ~after:run_last in
+  let next_uchar = Match.next_uchar s ~last ~after:marker_last in
   let prev_white = Cmarkit_data.is_unicode_whitespace prev_uchar in
   let next_white = Cmarkit_data.is_unicode_whitespace next_uchar in
   let prev_punct = Cmarkit_data.is_unicode_punctuation prev_uchar in
@@ -184,12 +192,18 @@ let try_add_emphasis_token ?oymarkit_mod acc s line ~start =
   let is_right_flanking =
     not prev_white && (not prev_punct || (next_white || next_punct))
   in
-  let next = run_last + 1 in
+  let next = marker_last + 1 in
   if not is_left_flanking && not is_right_flanking then acc, next else
   let may_open, may_close =
     match oymarkit_mod with
     | Some oymarkit_mod when is_oymarkit_enabled () ->
-        begin Oymarkit_mod.emphasis_may_open_close oymarkit_mod ~char
+        begin let role =
+          match open_marker, close_marker with
+          | true, false -> Oymarkit_mod.Opener_only
+          | false, true -> Oymarkit_mod.Closer_only
+          | _ -> Oymarkit_mod.Any
+        in
+        Oymarkit_mod.emphasis_may_open_close oymarkit_mod ~role ~char
           ~is_left_flanking ~is_right_flanking ~prev_white ~next_white
           ~prev_punct ~next_punct
         end [@ocamlformat "enable"]
@@ -207,7 +221,34 @@ let try_add_emphasis_token ?oymarkit_mod acc s line ~start =
         may_open, may_close
   in
   if not may_open && not may_close then acc, next else
-  Emphasis_marks { start; char; count; may_open; may_close } :: acc, next
+  Emphasis_marks
+    { start = delim_start; char; count; may_open; may_close; open_marker;
+      close_marker } [@ocamlformat "enable"]
+  :: acc, next
+[@@@ocamlformat "enable"]
+
+let try_add_marked_emphasis_opener_token oymarkit_mod acc s line ~start =
+  let next = start + 1 in
+  if
+    next > line.last
+    || (not (Oymarkit_mod.marked_emphasis_delims oymarkit_mod))
+    || not (s.[next] = '*' || s.[next] = '_')
+  then (acc, next)
+  else try_add_emphasis_token ~oymarkit_mod ~open_marker:true acc s line ~start
+
+let try_add_marked_emphasis_closer_token oymarkit_mod acc s line ~start =
+  let run_last =
+    Match.run_of ~char:s.[start] ~last:line.last s ~start:(start + 1)
+  in
+  let marker = run_last + 1 in
+  if
+    marker > line.last
+    || (not (Oymarkit_mod.marked_emphasis_delims oymarkit_mod))
+    || s.[marker] <> '}'
+  then try_add_emphasis_token ~oymarkit_mod acc s line ~start
+  else try_add_emphasis_token ~oymarkit_mod ~close_marker:true acc s line ~start
+
+[@@@ocamlformat "disable"]
 
 let try_add_strikethrough_marks_token acc s line ~start =
   let first = line.first and last = line.last and char = s.[start] in
@@ -261,7 +302,20 @@ let tokenize ?oymarkit_mod ~exts s lines =
             in a code span or not. This is the reason why this comes
             after the case for '`'. *)
         acc, k + 1
-    | '*' | '_' -> try_add_emphasis_token ?oymarkit_mod acc s line ~start:k
+    | '{' ->
+        begin match oymarkit_mod with
+        | Some oymarkit_mod when is_oymarkit_enabled () ->
+            try_add_marked_emphasis_opener_token oymarkit_mod acc s line
+              ~start:k
+        | _ -> acc, k + 1
+        end
+    | '*' | '_' ->
+        begin match oymarkit_mod with
+        | Some oymarkit_mod when is_oymarkit_enabled () ->
+            try_add_marked_emphasis_closer_token oymarkit_mod acc s line
+              ~start:k
+        | _ -> try_add_emphasis_token acc s line ~start:k
+        end
     | ']' -> Right_brack { start = k } :: acc, k + 1
     | '[' -> Link_start { start = k; image = false } :: acc, k + 1
     | '!' -> try_add_image_link_start_token acc s line ~start:k
@@ -335,9 +389,9 @@ let link_token p ~first ~last ~first_line ~last_line ~image link =
   let inline = if image then Inline.Image link else Inline.Link link in
   Inline { start = first; inline; endline = last_line; next = last + 1 }
 
-let emphasis_token p ~first ~last ~first_line ~last_line ~strong emph =
+let emphasis_token p ?delim ~first ~last ~first_line ~last_line ~strong emph =
   let textloc = textloc_of_lines p ~first ~last ~first_line ~last_line in
-  let delim = p.i.[first] in
+  let delim = match delim with None -> p.i.[first] | Some delim -> delim in
   let e = { Inline.Emphasis.delim; inline = emph}, meta p textloc in
   let i = if strong then Inline.Strong_emphasis e else Inline.Emphasis e in
   Inline { start = first; inline = i ; endline = last_line; next = last + 1 }
@@ -715,8 +769,10 @@ and try_emphasis p start_toks start_line ~opener =
   | Either.Right (toks, line, used, emph_toks, closer) ->
       let text_first = start + opener.count in
       let text_last = closer.start - 1 (* XXX prev line ? *) in
-      let first = text_first - used in
-      let last = closer.start + used - 1 in
+      let open_marker_width = if opener.open_marker then 1 else 0 in
+      let close_marker_width = if closer.close_marker then 1 else 0 in
+      let first = text_first - used - open_marker_width in
+      let last = closer.start + used - 1 + close_marker_width in
       let first_line = start_line and last_line = line in
       let emph =
         let text_start =
@@ -737,7 +793,8 @@ and try_emphasis p start_toks start_line ~opener =
       in
       let toks =
         let strong = used = 2 in
-        emphasis_token p ~first ~last ~first_line ~last_line ~strong emph ::
+        emphasis_token p ~delim:opener.char ~first ~last ~first_line
+          ~last_line ~strong emph ::
         toks
       in
       let toks =

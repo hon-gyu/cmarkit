@@ -71,7 +71,10 @@ module Oymarkit_mod = struct
     emphasis_delims : delim_set;
     strong_emphasis_delims : delim_set;
     intraword_emphasis : bool;
+    marked_emphasis_delims : bool;
   }
+
+  type emphasis_role = Any | Opener_only | Closer_only
 
   let parse_emph_delims (delims : char list) : (delim_set, string) result =
     let exception Early_return of string in
@@ -90,7 +93,8 @@ module Oymarkit_mod = struct
       try Ok (loop false false delims) with
       | Early_return msg -> Error msg
 
-  let make ~emphasis_delims ~strong_emphasis_delims ~intraword_emphasis =
+  let make ~emphasis_delims ~strong_emphasis_delims ~intraword_emphasis
+      ~marked_emphasis_delims =
     let emphasis_delims =
       match parse_emph_delims emphasis_delims with
       | Ok delims -> delims
@@ -101,7 +105,8 @@ module Oymarkit_mod = struct
       | Ok delims -> delims
       | Error msg -> failwith (Printf.sprintf "strong_emphasis_delims: %s" msg)
     in
-    { emphasis_delims; strong_emphasis_delims; intraword_emphasis }
+    { emphasis_delims; strong_emphasis_delims; intraword_emphasis;
+      marked_emphasis_delims }
 
   let delim_allowed delims = function
     | '*' -> delims.star
@@ -121,8 +126,8 @@ module Oymarkit_mod = struct
     else if delim_allowed t.emphasis_delims char then Some 1
     else None
 
-  let emphasis_may_open_close t ~char ~is_left_flanking ~is_right_flanking
-      ~prev_white ~next_white ~prev_punct ~next_punct =
+  let emphasis_may_open_close t ~role ~char ~is_left_flanking
+      ~is_right_flanking ~prev_white ~next_white ~prev_punct ~next_punct =
     let may_open =
       (char = '*' && is_left_flanking) ||
       (char = '_' && is_left_flanking &&
@@ -133,12 +138,20 @@ module Oymarkit_mod = struct
       (char = '_' && is_right_flanking &&
         (not is_left_flanking || next_punct))
     in
-    if t.intraword_emphasis then (may_open, may_close)
-    else
-      let intraword =
-        not (prev_white || next_white || prev_punct || next_punct)
-      in
-      if intraword then (false, false) else (may_open, may_close)
+    let may_open, may_close =
+      if t.intraword_emphasis then (may_open, may_close)
+      else
+        let intraword =
+          not (prev_white || next_white || prev_punct || next_punct)
+        in
+        if intraword then (false, false) else (may_open, may_close)
+    in
+    match role with
+    | Any -> may_open, may_close
+    | Opener_only -> may_open, false
+    | Closer_only -> false, may_close
+
+  let marked_emphasis_delims t = t.marked_emphasis_delims
 end
 
 [@@@ocamlformat "disable"]
@@ -179,12 +192,13 @@ let parser
     ?(emphasis_delims = [ '*'; '_' ])
     ?(strong_emphasis_delims = [ '*'; '_' ])
     ?(intraword_emphasis = true)
+    ?(marked_emphasis_delims = false)
     (* Oymarkit end *)
     ~strict i
   =
   let oymarkit_mod =
     Oymarkit_mod.make ~emphasis_delims ~strong_emphasis_delims
-      ~intraword_emphasis
+      ~intraword_emphasis ~marked_emphasis_delims
   in
   let nolocs = not locs and nolayout = not layout and exts = not strict in
   { file; i; buf = Buffer.create 512; exts; nolocs; nolayout;
