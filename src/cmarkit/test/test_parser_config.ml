@@ -43,4 +43,19 @@ let () =
   | i -> fail_inline "parser should accept '*' as a strong delimiter" i
 
 let () =
+  match inline_of_string ~strong_emphasis_width:1 "*jia*" with
+  | Inline.Strong_emphasis ({ inline = Inline.Text ("jia", _); _ }, _) -> ()
+  | i -> fail_inline "parser should accept one-character strong emphasis" i
+
+let () =
+  match
+    inline_of_string ~strong_emphasis_width:1
+      ~strong_emphasis_delims:[ '*' ] "_jia_"
+  with
+  | Inline.Emphasis ({ inline = Inline.Text ("jia", _); _ }, _) -> ()
+  | i ->
+      fail_inline
+        "parser should keep disallowed one-character strong as emphasis" i
+
+let () =
   print_endline "EOF"

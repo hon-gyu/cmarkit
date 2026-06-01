@@ -182,6 +182,17 @@ let () =
   print_newline ()
 
 let () =
+  show_sep ~title:"strong emphasis width parse" ();
+  show_sep ~h2:true ~title:"default" ();
+  print_sexp ([%sexp_of: inline] (Inline_parse_api.of_string "*hello*"));
+  print_newline ();
+  show_sep ~h2:true ~title:"strong_emphasis_width:1" ();
+  print_sexp
+    ([%sexp_of: inline]
+       (Inline_parse_api.of_string ~strong_emphasis_width:1 "*hello*"));
+  print_newline ()
+
+let () =
   show_sep ~title:"marked emphasis delimiter commonmark rendering" ();
   show_sep ~h2:true ~title:"without markers" ();
   print_string

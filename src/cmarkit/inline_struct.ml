@@ -737,19 +737,20 @@ and find_emphasis_text p toks line ~opener =
               ~char:opener.char ~opener_count:opener.count
               ~closer_count:marks.count
           with
-          | Some used ->
+          | Some { used; strong } ->
               let to_last = marks.start - 1 in
               let acc = rev_tokens_and_shorten_last_line ~to_last [] acc in
-              Either.Right (toks, line, used, acc, marks)
+              Either.Right (toks, line, used, strong, acc, marks)
           | None ->
               if has_emphasis_closer ~char:opener.char ~after p.cidx
               then loop p toks line (t :: acc) ~opener
               else Either.Left (List.rev_append (t :: acc) toks)
         end else begin
           let used = if marks.count >= 2 && opener.count >= 2 then 2 else 1 in
+          let strong = used = 2 in
           let to_last = marks.start - 1 in
           let acc = rev_tokens_and_shorten_last_line ~to_last [] acc in
-          Either.Right (toks, line, used, acc, marks)
+          Either.Right (toks, line, used, strong, acc, marks)
         end
       else if marks.may_open && marks_has_precedence p ~marks ~opener then
         match try_emphasis p toks line ~opener:marks with
@@ -770,7 +771,7 @@ and try_emphasis p start_toks start_line ~opener =
   then Either.Left start_toks else
   match find_emphasis_text p start_toks start_line ~opener with
   | Either.Left _ as r -> r
-  | Either.Right (toks, line, used, emph_toks, closer) ->
+  | Either.Right (toks, line, used, strong, emph_toks, closer) ->
       let text_first = start + opener.count in
       let text_last = closer.start - 1 (* XXX prev line ? *) in
       let open_marker_width = if opener.open_marker then 1 else 0 in
@@ -796,7 +797,6 @@ and try_emphasis p start_toks start_line ~opener =
         Emphasis_marks { closer with start = last + 1; count } :: toks
       in
       let toks =
-        let strong = used = 2 in
         emphasis_token p ~delim:opener.char ~first ~last ~first_line
           ~last_line ~strong ~open_marker:opener.open_marker
           ~close_marker:closer.close_marker emph ::

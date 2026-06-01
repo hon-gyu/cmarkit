@@ -72,9 +72,11 @@ module Oymarkit_mod = struct
     strong_emphasis_delims : delim_set;
     intraword_emphasis : bool;
     marked_emphasis_delims : bool;
+    strong_emphasis_width : int;
   }
 
   type emphasis_role = Any | Opener_only | Closer_only
+  type emphasis_match = { used : int; strong : bool }
 
   let parse_emph_delims (delims : char list) : (delim_set, string) result =
     let exception Early_return of string in
@@ -94,7 +96,7 @@ module Oymarkit_mod = struct
       | Early_return msg -> Error msg
 
   let make ~emphasis_delims ~strong_emphasis_delims ~intraword_emphasis
-      ~marked_emphasis_delims =
+      ~marked_emphasis_delims ~strong_emphasis_width =
     let emphasis_delims =
       match parse_emph_delims emphasis_delims with
       | Ok delims -> delims
@@ -105,8 +107,10 @@ module Oymarkit_mod = struct
       | Ok delims -> delims
       | Error msg -> failwith (Printf.sprintf "strong_emphasis_delims: %s" msg)
     in
+    if strong_emphasis_width <> 1 && strong_emphasis_width <> 2
+    then failwith "strong_emphasis_width: must be 1 or 2";
     { emphasis_delims; strong_emphasis_delims; intraword_emphasis;
-      marked_emphasis_delims }
+      marked_emphasis_delims; strong_emphasis_width }
 
   let delim_allowed delims = function
     | '*' -> delims.star
@@ -120,10 +124,12 @@ module Oymarkit_mod = struct
      as nested emphasis. *)
   let emphasis_match_used t ~char ~opener_count ~closer_count =
     if
-      closer_count >= 2 && opener_count >= 2
+      closer_count >= t.strong_emphasis_width
+      && opener_count >= t.strong_emphasis_width
       && delim_allowed t.strong_emphasis_delims char
-    then Some 2
-    else if delim_allowed t.emphasis_delims char then Some 1
+    then Some { used = t.strong_emphasis_width; strong = true }
+    else if delim_allowed t.emphasis_delims char
+    then Some { used = 1; strong = false }
     else None
 
   let emphasis_may_open_close t ~role ~char ~is_left_flanking
@@ -193,12 +199,13 @@ let parser
     ?(strong_emphasis_delims = [ '*'; '_' ])
     ?(intraword_emphasis = true)
     ?(marked_emphasis_delims = false)
+    ?(strong_emphasis_width = 2)
     (* Oymarkit end *)
     ~strict i
   =
   let oymarkit_mod =
     Oymarkit_mod.make ~emphasis_delims ~strong_emphasis_delims
-      ~intraword_emphasis ~marked_emphasis_delims
+      ~intraword_emphasis ~marked_emphasis_delims ~strong_emphasis_width
   in
   let nolocs = not locs and nolayout = not layout and exts = not strict in
   { file; i; buf = Buffer.create 512; exts; nolocs; nolayout;

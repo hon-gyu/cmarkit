@@ -37,11 +37,11 @@ let line_spans s =
 (* Inline-level analogue of {!Doc.of_string}. *)
 let of_string ?defs ?resolver ?nested_links ?heading_auto_ids ?layout ?locs
     ?file ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis
-    ?marked_emphasis_delims ?(strict = true) s =
+    ?marked_emphasis_delims ?strong_emphasis_width ?(strict = true) s =
   let p =
     parser ?defs ?resolver ?nested_links ?heading_auto_ids ?layout ?locs ?file
       ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis
-      ?marked_emphasis_delims ~strict s
+      ?marked_emphasis_delims ?strong_emphasis_width ~strict s
   in
   let _layout, inline = Inline_struct.parse p (line_spans s) in
   inline

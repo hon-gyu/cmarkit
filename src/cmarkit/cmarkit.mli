@@ -1379,7 +1379,8 @@ module Doc : sig
     ?heading_auto_ids:bool -> ?layout:bool -> ?locs:bool ->
     ?file:Textloc.fpath -> ?emphasis_delims:char list ->
     ?strong_emphasis_delims:char list -> ?intraword_emphasis:bool ->
-    ?marked_emphasis_delims:bool -> ?strict:bool -> string -> t
+    ?marked_emphasis_delims:bool -> ?strong_emphasis_width:int ->
+    ?strict:bool -> string -> t
     (** [of_string md] is a document from the UTF-8 encoded CommonMark
         document [md].
 
@@ -1429,6 +1430,9 @@ module Doc : sig
    {- If [marked_emphasis_delims] is [true], [{*] and [{_] mark emphasis
        delimiters as opener-only, and [*}] and [_}] mark them as closer-only.
        The default is [false], which preserves CommonMark behavior.}
+   {- [strong_emphasis_width] specifies how many delimiter characters are
+      consumed from each side to form strong emphasis. It must be [1] or [2].
+      The default is [2], which preserves CommonMark behavior.}
    {- If [resolver] is provided this is used resolve label definitions
       and references. See {{!Label.resolvers}here} for details. Defaults to
       {!Label.default_resolver}.}

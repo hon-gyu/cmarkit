@@ -69,6 +69,16 @@ marked_emphasis_delims:true
 ----------
 (Emphasis (Text hello))
 
+strong emphasis width parse
+==========
+default
+----------
+(Emphasis (Text hello))
+
+strong_emphasis_width:1
+----------
+(Strong_emphasis (Text hello))
+
 marked emphasis delimiter commonmark rendering
 ==========
 without markers
