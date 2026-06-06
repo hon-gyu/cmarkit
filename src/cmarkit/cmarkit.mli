@@ -1203,6 +1203,22 @@ module Block : sig
     (** [items l] are the items of [l]. *)
   end
 
+  (** Obsidian-style block identifiers. *)
+  module Block_id : sig
+    type t
+    (** The type for a block identifier parsed from a terminal caret suffix
+        such as [^block-id]. *)
+
+    val id : t -> string
+    (** [id t] is the identifier without the caret marker. *)
+
+    val marker : t -> Meta.t
+    (** [marker t] is the metadata for the caret marker and identifier. *)
+
+    val find : Meta.t -> t option
+    (** [find meta] is the block identifier attached to [meta], if any. *)
+  end
+
   (** Paragraphs. *)
   module Paragraph : sig
 
@@ -1422,6 +1438,7 @@ module Doc : sig
     ?strong_emphasis_delims:char list -> ?intraword_emphasis:bool ->
     ?marked_emphasis_delims:bool -> ?strong_emphasis_width:int ->
     ?extra_inline_containers:Inline.Extra_inline_container.Config.t ->
+    ?block_id:bool ->
     ?strict:bool -> string -> t
     (** [of_string md] is a document from the UTF-8 encoded CommonMark
         document [md].
@@ -1478,6 +1495,12 @@ module Doc : sig
    {- [extra_inline_containers] configures which oymarkit extra inline
       containers are parsed and whether curly braces are compulsory for each
       kind. The default is {!Inline.Extra_inline_container.Config.disabled},
+      which preserves CommonMark behavior.}
+   {- If [block_id] is [true], a terminal suffix of the form
+      [^id], where [id] starts with an ASCII alphanumeric character and
+      otherwise contains only ASCII alphanumeric characters or hyphens, is
+      attached to the paragraph metadata as a {!Block.Block_id.t}. The marker
+      remains part of the paragraph inline content. The default is [false],
       which preserves CommonMark behavior.}
    {- If [resolver] is provided this is used resolve label definitions
       and references. See {{!Label.resolvers}here} for details. Defaults to

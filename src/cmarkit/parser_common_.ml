@@ -75,6 +75,7 @@ module Oymarkit_mod = struct
     marked_emphasis_delims : bool;
     strong_emphasis_width : int;
     extra_inline_containers : Inline.Extra_inline_container.Config.t;
+    block_id : bool;
   }
 
   type emphasis_role = Any | Opener_only | Closer_only
@@ -98,7 +99,8 @@ module Oymarkit_mod = struct
       | Early_return msg -> Error msg
 
   let make ~emphasis_delims ~strong_emphasis_delims ~intraword_emphasis
-      ~marked_emphasis_delims ~strong_emphasis_width ~extra_inline_containers =
+      ~marked_emphasis_delims ~strong_emphasis_width ~extra_inline_containers
+      ~block_id =
     let emphasis_delims =
       match parse_emph_delims emphasis_delims with
       | Ok delims -> delims
@@ -112,7 +114,8 @@ module Oymarkit_mod = struct
     if strong_emphasis_width <> 1 && strong_emphasis_width <> 2
     then failwith "strong_emphasis_width: must be 1 or 2";
     { emphasis_delims; strong_emphasis_delims; intraword_emphasis;
-      marked_emphasis_delims; strong_emphasis_width; extra_inline_containers }
+      marked_emphasis_delims; strong_emphasis_width; extra_inline_containers;
+      block_id }
 
   let delim_allowed delims = function
     | '*' -> delims.star
@@ -162,6 +165,8 @@ module Oymarkit_mod = struct
   let marked_emphasis_delims t = t.marked_emphasis_delims
   let extra_inline_container_syntax t kind =
     Inline.Extra_inline_container.Config.syntax t.extra_inline_containers kind
+
+  let block_id t = t.block_id
 end
 
 [@@@ocamlformat "disable"]
@@ -205,13 +210,14 @@ let parser
     ?(marked_emphasis_delims = false)
     ?(strong_emphasis_width = 2)
     ?(extra_inline_containers = Inline.Extra_inline_container.Config.disabled)
+    ?(block_id = false)
     (* Oymarkit end *)
     ~strict i
   =
   let oymarkit_mod =
     Oymarkit_mod.make ~emphasis_delims ~strong_emphasis_delims
       ~intraword_emphasis ~marked_emphasis_delims ~strong_emphasis_width
-      ~extra_inline_containers
+      ~extra_inline_containers ~block_id
   in
   let nolocs = not locs and nolayout = not layout and exts = not strict in
   { file; i; buf = Buffer.create 512; exts; nolocs; nolayout;

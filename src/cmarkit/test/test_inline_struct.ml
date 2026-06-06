@@ -153,6 +153,16 @@ let commonmark_of_inline inline =
   inline |> Block.Paragraph.make |> fun p ->
   Block.Paragraph (p, Meta.none) |> Doc.make |> Cmarkit_commonmark.of_doc
 
+let block_id_meta meta =
+  match Block.Block_id.find meta with
+  | None -> None
+  | Some block_id ->
+      Some
+        (Sexplib0.Sexp.List
+           [ Sexplib0.Sexp.Atom "block-id"
+           ; Sexplib0.Sexp.Atom (Block.Block_id.id block_id)
+           ])
+
 let extra_inline_container kind inline =
   Inline.Ext_extra_inline_container
     (Inline.Extra_inline_container.make kind inline, Meta.none)
@@ -181,6 +191,26 @@ let () =
       in
       [%sexp_of: (byte_pos * string) * inline] res)
     ()
+
+let () =
+  show_sep ~title:"block ID paragraph suffix" ();
+  let sexp_of = Sexp.make_sexp_of ~metas:[ block_id_meta ] () in
+  let parse title markdown =
+    with_output ~h2:true ~title
+      ~f:(fun () ->
+        markdown
+        |> Doc.of_string ~block_id:true
+        |> sexp_of.doc
+        |> print_sexp)
+      ()
+  in
+  parse "terminal suffix" "text ^block-id";
+  parse "last candidate wins" "a ^x ^final1";
+  parse "multiline final line" "first\nsecond ^final";
+  parse "non-final candidate" "first ^not-final\nsecond";
+  parse "invalid underscore" "text ^block_id";
+  parse "escaped caret" "text \\^block-id";
+  parse "list item paragraph" "- item ^item-id"
 
 let () =
   show_sep ~title:"intraword emphasis knob tokenization" ();

@@ -2,6 +2,37 @@ basic inline parse
 ==========
 ((0 "") (Emphasis (Text hello)))
 
+block ID paragraph suffix
+==========
+terminal suffix
+----------
+((Paragraph (Text "text ^block-id")) (meta (block-id block-id)))
+
+last candidate wins
+----------
+((Paragraph (Text "a ^x ^final1")) (meta (block-id final1)))
+
+multiline final line
+----------
+((Paragraph (Inlines (Text first) (Break soft) (Text "second ^final")))
+ (meta (block-id final)))
+
+non-final candidate
+----------
+(Paragraph (Inlines (Text "first ^not-final") (Break soft) (Text second)))
+
+invalid underscore
+----------
+(Paragraph (Text "text ^block_id"))
+
+escaped caret
+----------
+(Paragraph (Text "text ^block-id"))
+
+list item paragraph
+----------
+(List ((Paragraph (Text "item ^item-id")) (meta (block-id item-id))))
+
 intraword emphasis knob tokenization
 ==========
 default

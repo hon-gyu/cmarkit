@@ -160,6 +160,16 @@ module List' = struct
   let items l = l.items
 end
 
+module Block_id = struct
+  type t = { id : string; marker : Meta.t }
+
+  let key : t Meta.key = Meta.key ()
+  let id t = t.id
+  let marker t = t.marker
+  let find meta = Meta.find key meta
+  let add t meta = Meta.add key t meta
+end
+
 module Paragraph = struct
   type t =
     { leading_indent : Layout.indent;

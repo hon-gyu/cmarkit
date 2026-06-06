@@ -13,6 +13,54 @@ let extra_inline_container kind inline =
   Inline.Ext_extra_inline_container
     (Inline.Extra_inline_container.make kind inline, Meta.none)
 
+let block_id_of_paragraph = function
+  | Block.Paragraph (_, meta) ->
+      Option.map Block.Block_id.id (Block.Block_id.find meta)
+  | _ -> None
+
+let rec first_block_id = function
+  | Block.Blocks (blocks, _) -> List.find_map first_block_id blocks
+  | Block.Block_quote (quote, _) ->
+      first_block_id (Block.Block_quote.block quote)
+  | Block.List (list, _) ->
+      List.find_map
+        (fun (item, _) -> first_block_id (Block.List_item.block item))
+        (Block.List'.items list)
+  | block -> block_id_of_paragraph block
+
+let parsed_block_id ?block_id markdown =
+  markdown |> Doc.of_string ?block_id |> Doc.block |> first_block_id
+
+let () =
+  match parsed_block_id "text ^block-id" with
+  | None -> ()
+  | Some id ->
+      failwith (Fmt.str "default parser unexpectedly parsed block ID %S" id)
+
+let () =
+  match parsed_block_id ~block_id:true "text ^block-id" with
+  | Some "block-id" -> ()
+  | Some id -> failwith (Fmt.str "parser returned wrong block ID %S" id)
+  | None -> failwith "parser did not recognize terminal block ID"
+
+let () =
+  match
+    ( parsed_block_id ~block_id:true "text ^block_id",
+      parsed_block_id ~block_id:true "text \\^block-id",
+      parsed_block_id ~block_id:true "text ^block-id more" )
+  with
+  | None, None, None -> ()
+  | _ -> failwith "parser accepted an invalid block ID suffix"
+
+let () =
+  match
+    ( parsed_block_id ~block_id:true "first ^not-final\nsecond",
+      parsed_block_id ~block_id:true "first\nsecond ^final",
+      parsed_block_id ~block_id:true "- item ^item-id" )
+  with
+  | None, Some "final", Some "item-id" -> ()
+  | _ -> failwith "parser mishandled block ID ownership or final-line rules"
+
 let () =
   match inline_of_string "__jia__" with
   | Inline.Strong_emphasis ({ inline = Inline.Text ("jia", _); _ }, _) -> ()

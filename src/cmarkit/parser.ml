@@ -901,10 +901,47 @@ let block_struct_to_html_block p (b : Block_struct.html_block) =
   let meta = meta p (Textloc.set_last start_loc ~last_byte ~last_line) in
   Block.Html_block (lines, meta)
 
+let paragraph_block_id p (par : Block_struct.paragraph) =
+  if not (Oymarkit_mod.block_id p.oymarkit_mod) then None else
+  let line = List.hd par.lines in
+  let first = line.first in
+  let last = Match.last_non_blank p.i ~first ~start:line.last in
+  let rec identifier_start k =
+    if k < first then first else
+    match p.i.[k] with
+    | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '-' ->
+        identifier_start (k - 1)
+    | _ -> k + 1
+  in
+  let id_first = identifier_start last in
+  let caret = id_first - 1 in
+  let valid_first =
+    id_first <= last &&
+    match p.i.[id_first] with
+    | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' -> true
+    | _ -> false
+  in
+  let rec preceding_backslashes k count =
+    if k >= first && p.i.[k] = '\\'
+    then preceding_backslashes (k - 1) (count + 1)
+    else count
+  in
+  if caret < first || p.i.[caret] <> '^' || not valid_first ||
+     preceding_backslashes (caret - 1) 0 mod 2 <> 0
+  then None else
+  let id_string = String.sub p.i id_first (last - id_first + 1) in
+  let span = { line with first = caret; last } in
+  Some Block.Block_id.
+    { id = id_string; marker = meta p (textloc_of_span p span) }
+
 let block_struct_to_paragraph p par =
   let layout, inline = Inline_struct.parse p par.Block_struct.lines in
   let leading_indent, trailing_blanks = layout in
-  let meta = Inline.meta inline in
+  let meta =
+    match paragraph_block_id p par with
+    | None -> Inline.meta inline
+    | Some block_id -> Block.Block_id.add block_id (Inline.meta inline)
+  in
   Block.Paragraph ({ leading_indent; inline; trailing_blanks }, meta)
 
 let block_struct_to_thematic_break p indent span =
