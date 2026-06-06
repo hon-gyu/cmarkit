@@ -91,6 +91,43 @@ let (raw_html_egs : Inline.t list) =
 
 (* TODO: extension strikethrough and math_span *)
 
+(* Code spans have no witness when rendered flush against each other: the
+   closing backtick fence of one and the opening fence of the next merge into a
+   single longer run, which can't match either fence length, so the parser reads
+   a single span (or literal backticks) — never two adjacent ones. Unlike
+   emphasis there is no marker escape, so the only sound move is to not place
+   them adjacently. [starts_with_code_span]/[ends_with_code_span] detect a bare
+   code-span fence at an inline's rendered boundary (descending into the
+   first/last child of an [Inlines]; emphasis/links/etc. shield their content
+   behind their own delimiters, so they never expose one). They run on the
+   {e normalized} element, which (with normalize now flattening fully) is a flat
+   list with rendered-empty filler spliced away. *)
+let rec starts_with_code_span = function
+  | Inline.Code_span _ -> true
+  | Inline.Inlines (i :: _, _) -> starts_with_code_span i
+  | _ -> false
+
+let rec ends_with_code_span = function
+  | Inline.Code_span _ -> true
+  | Inline.Inlines (is, _) -> (
+      match List.rev is with last :: _ -> ends_with_code_span last | [] -> false)
+  | _ -> false
+
+(* Drop any element that would render flush against a preceding code span. An
+   element that normalizes to empty renders to nothing (the parser sees straight
+   through it), so it neither separates nor fuses. The original (un-normalized)
+   element is kept, preserving nesting variety in the corpus. *)
+let drop_fusing_code_spans (is : Inline.t list) : Inline.t list =
+  let rec loop trailing_cs acc = function
+    | [] -> List.rev acc
+    | e :: es ->
+        let n = Inline.normalize e in
+        if Inline.is_empty n then loop trailing_cs (e :: acc) es
+        else if trailing_cs && starts_with_code_span n then loop trailing_cs acc es
+        else loop (ends_with_code_span n) (e :: acc) es
+  in
+  loop false [] is
+
 module Iconfig = struct
   type t = {
     w_text : int;
@@ -123,6 +160,11 @@ module Iconfig = struct
             ([{_a_}{_b_}]) the boundary is explicit. Pairs with the parser's
             [marked_emphasis_delims]; consumers must enable that knob when
             reparsing. *)
+    no_adjacent_code_spans : bool;
+        (** Never place a code span flush against a preceding one within an
+            [Inlines]. Two adjacent code spans have no CommonMark witness — their
+            backtick fences merge into a single run — and there is no marker
+            escape as there is for emphasis. *)
   }
 
   let default =
@@ -143,6 +185,7 @@ module Iconfig = struct
       no_nested_link = false;
       different_delim_char_for_emph_and_strong_empha = false;
       marked_emphasis = false;
+      no_adjacent_code_spans = false;
     }
 
   let typed =
@@ -152,6 +195,7 @@ module Iconfig = struct
       no_nested_link = true;
       different_delim_char_for_emph_and_strong_empha = true;
       marked_emphasis = true;
+      no_adjacent_code_spans = true;
     }
 end
 
@@ -201,7 +245,10 @@ let gen_inline (ic : Iconfig.t) : Inline.t G.t =
     match n with
     | 0 -> gen_leaf ic
     | n ->
-        let inlines_of_is is = Inline.Inlines (is, Meta.none) in
+        let inlines_of_is is =
+          let is = if ic.no_adjacent_code_spans then drop_fusing_code_spans is else is in
+          Inline.Inlines (is, Meta.none)
+        in
         let emphasis_ic =
           if ic.no_empty_emphasis then
             { ic with no_empty_inlines = true; no_empty_emphasis = true }

@@ -78,3 +78,27 @@ let () =
        ~print:pp_inline
        (gen { GI.Iconfig.default with no_empty_emphasis = false })
        TI.no_empty_emphasis
+
+(* no_adjacent_code_spans
+   ---------------------- *)
+
+(* Code spans are sparse under the default weights, so bias the distribution
+   towards them to give adjacency a chance to appear (positive case) and to be
+   reliably falsified (negative case). *)
+let code_span_heavy = { GI.Iconfig.default with w_code_span = 8; w_inlines = 4 }
+
+let () =
+  run
+  @@ QCheck2.Test.make
+       ~name:"no_adjacent_code_spans enabled ==> no two code spans are adjacent"
+       ~count ~print:pp_inline
+       (gen { code_span_heavy with no_adjacent_code_spans = true })
+       TI.no_adjacent_code_spans
+
+let () =
+  run
+  @@ QCheck2.Test.make_neg
+       ~name:"no_adjacent_code_spans disabled ==> adjacent code spans occur"
+       ~count ~print:pp_inline
+       (gen { code_span_heavy with no_adjacent_code_spans = false })
+       TI.no_adjacent_code_spans
