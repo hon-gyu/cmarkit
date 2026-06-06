@@ -2,7 +2,6 @@ basic inline parse
 ==========
 ((0 "") (Emphasis (Text hello)))
 
-
 intraword emphasis knob tokenization
 ==========
 default
@@ -110,6 +109,8 @@ optional curly shorthand
 ----------
 (Extra_inline_container Highlight (Text hello))
 
+extra inline container precedence
+==========
 first closed opener wins
 ----------
 (Inlines (Extra_inline_container Highlight (Text "a ^b")) (Text " c^"))

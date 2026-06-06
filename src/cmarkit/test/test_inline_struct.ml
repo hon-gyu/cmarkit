@@ -122,6 +122,17 @@ let print_sexp sexp = Format.printf "%a@." Sexplib0.Sexp.pp_hum sexp
 let print_tokens (tokens : token list) =
   print_sexp ([%sexp_of: token list] tokens)
 
+let with_output ?(h2 = false) ~title ~f () =
+  show_sep ~h2 ~title ();
+  f ();
+  print_newline ()
+
+let with_sexp ?(h2 = false) ~title ~f () =
+  with_output ~h2 ~title ~f:(fun () -> print_sexp (f ())) ()
+
+let with_inline ?(h2 = false) ~title ~f () =
+  with_sexp ~h2 ~title ~f:(fun () -> [%sexp_of: inline] (f ())) ()
+
 module Extra_config = Inline.Extra_inline_container.Config
 
 let tokens_of_string ?intraword_emphasis ?marked_emphasis_delims
@@ -147,195 +158,155 @@ let extra_inline_container kind inline =
     (Inline.Extra_inline_container.make kind inline, Meta.none)
 
 let () =
-  show_sep ~title:"basic inline parse" ();
-  let s = "*hello*" in
-  let line_spans = Inline_parse_api.line_spans s in
-  let parser = Cmarkit_.Parser_common.parser ~strict:true s in
-  (* let (res : (byte_pos * string) * inline) = parse parser line_spans in *)
-  let (res : (byte_pos * string) * inline) =
-    begin
-      let p, lines = (parser, line_spans) in
-      let layout, meta, lines = strip_paragraph p lines in
-      let cidx, toks, first_line =
-        tokenize ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i lines
+  with_sexp ~title:"basic inline parse" ~f:(fun () ->
+      let s = "*hello*" in
+      let line_spans = Inline_parse_api.line_spans s in
+      let parser = Cmarkit_.Parser_common.parser ~strict:true s in
+      let (res : (byte_pos * string) * inline) =
+        let p, lines = (parser, line_spans) in
+        let layout, meta, lines = strip_paragraph p lines in
+        let cidx, toks, first_line =
+          tokenize ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i lines
+        in
+        p.cidx <- cidx;
+        let toks, _had_link = first_pass p toks first_line in
+        let toks = second_pass p toks first_line in
+        let is = last_pass p toks first_line in
+        let inline =
+          match is with
+          | [ i ] -> i
+          | is -> Inline.Inlines (is, meta)
+        in
+        (layout, inline)
       in
-      p.cidx <- cidx;
-      (* let is, _had_link = parse_tokens p toks first_line in *)
-      let is, _had_link =
-        begin
-          let toks, had_link = first_pass p toks first_line in
-          let toks = second_pass p toks first_line in
-          (last_pass p toks first_line, had_link)
-        end
-      in
-      let inline =
-        match is with
-        | [ i ] -> i
-        | is -> Inline.Inlines (is, meta)
-      in
-      (layout, inline)
-    end
-  in
-  print_sexp ([%sexp_of: (byte_pos * string) * inline] res);
-  print_endline "\n"
+      [%sexp_of: (byte_pos * string) * inline] res)
+    ()
 
 let () =
   show_sep ~title:"intraword emphasis knob tokenization" ();
-  show_sep ~h2:true ~title:"default" ();
-  print_tokens (tokens_of_string "a*b*c");
-  print_newline ();
-  show_sep ~h2:true ~title:"intraword_emphasis:false" ();
-  print_tokens (tokens_of_string ~intraword_emphasis:false "a*b*c");
-  print_newline ();
-  show_sep ~h2:true ~title:"boundary emphasis still tokenizes" ();
-  print_tokens (tokens_of_string ~intraword_emphasis:false "*hello*");
-  print_newline ()
+  let tokens title f =
+    with_output ~h2:true ~title ~f:(fun () -> print_tokens (f ())) ()
+  in
+  tokens "default" (fun () -> tokens_of_string "a*b*c");
+  tokens "intraword_emphasis:false" (fun () ->
+      tokens_of_string ~intraword_emphasis:false "a*b*c");
+  tokens "boundary emphasis still tokenizes" (fun () ->
+      tokens_of_string ~intraword_emphasis:false "*hello*")
 
 let () =
   show_sep ~title:"marked emphasis delimiter tokenization" ();
-  show_sep ~h2:true ~title:"default" ();
-  print_tokens (tokens_of_string "{_hello_}");
-  print_newline ();
-  show_sep ~h2:true ~title:"marked_emphasis_delims:true" ();
-  print_tokens (tokens_of_string ~marked_emphasis_delims:true "{_hello_}");
-  print_newline ();
-  show_sep ~h2:true ~title:"forced opener cannot close" ();
-  print_tokens (tokens_of_string ~marked_emphasis_delims:true "a{_b_");
-  print_newline ();
-  show_sep ~h2:true ~title:"forced closer cannot open" ();
-  print_tokens (tokens_of_string ~marked_emphasis_delims:true "_b_}a");
-  print_newline ()
+  let tokens title f =
+    with_output ~h2:true ~title ~f:(fun () -> print_tokens (f ())) ()
+  in
+  tokens "default" (fun () -> tokens_of_string "{_hello_}");
+  tokens "marked_emphasis_delims:true" (fun () ->
+      tokens_of_string ~marked_emphasis_delims:true "{_hello_}");
+  tokens "forced opener cannot close" (fun () ->
+      tokens_of_string ~marked_emphasis_delims:true "a{_b_");
+  tokens "forced closer cannot open" (fun () ->
+      tokens_of_string ~marked_emphasis_delims:true "_b_}a")
 
 let () =
   show_sep ~title:"marked emphasis delimiter parse" ();
-  show_sep ~h2:true ~title:"default" ();
-  print_sexp ([%sexp_of: inline] (Inline_parse_api.of_string "{_hello_}"));
-  print_newline ();
-  show_sep ~h2:true ~title:"marked_emphasis_delims:true" ();
-  print_sexp
-    ([%sexp_of: inline]
-       (Inline_parse_api.of_string ~marked_emphasis_delims:true "{_hello_}"));
-  print_newline ()
+  with_inline ~h2:true ~title:"default" ~f:(fun () ->
+      Inline_parse_api.of_string "{_hello_}") ();
+  with_inline ~h2:true ~title:"marked_emphasis_delims:true" ~f:(fun () ->
+      Inline_parse_api.of_string ~marked_emphasis_delims:true "{_hello_}") ()
 
 let () =
   show_sep ~title:"strong emphasis width parse" ();
-  show_sep ~h2:true ~title:"default" ();
-  print_sexp ([%sexp_of: inline] (Inline_parse_api.of_string "*hello*"));
-  print_newline ();
-  show_sep ~h2:true ~title:"strong_emphasis_width:1" ();
-  print_sexp
-    ([%sexp_of: inline]
-       (Inline_parse_api.of_string ~strong_emphasis_width:1 "*hello*"));
-  print_newline ()
+  with_inline ~h2:true ~title:"default" ~f:(fun () ->
+      Inline_parse_api.of_string "*hello*") ();
+  with_inline ~h2:true ~title:"strong_emphasis_width:1" ~f:(fun () ->
+      Inline_parse_api.of_string ~strong_emphasis_width:1 "*hello*") ()
 
 let () =
   show_sep ~title:"extra inline container parse" ();
-  show_sep ~h2:true ~title:"default" ();
-  print_sexp ([%sexp_of: inline] (Inline_parse_api.of_string "{=hello=}"));
-  print_newline ();
-  show_sep ~h2:true ~title:"extra_inline_containers:explicit tokens" ();
-  print_tokens
-    (tokens_of_string ~extra_inline_containers:Extra_config.explicit
-       "{=hello=}");
-  print_newline ();
-  show_sep ~h2:true ~title:"extra_inline_containers:explicit parse" ();
-  print_sexp
-    ([%sexp_of: inline]
-       (Inline_parse_api.of_string
-          ~extra_inline_containers:Extra_config.explicit "{=hello=}"));
-  print_sexp
-    ([%sexp_of: inline]
-       (Inline_parse_api.of_string
-          ~extra_inline_containers:Extra_config.explicit "{^hello^}"));
-  print_sexp
-    ([%sexp_of: inline]
-       (Inline_parse_api.of_string
-          ~extra_inline_containers:Extra_config.explicit "{~hello~}"));
-  print_sexp
-    ([%sexp_of: inline]
-       (Inline_parse_api.of_string
-          ~extra_inline_containers:Extra_config.explicit "{+hello+}"));
-  print_sexp
-    ([%sexp_of: inline]
-       (Inline_parse_api.of_string
-          ~extra_inline_containers:Extra_config.explicit "{-hello-}"));
-  print_newline ();
-  show_sep ~h2:true ~title:"nested inline payload" ();
-  print_sexp
-    ([%sexp_of: inline]
-       (Inline_parse_api.of_string
-          ~extra_inline_containers:Extra_config.explicit "{=a *b*=}"));
-  print_newline ();
-  let shorthand =
+  with_inline ~h2:true ~title:"default" ~f:(fun () ->
+      Inline_parse_api.of_string "{=hello=}") ();
+  with_output ~h2:true ~title:"extra_inline_containers:explicit tokens"
+    ~f:(fun () ->
+      tokens_of_string ~extra_inline_containers:Extra_config.explicit
+        "{=hello=}"
+      |> print_tokens)
+    ();
+  with_output ~h2:true ~title:"extra_inline_containers:explicit parse"
+    ~f:(fun () ->
+      List.iter
+        (fun source ->
+          Inline_parse_api.of_string
+            ~extra_inline_containers:Extra_config.explicit source
+          |> [%sexp_of: inline] |> print_sexp)
+        [ "{=hello=}"; "{^hello^}"; "{~hello~}"; "{+hello+}"; "{-hello-}" ])
+    ();
+  with_inline ~h2:true ~title:"nested inline payload" ~f:(fun () ->
+      Inline_parse_api.of_string
+        ~extra_inline_containers:Extra_config.explicit "{=a *b*=}")
+    ();
+  let optional =
+    Extra_config.make ~highlight:Extra_config.Curly_optional ()
+  in
+  with_inline ~h2:true ~title:"optional curly shorthand" ~f:(fun () ->
+      Inline_parse_api.of_string ~extra_inline_containers:optional "=hello=")
+    ()
+
+(** Extra inline containers obey the first-closed-opener rule. Crossing
+    delimiters do not overlap: closing the outer highlight turns the pending
+    superscript opener into text. Properly closed inner containers remain
+    nested, including containers of the same kind. *)
+let () =
+  show_sep ~title:"extra inline container precedence" ();
+  let optional =
     Extra_config.make ~highlight:Extra_config.Curly_optional
       ~superscript:Extra_config.Curly_optional ()
   in
-  show_sep ~h2:true ~title:"optional curly shorthand" ();
-  print_sexp
-    ([%sexp_of: inline]
-       (Inline_parse_api.of_string ~extra_inline_containers:shorthand
-          "=hello="));
-  print_newline ();
-  show_sep ~h2:true ~title:"first closed opener wins" ();
-  print_sexp
-    ([%sexp_of: inline]
-       (Inline_parse_api.of_string ~extra_inline_containers:shorthand
-          "=a ^b= c^"));
-  print_newline ();
-  show_sep ~h2:true ~title:"nested extra containers" ();
-  print_sexp
-    ([%sexp_of: inline]
-       (Inline_parse_api.of_string ~extra_inline_containers:shorthand
-          "=a ^b^ c="));
-  print_newline ();
-  show_sep ~h2:true ~title:"nested same-kind extra containers" ();
-  print_sexp
-    ([%sexp_of: inline]
-       (Inline_parse_api.of_string
-          ~extra_inline_containers:Extra_config.explicit
-          "{=a {=b=} c=}"));
-  print_newline ()
+  with_inline ~h2:true ~title:"first closed opener wins" ~f:(fun () ->
+      Inline_parse_api.of_string ~extra_inline_containers:optional
+        "=a ^b= c^")
+    ();
+  with_inline ~h2:true ~title:"nested extra containers" ~f:(fun () ->
+      Inline_parse_api.of_string ~extra_inline_containers:optional
+        "=a ^b^ c=")
+    ();
+  with_inline ~h2:true ~title:"nested same-kind extra containers" ~f:(fun () ->
+      Inline_parse_api.of_string
+        ~extra_inline_containers:Extra_config.explicit "{=a {=b=} c=}")
+    ()
 
 let () =
   show_sep ~title:"marked emphasis delimiter commonmark rendering" ();
-  show_sep ~h2:true ~title:"without markers" ();
-  print_string
-    (commonmark_of_inline
-       (Inline.Emphasis
-          ( Inline.Emphasis.make ~delim:'_' (Inline.Text ("hello", Meta.none)),
-            Meta.none )));
-  print_newline ();
-  show_sep ~h2:true ~title:"with markers" ();
-  print_string
-    (commonmark_of_inline
-       (Inline.Emphasis
-          ( Inline.Emphasis.make ~delim:'_' ~open_marker:true ~close_marker:true
-              (Inline.Text ("hello", Meta.none)),
-            Meta.none )));
-  print_newline ();
-  show_sep ~h2:true ~title:"parsed marked delimiters" ();
-  print_string
-    (Cmarkit_commonmark.of_doc
-       (Doc.of_string ~marked_emphasis_delims:true "{_hello_}"));
-  print_newline ()
+  let emphasis ?(open_marker = false) ?(close_marker = false) () =
+    Inline.Emphasis
+      ( Inline.Emphasis.make ~delim:'_' ~open_marker ~close_marker
+          (Inline.Text ("hello", Meta.none)),
+        Meta.none )
+  in
+  with_output ~h2:true ~title:"without markers" ~f:(fun () ->
+      emphasis () |> commonmark_of_inline |> print_string)
+    ();
+  with_output ~h2:true ~title:"with markers" ~f:(fun () ->
+      emphasis ~open_marker:true ~close_marker:true ()
+      |> commonmark_of_inline |> print_string)
+    ();
+  with_output ~h2:true ~title:"parsed marked delimiters" ~f:(fun () ->
+      Doc.of_string ~marked_emphasis_delims:true "{_hello_}"
+      |> Cmarkit_commonmark.of_doc |> print_string)
+    ()
 
 let () =
   show_sep ~title:"extra inline container AST support" ();
-  show_sep ~h2:true ~title:"sexp" ();
-  print_sexp
-    ([%sexp_of: inline]
-       (extra_inline_container Inline.Extra_inline_container.Highlight
-          (Inline.Text ("hello", Meta.none))));
-  print_newline ();
-  show_sep ~h2:true ~title:"commonmark rendering" ();
-  let render kind =
-    print_string
-      (commonmark_of_inline
-         (extra_inline_container kind (Inline.Text ("hello", Meta.none))))
+  let container kind =
+    extra_inline_container kind (Inline.Text ("hello", Meta.none))
   in
-  render Inline.Extra_inline_container.Highlight;
-  render Inline.Extra_inline_container.Superscript;
-  render Inline.Extra_inline_container.Subscript;
-  render Inline.Extra_inline_container.Inserted;
-  render Inline.Extra_inline_container.Deleted;
-  print_newline ()
+  with_inline ~h2:true ~title:"sexp" ~f:(fun () ->
+      container Inline.Extra_inline_container.Highlight)
+    ();
+  with_output ~h2:true ~title:"commonmark rendering" ~f:(fun () ->
+      List.iter
+        (fun kind -> container kind |> commonmark_of_inline |> print_string)
+        [ Inline.Extra_inline_container.Highlight;
+          Inline.Extra_inline_container.Superscript;
+          Inline.Extra_inline_container.Subscript;
+          Inline.Extra_inline_container.Inserted;
+          Inline.Extra_inline_container.Deleted ])
+    ()
