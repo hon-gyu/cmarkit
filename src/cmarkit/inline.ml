@@ -276,11 +276,19 @@ let rec normalize ?(ext = ext_none) = function
 | Inlines ([], _) | Ext_math_span _ as i -> i
 | Image (l, m) -> Image ({ l with text = normalize ~ext l.text }, m)
 | Link (l, m) -> Link ({ l with text = normalize ~ext l.text }, m)
-| Inlines ([i], _) -> i
 | Emphasis (e, m) ->
     Emphasis ({ e with inline = normalize ~ext e.inline}, m)
 | Strong_emphasis (e, m) ->
     Strong_emphasis ({ e with inline = normalize ~ext e.inline}, m)
+(* OYMARKIT CHANGE:
+   upstream returns the singleton element raw, [| Inlines ([i], _) -> i], which
+   does not recurse. If [i] is itself an [Inlines] the result keeps a nested
+   (and singleton) [Inlines], violating normalize's contract, and only one layer
+   is peeled per pass so normalize is not even idempotent on e.g.
+   [Inlines [Inlines [Inlines []]]]. Normalizing the unwrapped element fixes
+   both. Reachable via [Link]/[Image] text and [Emphasis] content (the loop path
+   splices sub-[Inlines] separately and is unaffected). *)
+| Inlines ([i], _) -> normalize ~ext i
 | Inlines (i :: is, m) ->
     let rec loop acc = function
     | Inlines (is', m) :: is -> loop acc (List.rev_append (List.rev is') is)
