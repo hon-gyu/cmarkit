@@ -113,11 +113,19 @@ module Oymarkit_mod = struct
       | Ok delims -> delims
       | Error msg -> failwith (Printf.sprintf "strong_emphasis_delims: %s" msg)
     in
-    if strong_emphasis_width <> 1 && strong_emphasis_width <> 2
-    then failwith "strong_emphasis_width: must be 1 or 2";
-    { emphasis_delims; strong_emphasis_delims; intraword_emphasis;
-      marked_emphasis_delims; strong_emphasis_width; extra_inline_containers;
-      block_id; djot_inline_attributes; djot_block_attributes }
+    if strong_emphasis_width <> 1 && strong_emphasis_width <> 2 then
+      failwith "strong_emphasis_width: must be 1 or 2";
+    {
+      emphasis_delims;
+      strong_emphasis_delims;
+      intraword_emphasis;
+      marked_emphasis_delims;
+      strong_emphasis_width;
+      extra_inline_containers;
+      block_id;
+      djot_inline_attributes;
+      djot_block_attributes;
+    }
 
   let delim_allowed delims = function
     | '*' -> delims.star
@@ -135,21 +143,21 @@ module Oymarkit_mod = struct
       && opener_count >= t.strong_emphasis_width
       && delim_allowed t.strong_emphasis_delims char
     then Some { used = t.strong_emphasis_width; strong = true }
-    else if delim_allowed t.emphasis_delims char
-    then Some { used = 1; strong = false }
+    else if delim_allowed t.emphasis_delims char then
+      Some { used = 1; strong = false }
     else None
 
-  let emphasis_may_open_close t ~role ~char ~is_left_flanking
-      ~is_right_flanking ~prev_white ~next_white ~prev_punct ~next_punct =
+  let emphasis_may_open_close t ~role ~char ~is_left_flanking ~is_right_flanking
+      ~prev_white ~next_white ~prev_punct ~next_punct =
     let may_open =
-      (char = '*' && is_left_flanking) ||
-      (char = '_' && is_left_flanking &&
-        (not is_right_flanking || prev_punct))
+      (char = '*' && is_left_flanking)
+      || char = '_' && is_left_flanking
+         && ((not is_right_flanking) || prev_punct)
     in
     let may_close =
-      (char = '*' && is_right_flanking) ||
-      (char = '_' && is_right_flanking &&
-        (not is_left_flanking || next_punct))
+      (char = '*' && is_right_flanking)
+      || char = '_' && is_right_flanking
+         && ((not is_left_flanking) || next_punct)
     in
     let may_open, may_close =
       if t.intraword_emphasis then (may_open, may_close)
@@ -159,12 +167,18 @@ module Oymarkit_mod = struct
         in
         if intraword then (false, false) else (may_open, may_close)
     in
+    (* An explicit marker ([{_]/[_}]) declares the delimiter's role outright, so
+       it forces [may_open]/[may_close] regardless of flanking and the intraword
+       knob: those rules exist to disambiguate bare runs, and a marker has
+       removed the ambiguity. This is the Djot model — the marker [is] the
+       opener/closer rather than merely being permitted to act as one. *)
     match role with
-    | Any -> may_open, may_close
-    | Opener_only -> may_open, false
-    | Closer_only -> false, may_close
+    | Any -> (may_open, may_close)
+    | Opener_only -> (true, false)
+    | Closer_only -> (false, true)
 
   let marked_emphasis_delims t = t.marked_emphasis_delims
+
   let extra_inline_container_syntax t kind =
     Inline.Extra_inline_container.Config.syntax t.extra_inline_containers kind
 

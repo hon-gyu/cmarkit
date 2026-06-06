@@ -110,6 +110,9 @@ marked_emphasis_delims:true
 forced opener cannot close
 ----------
 ((Emphasis_marks
+  ((start 2) (char _) (count 1) (may_open true) (may_close false)
+   (open_marker true) (close_marker false)))
+ (Emphasis_marks
   ((start 4) (char _) (count 1) (may_open false) (may_close true)
    (open_marker false) (close_marker false))))
 
@@ -117,7 +120,10 @@ forced closer cannot open
 ----------
 ((Emphasis_marks
   ((start 0) (char _) (count 1) (may_open true) (may_close false)
-   (open_marker false) (close_marker false))))
+   (open_marker false) (close_marker false)))
+ (Emphasis_marks
+  ((start 2) (char _) (count 1) (may_open false) (may_close true)
+   (open_marker false) (close_marker true))))
 
 marked emphasis delimiter parse
 ==========

@@ -1524,7 +1524,11 @@ module Doc : sig
        emphasis. The default is [true], which preserves CommonMark behavior.}
    {- If [marked_emphasis_delims] is [true], [{*] and [{_] mark emphasis
        delimiters as opener-only, and [*}] and [_}] mark them as closer-only.
-       The default is [false], which preserves CommonMark behavior.}
+       A marker forces its role: the delimiter opens (resp. closes) regardless
+       of flanking and of [intraword_emphasis], since those rules only serve to
+       disambiguate bare runs and the marker has already resolved the role. For
+       example [a{_b_] emphasises [b] even though a bare [_] could not open
+       there. The default is [false], which preserves CommonMark behavior.}
    {- [strong_emphasis_width] specifies how many delimiter characters are
       consumed from each side to form strong emphasis. It must be [1] or [2].
       The default is [2], which preserves CommonMark behavior.}

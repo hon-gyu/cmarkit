@@ -225,7 +225,15 @@ let try_add_emphasis_token
     not prev_white && (not prev_punct || (next_white || next_punct))
   in
   let next = marker_last + 1 in
-  if not is_left_flanking && not is_right_flanking then acc, next else
+  (* A delimiter that is neither left- nor right-flanking can never open or
+     close on its own and is dropped. An explicit marker overrides this: it
+     forces its role regardless of flanking (see [emphasis_may_open_close]), so
+     it must survive tokenization. *)
+  if
+    (not is_left_flanking) && (not is_right_flanking) && not open_marker
+    && not close_marker
+  then acc, next
+  else
   let may_open, may_close =
     match oymarkit_mod with
     | Some oymarkit_mod when is_oymarkit_enabled () ->
