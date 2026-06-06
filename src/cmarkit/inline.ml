@@ -295,7 +295,17 @@ let rec normalize ?(ext = ext_none) = function
     | i :: is -> loop (normalize ~ext i :: acc) is
     | [] -> List.rev acc
     in
-    let is = loop [normalize ~ext i] is in
+    (* OYMARKIT CHANGE:
+       upstream seeds the accumulator with the pre-normalized head,
+       [let is = loop [normalize ~ext i] is in], which bypasses the splice arm
+       above. When the head normalizes to an [Inlines] it then survives as a
+       nested case, violating normalize's documented contract ("[is] has no
+       [Inlines _] case"). We instead push the head back into the work list so
+       it flows through the same splice/merge logic as every other element.
+       Behaviour is identical for all parser-produced ASTs, which never nest an
+       [Inlines] directly inside an [Inlines]; only hand-built ASTs hit the
+       difference. *)
+    let is = loop [] (i :: is) in
     (match is with [i] -> i | _ -> Inlines (is, m))
 | Ext_strikethrough (i, m) -> Ext_strikethrough (normalize ~ext i, m)
 | Ext_extra_inline_container (c, m) ->
