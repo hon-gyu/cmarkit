@@ -78,7 +78,12 @@ let pp_metadata fmt m =
   let pp_pair fmt (k, v) = Fmt.pf fmt "@[<v>\"%s\":@ %a@]" k (pp_value ()) v in
   Fmt.pf fmt "@[<v>{ %a@,}@]" (Fmt.list ~sep:(Fmt.any "@,; ") pp_pair) m
 
-let reparse ?emphasis_delims ?strong_emphasis_delims (b : Block.t) : Block.t =
+let reparse ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis
+    ?marked_emphasis_delims ?strong_emphasis_width ?extra_inline_containers
+    ?block_id ?djot_inline_attributes ?djot_block_attributes (b : Block.t) :
+    Block.t =
   b |> to_commonmark
-  |> Doc.of_string ?emphasis_delims ?strong_emphasis_delims
+  |> Doc.of_string ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis
+       ?marked_emphasis_delims ?strong_emphasis_width ?extra_inline_containers
+       ?block_id ?djot_inline_attributes ?djot_block_attributes
   |> Doc.block

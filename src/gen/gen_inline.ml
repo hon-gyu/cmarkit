@@ -41,16 +41,31 @@ let (break_egs : Inline.t list) =
   Inline.Break.[ make `Hard; make `Soft ]
   |> List.map (fun pl -> Inline.(Break (pl, Meta.none)))
 
-let mk_emph_egs ?(delims = [ '*'; '_' ]) () i : Inline.t list =
+(* [marked] sets opener/closer markers ([{_]…[_}]) on every emphasis. Two
+   emphasis spans rendered flush against each other ([_a__b_]) otherwise fuse
+   into one on reparse; markers ([{_a_}{_b_}]) keep the boundary explicit. We
+   mark unconditionally rather than only at fusing adjacencies because adjacency
+   can be transitive through a nested [Inlines], and markers are invisible to
+   the structural AST comparison. Requires the parser's [marked_emphasis_delims]
+   to be enabled. *)
+let mk_emph_egs ?(delims = [ '*'; '_' ]) ?(marked = false) () i : Inline.t list
+    =
   if not (List.for_all (fun c -> List.mem c [ '*'; '_' ]) delims) then
     raise (Invalid_argument "Delim must be among ['*'; '_']");
-  Inline.Emphasis.(List.map (fun c -> make ~delim:c i) delims)
+  Inline.Emphasis.(
+    List.map
+      (fun c -> make ~delim:c ~open_marker:marked ~close_marker:marked i)
+      delims)
   |> List.map (fun pl -> Inline.(Emphasis (pl, Meta.none)))
 
-let mk_strong_emph_egs ?(delims = [ '*'; '_' ]) () i : Inline.t list =
+let mk_strong_emph_egs ?(delims = [ '*'; '_' ]) ?(marked = false) () i :
+    Inline.t list =
   if not (List.for_all (fun c -> List.mem c [ '*'; '_' ]) delims) then
     raise (Invalid_argument "Delim must be among ['*'; '_']");
-  Inline.Emphasis.(List.map (fun c -> make ~delim:c i) delims)
+  Inline.Emphasis.(
+    List.map
+      (fun c -> make ~delim:c ~open_marker:marked ~close_marker:marked i)
+      delims)
   |> List.map (fun pl -> Inline.(Strong_emphasis (pl, Meta.none)))
 
 let mk_link i : Inline.t =
@@ -100,6 +115,14 @@ module Iconfig = struct
             Otherwise, the following AST has no witness markdown: (Paragraph
             (Emphasis (Emphasis (Emphasis (Text jia))))) `***jia***` It will
             always to parsed to Emphasis (Emphasis (Text jia)) *)
+    marked_emphasis : bool;
+        (** Emit opener/closer markers ([{_]…[_}]) on every emphasis and strong
+            emphasis. Without this, two emphasis spans that end up flush against
+            each other ([_a__b_]) fuse into a single span on reparse, so the AST
+            (Inlines (Emphasis ...) (Emphasis ...)) has no witness. With markers
+            ([{_a_}{_b_}]) the boundary is explicit. Pairs with the parser's
+            [marked_emphasis_delims]; consumers must enable that knob when
+            reparsing. *)
   }
 
   let default =
@@ -119,6 +142,7 @@ module Iconfig = struct
       no_html_block_start = false;
       no_nested_link = false;
       different_delim_char_for_emph_and_strong_empha = false;
+      marked_emphasis = false;
     }
 
   let typed =
@@ -127,6 +151,7 @@ module Iconfig = struct
       no_empty_emphasis = true;
       no_nested_link = true;
       different_delim_char_for_emph_and_strong_empha = true;
+      marked_emphasis = true;
     }
 end
 
@@ -156,10 +181,12 @@ let gen_inline (ic : Iconfig.t) : Inline.t G.t =
     if ic.no_empty_inlines then int_range 1 (max 1 (n / 2))
     else int_bound (n / 2)
   in
+  let marked = ic.marked_emphasis in
   let mk_emph_egs, mk_strong_emph_egs =
     if ic.different_delim_char_for_emph_and_strong_empha then
-      (mk_emph_egs ~delims:[ '_' ] (), mk_strong_emph_egs ~delims:[ '*' ] ())
-    else (mk_emph_egs (), mk_strong_emph_egs ())
+      ( mk_emph_egs ~delims:[ '_' ] ~marked (),
+        mk_strong_emph_egs ~delims:[ '*' ] ~marked () )
+    else (mk_emph_egs ~marked (), mk_strong_emph_egs ~marked ())
   in
   (* [ic] is threaded through the recursion (à la [gen.ml]'s [config]) so a
      subtree can be generated under a tightened config.
