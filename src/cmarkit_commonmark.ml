@@ -293,6 +293,18 @@ let extra_inline_container c ic =
   C.byte c delim;
   C.byte c '}'
 
+let attribute_spec c a =
+  let body =
+    match Attribute.source a with
+    | Some source -> source
+    | None -> Attribute.to_string a
+  in
+  C.byte c '{'; C.string c body; C.byte c '}'
+
+let inline_attributes c a =
+  C.inline c (Inline.Attributes.inline a);
+  List.iter (attribute_spec c) (Inline.Attributes.specs a)
+
 let math_span c ms =
   let sep = if Inline.Math_span.display ms then "$$" else "$" in
   C.string c sep;
@@ -312,6 +324,7 @@ let inline c = function
 | Inline.Text (t, _) -> text c t; true
 | Inline.Ext_strikethrough (s, _) -> strikethrough c s; true
 | Inline.Ext_extra_inline_container (ic, _) -> extra_inline_container c ic; true
+| Inline.Ext_attributes (a, _) -> inline_attributes c a; true
 | Inline.Ext_math_span (m, _) -> math_span c m; true
 | _ -> C.string c "<!-- Unknown Cmarkit inline -->"; true
 
@@ -450,6 +463,13 @@ let footnote c fn =
   C.block c (Block.Footnote.block fn);
   pop_indent c
 
+let block_attributes c a =
+  List.iter
+    (fun spec ->
+      newline c; indent c; attribute_spec c spec)
+    (Block.Attributes.specs a);
+  C.block c (Block.Attributes.block a)
+
 let block c = function
 | Block.Blank_line (l, _) -> blank_line c l; true
 | Block.Block_quote (b, _) -> block_quote c b; true
@@ -465,6 +485,7 @@ let block c = function
 | Block.Ext_math_block (cb, _) -> code_block c cb; true
 | Block.Ext_table (t, _) -> table c t; true
 | Block.Ext_footnote_definition (t, _) -> footnote c t; true
+| Block.Ext_attributes (a, _) -> block_attributes c a; true
 | _ -> newline c; indent c; C.string c "<!-- Unknown Cmarkit block -->"; true
 
 (* Document rendering *)

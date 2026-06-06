@@ -122,6 +122,10 @@ and inline ~indent:n ppf = function
     pf ppf "@[<v>%a@,%a@]"
       (loc label ~indent:n) m
       (inline ~indent:(n + 2)) (Inline.Extra_inline_container.inline c)
+| Inline.Ext_attributes (a, m) ->
+    pf ppf "@[<v>%a@,%a@]"
+      (loc "Attributes" ~indent:n) m
+      (inline ~indent:(n + 2)) (Inline.Attributes.inline a)
 | Inline.Ext_math_span (ms, m) ->
     let display = Inline.Math_span.display ms in
     let line = tight_block_line "Math span line" ~indent:(n + 2) in
@@ -214,6 +218,10 @@ and block ~indent:n ppf = function
     pf ppf "@[<v>%a@,%a@]"
       (loc "Paragraph" ~indent:n) m
       (inline ~indent:(n + 2)) (Block.Paragraph.inline p)
+| Block.Ext_attributes (a, m) ->
+    pf ppf "@[<v>%a@,%a@]"
+      (loc "Attributes" ~indent:n) m
+      (block ~indent:(n + 2)) (Block.Attributes.block a)
 | Block.Thematic_break (_, m) ->
     loc "Thematic break" ~indent:n ppf m
 | Block.Ext_math_block (cb, m) ->

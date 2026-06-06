@@ -184,6 +184,21 @@ module Paragraph = struct
   let trailing_blanks p = p.trailing_blanks
 end
 
+module Attributes = struct
+  type block = t
+  type t =
+    { block : block;
+      attributes : Attribute.t;
+      specs : Attribute.t list }
+
+  let make ~specs block =
+    let attributes = List.fold_left Attribute.merge Attribute.empty specs in
+    { block; attributes; specs }
+  let block a = a.block
+  let attributes a = a.attributes
+  let specs a = a.specs
+end
+
 module Thematic_break = struct
   type t = { indent : Layout.indent; layout : Layout.string }
   let make ?(indent = 0) ?(layout = "---") () =  { indent; layout }
@@ -201,6 +216,7 @@ type t +=
 | Link_reference_definition of Link_definition.t node
 | List of List'.t node
 | Paragraph of Paragraph.t node
+| Ext_attributes of Attributes.t node
 | Thematic_break of Thematic_break.t node
 
 let empty = Blocks ([], Meta.none)
@@ -301,6 +317,7 @@ let meta ?(ext = ext_none) = function
 | Heading (_, m) | Html_block (_, m) | Link_reference_definition (_, m)
 | List (_, m) | Paragraph (_, m) | Thematic_break (_, m)
 | Ext_math_block (_, m) | Ext_table (_, m)
+| Ext_attributes (_, m)
 | Ext_footnote_definition (_, m) -> m
 | b -> ext b
 
@@ -328,6 +345,8 @@ let rec normalize ?(ext = ext_none) = function
 | Ext_footnote_definition (fn, m) ->
     let fn = { fn with block = normalize ~ext fn.block } in
     Ext_footnote_definition (fn, m)
+| Ext_attributes (a, m) ->
+    Ext_attributes (Attributes.make ~specs:a.specs (normalize ~ext a.block), m)
 | b -> ext b
 
 let rec defs
@@ -336,6 +355,7 @@ let rec defs
   | Blank_line _ | Code_block _ | Heading _ | Html_block _
   | Paragraph _ | Thematic_break _
   | Ext_math_block _ | Ext_table _ -> init
+  | Ext_attributes (a, _) -> defs ~ext ~init a.block
   | Block_quote (b, _) -> defs ~ext ~init (Block_quote.block b)
   | Blocks (bs, _) -> List.fold_left (fun init b -> defs ~ext ~init b) init bs
   | List (l, _) ->

@@ -87,6 +87,11 @@ let rec pp_block_with ?(ext = pp_ext_default) ?ext_inline () ppf = function
     Format.fprintf ppf "@[<2>Paragraph@ %a@]"
       (pp_inline_preview ?ext_inline)
       (Paragraph.inline p)
+| Ext_attributes (a, _) ->
+    Format.fprintf ppf "@[<v 2>Attributes %S@,%a@]"
+      (Attribute.to_string (Block.Attributes.attributes a))
+      (pp_block_with ~ext ?ext_inline ())
+      (Block.Attributes.block a)
 | Thematic_break _ -> Format.pp_print_string ppf "Thematic_break"
 | Ext_math_block (cb, _) ->
     Format.fprintf ppf "Ext_math_block { lines=%d }"

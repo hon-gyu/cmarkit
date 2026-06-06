@@ -33,6 +33,36 @@ list item paragraph
 ----------
 (List ((Paragraph (Text "item ^item-id")) (meta (block-id item-id))))
 
+Djot attributes
+==========
+stacked text attributes
+----------
+(Attributes ".blue lang=fr" (Text avant))
+
+emphasis attributes
+----------
+(Attributes "#foo .bar" (Emphasis (Text text)))
+
+extra container attributes
+----------
+(Attributes .marked (Extra_inline_container Highlight (Text text)))
+
+multiline inline attributes
+----------
+(Attributes "#foo .bar key=\"a b\"" (Text text))
+
+stacked block attributes
+----------
+(Attributes "#water .important .large" (Paragraph (Text Flow.)))
+
+block quote attributes
+----------
+(Attributes source=Iliad (Block_quote (Paragraph (Text "Sing, muse"))))
+
+multiline block attributes
+----------
+(Attributes "#water .important key=\"two words\"" (Paragraph (Text Flow.)))
+
 intraword emphasis knob tokenization
 ==========
 default

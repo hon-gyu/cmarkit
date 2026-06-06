@@ -135,6 +135,7 @@ module Block_struct = struct
   | Html_block of html_block
   | List of list'
   | Linkref_def of Link_definition.t node
+  | Attribute_specs of Attribute.t list
   | Paragraph of paragraph
   | Thematic_break of Layout.indent * line_span (* including trailing blanks *)
   | Ext_table of Layout.indent * (line_span * line_span (* trail blanks *)) list
@@ -403,7 +404,7 @@ module Block_struct = struct
   | Html_block html :: bs -> end_doc_close_html p html bs
   | Ext_footnote (i, l, blocks) :: bs -> close_footnote p i l blocks bs
   | (Thematic_break _ | Heading _ | Blank_line _ | Linkref_def _
-    | Ext_table _ ) :: _ | [] as bs -> bs
+    | Attribute_specs _ | Ext_table _ ) :: _ | [] as bs -> bs
 
   (* Adding lines to blocks *)
 
@@ -751,7 +752,8 @@ module Block_struct = struct
 
   and add_line p = function
   | Paragraph par :: bs -> try_add_to_paragraph p par bs
-  | ((Thematic_break _ | Heading _ | Blank_line _ | Linkref_def _) :: _)
+  | ((Thematic_break _ | Heading _ | Blank_line _ | Linkref_def _
+      | Attribute_specs _) :: _)
   | [] as bs -> add_open_blocks p bs
   | List list :: bs -> try_add_to_list_item p list bs
   | Code_block (`Indented ls) :: bs -> try_add_to_indented_code_block p ls bs
@@ -944,6 +946,90 @@ let block_struct_to_paragraph p par =
   in
   Block.Paragraph ({ leading_indent; inline; trailing_blanks }, meta)
 
+let split_attribute_paragraph p (par : Block_struct.paragraph) =
+  if not (Oymarkit_mod.djot_block_attributes p.oymarkit_mod)
+  then [Block_struct.Paragraph par] else
+  let lines = List.rev par.lines in
+  let parse_spec lines =
+    let b = Buffer.create 32 in
+    let rec scan line lines k in_quote escaped in_comment =
+      if k > line.last then
+        match lines with
+        | [] -> None
+        | next_line :: lines ->
+            let first = first_non_blank_in_span p next_line in
+            if first <= next_line.first then None else begin
+              Buffer.add_char b '\n';
+              scan next_line lines first in_quote false in_comment
+            end
+      else
+        let c = p.i.[k] in
+        if in_comment then begin
+          Buffer.add_char b c;
+          scan line lines (k + 1) in_quote false (c <> '%')
+        end else if escaped then begin
+          Buffer.add_char b c;
+          scan line lines (k + 1) in_quote false false
+        end else
+        match c with
+        | '\\' when in_quote ->
+            Buffer.add_char b c;
+            scan line lines (k + 1) in_quote true false
+        | '"' ->
+            Buffer.add_char b c;
+            scan line lines (k + 1) (not in_quote) false false
+        | '%' when not in_quote ->
+            Buffer.add_char b c;
+            scan line lines (k + 1) false false true
+        | '}' when not in_quote ->
+            let after = Match.first_non_blank p.i ~last:line.last ~start:(k + 1) in
+            if after <= line.last then None else
+            begin match Attribute.of_string (Buffer.contents b) with
+            | None -> None
+            | Some spec -> Some (spec, lines)
+            end
+        | c ->
+            Buffer.add_char b c;
+            scan line lines (k + 1) in_quote false false
+    in
+    match lines with
+    | [] -> None
+    | line :: lines ->
+        let first = first_non_blank_in_span p line in
+        if first > line.last || p.i.[first] <> '{' then None else
+        scan line lines (first + 1) false false false
+  in
+  let rec take acc = function
+  | _ :: _ as lines ->
+      begin match parse_spec lines with
+      | Some (spec, lines) -> take (spec :: acc) lines
+      | None -> List.rev acc, lines
+      end
+  | [] -> List.rev acc, []
+  in
+  match take [] lines with
+  | [], _ -> [Block_struct.Paragraph par]
+  | specs, [] -> [Block_struct.Attribute_specs specs]
+  | specs, lines ->
+      [ Block_struct.Attribute_specs specs;
+        Block_struct.Paragraph { par with lines = List.rev lines } ]
+
+let rec prepare_block_struct p = function
+| Block_struct.Block_quote (indent, marker, bs) ->
+    [Block_struct.Block_quote (indent, marker, prepare_block_structs p bs)]
+| Block_struct.List l ->
+    let item (i : Block_struct.list_item) =
+      { i with blocks = prepare_block_structs p i.blocks }
+    in
+    [Block_struct.List { l with items = List.map item l.items }]
+| Block_struct.Ext_footnote (indent, labels, bs) ->
+    [Block_struct.Ext_footnote (indent, labels, prepare_block_structs p bs)]
+| Block_struct.Paragraph par -> split_attribute_paragraph p par
+| b -> [b]
+
+and prepare_block_structs p bs =
+  bs |> List.rev |> List.map (prepare_block_struct p) |> List.flatten |> List.rev
+
 let block_struct_to_thematic_break p indent span =
   let layout, meta = (* not layout because of loc *) clean_raw_span p span in
   Block.Thematic_break ({ indent; layout }, meta)
@@ -1080,10 +1166,61 @@ and block_struct_to_block p = function
 | Block_struct.Html_block html -> block_struct_to_html_block p html
 | Block_struct.Blank_line (pad, span) -> block_struct_to_blank_line p pad span
 | Block_struct.Linkref_def r -> Block.Link_reference_definition r
+| Block_struct.Attribute_specs specs ->
+    Block.Ext_attributes
+      (Block.Attributes.make ~specs Block.empty, Meta.none)
 | Block_struct.Ext_table (i, rows) -> block_struct_to_table p i rows
 | Block_struct.Ext_footnote (i, labels, bs) ->
     block_struct_to_footnote_definition p i labels bs
 
 let block_struct_to_doc p (doc, meta) =
-  match List.rev_map (block_struct_to_block p) doc with
+  let rec resolve_block = function
+  | Block.Block_quote (bq, meta) ->
+      Block.Block_quote ({ bq with block = resolve_block (Block.Block_quote.block bq) }, meta)
+  | Block.List (l, meta) ->
+      let item (i, imeta) =
+        ({ i with Block.List_item.block = resolve_block (Block.List_item.block i) }, imeta)
+      in
+      Block.List ({ l with items = List.map item (Block.List'.items l) }, meta)
+  | Block.Blocks (bs, meta) -> Block.Blocks (resolve_blocks bs, meta)
+  | Block.Ext_footnote_definition (fn, meta) ->
+      Block.Ext_footnote_definition ({ fn with block = resolve_block fn.block }, meta)
+  | b -> b
+  and resolve_blocks bs =
+    let is_empty = function Block.Blocks ([], _) -> true | _ -> false in
+    let rec loop pending acc = function
+    | Block.Ext_attributes (a, _) :: bs
+      when is_empty (Block.Attributes.block a) ->
+        loop (pending @ Block.Attributes.specs a) acc bs
+    | Block.Blank_line _ as blank :: bs when pending <> [] ->
+        let marker =
+          Block.Ext_attributes
+            (Block.Attributes.make ~specs:pending Block.empty, Meta.none)
+        in
+        loop [] (blank :: marker :: acc) bs
+    | b :: bs ->
+        let b = resolve_block b in
+        let b =
+          match pending with
+          | [] -> b
+          | specs ->
+              Block.Ext_attributes
+                (Block.Attributes.make ~specs b, Block.meta b)
+        in
+        loop [] (b :: acc) bs
+    | [] ->
+        let acc =
+          match pending with
+          | [] -> acc
+          | specs ->
+              Block.Ext_attributes
+                (Block.Attributes.make ~specs Block.empty, Meta.none)
+              :: acc
+        in
+        List.rev acc
+    in
+    loop [] [] bs
+  in
+  let doc = prepare_block_structs p doc in
+  match resolve_blocks (List.rev_map (block_struct_to_block p) doc) with
   | [b] -> b | bs -> Block.Blocks (bs, meta)

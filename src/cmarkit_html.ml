@@ -92,6 +92,25 @@ let buffer_add_html_escaped_string b s =
 
 let html_escaped_string c s = buffer_add_html_escaped_string (C.buffer c) s
 
+let attributes c a =
+  begin match Attribute.id a with
+  | None -> ()
+  | Some id ->
+      C.string c " id=\""; html_escaped_string c id; C.byte c '"'
+  end;
+  begin match Attribute.classes a with
+  | [] -> ()
+  | classes ->
+      C.string c " class=\"";
+      html_escaped_string c (String.concat " " classes);
+      C.byte c '"'
+  end;
+  List.iter
+    (fun (key, value) ->
+      C.byte c ' '; html_escaped_string c key; C.string c "=\"";
+      html_escaped_string c value; C.byte c '"')
+    (Attribute.key_values a)
+
 let buffer_add_pct_encoded_string b s = (* Percent encoded + HTML escaped *)
   let byte = Buffer.add_char and string = Buffer.add_string in
   let unsafe_hexdig_of_int i = match i < 10 with
@@ -277,6 +296,37 @@ let extra_inline_container c ic =
   C.string c tag;
   C.byte c '>'
 
+let inline_attributes c a =
+  let attrs = Inline.Attributes.attributes a in
+  match Inline.Attributes.inline a with
+  | Inline.Emphasis (e, _) ->
+      C.string c "<em"; attributes c attrs; C.byte c '>';
+      C.inline c (Inline.Emphasis.inline e); C.string c "</em>"
+  | Inline.Strong_emphasis (e, _) ->
+      C.string c "<strong"; attributes c attrs; C.byte c '>';
+      C.inline c (Inline.Emphasis.inline e); C.string c "</strong>"
+  | Inline.Code_span (cs, _) ->
+      C.string c "<code"; attributes c attrs; C.byte c '>';
+      html_escaped_string c (Inline.Code_span.code cs); C.string c "</code>"
+  | Inline.Ext_strikethrough (s, _) ->
+      C.string c "<del"; attributes c attrs; C.byte c '>';
+      C.inline c (Inline.Strikethrough.inline s); C.string c "</del>"
+  | Inline.Ext_extra_inline_container (ic, _) ->
+      let tag =
+        match Inline.Extra_inline_container.kind ic with
+        | Inline.Extra_inline_container.Highlight -> "mark"
+        | Inline.Extra_inline_container.Superscript -> "sup"
+        | Inline.Extra_inline_container.Subscript -> "sub"
+        | Inline.Extra_inline_container.Inserted -> "ins"
+        | Inline.Extra_inline_container.Deleted -> "del"
+      in
+      C.byte c '<'; C.string c tag; attributes c attrs; C.byte c '>';
+      C.inline c (Inline.Extra_inline_container.inline ic);
+      C.string c "</"; C.string c tag; C.byte c '>'
+  | inline ->
+      C.string c "<span"; attributes c attrs; C.byte c '>';
+      C.inline c inline; C.string c "</span>"
+
 let inline c = function
 | Inline.Autolink (a, _) -> autolink c a; true
 | Inline.Break (b, _) -> break c b; true
@@ -290,6 +340,7 @@ let inline c = function
 | Inline.Text (t, _) -> html_escaped_string c t; true
 | Inline.Ext_strikethrough (s, _) -> strikethrough c s; true
 | Inline.Ext_extra_inline_container (ic, _) -> extra_inline_container c ic; true
+| Inline.Ext_attributes (a, _) -> inline_attributes c a; true
 | Inline.Ext_math_span (ms, _) -> math_span c ms; true
 | _ -> comment c "<!-- Unknown Cmarkit inline -->"; true
 
@@ -447,6 +498,20 @@ let table c t =
   rows c (Block.Table.col_count t) ~align:[] (Block.Table.rows t);
   C.string c "</table></div>"
 
+let block_attributes c a =
+  let attrs = Block.Attributes.attributes a in
+  match Block.Attributes.block a with
+  | Block.Paragraph (p, _) ->
+      C.string c "<p"; attributes c attrs; C.byte c '>';
+      C.inline c (Block.Paragraph.inline p); C.string c "</p>\n"
+  | Block.Block_quote (bq, _) ->
+      C.string c "<blockquote"; attributes c attrs; C.string c ">\n";
+      C.block c (Block.Block_quote.block bq);
+      C.string c "</blockquote>\n"
+  | block ->
+      C.string c "<div"; attributes c attrs; C.string c ">\n";
+      C.block c block; C.string c "</div>\n"
+
 let block c = function
 | Block.Block_quote (bq, _) -> block_quote c bq; true
 | Block.Blocks (bs, _) -> List.iter (C.block c) bs; true
@@ -458,6 +523,7 @@ let block c = function
 | Block.Thematic_break (_, _) -> thematic_break c; true
 | Block.Ext_math_block (cb, _) -> math_block c cb; true
 | Block.Ext_table (t, _) -> table c t; true
+| Block.Ext_attributes (a, _) -> block_attributes c a; true
 | Block.Blank_line _
 | Block.Link_reference_definition _
 | Block.Ext_footnote_definition _ -> true

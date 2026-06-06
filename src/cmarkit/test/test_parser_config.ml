@@ -61,6 +61,160 @@ let () =
   | None, Some "final", Some "item-id" -> ()
   | _ -> failwith "parser mishandled block ID ownership or final-line rules"
 
+let attribute_string a = Attribute.to_string a
+
+let () =
+  match inline_of_string ~djot_inline_attributes:true "avant{lang=fr}{.blue}" with
+  | Inline.Ext_attributes (a, _) ->
+      begin match
+        attribute_string (Inline.Attributes.attributes a),
+        Inline.Attributes.inline a
+      with
+      | ".blue lang=fr", Inline.Text ("avant", _) -> ()
+      | attrs, i ->
+          fail_inline (Fmt.str "wrong bare-text attributes %S" attrs) i
+      end
+  | i -> fail_inline "parser should attach stacked attributes to text" i
+
+let () =
+  match inline_of_string ~djot_inline_attributes:true "_text_{#last .a}" with
+  | Inline.Ext_attributes (a, _) ->
+      begin match Inline.Attributes.inline a with
+      | Inline.Emphasis _ ->
+          if attribute_string (Inline.Attributes.attributes a) <> "#last .a"
+          then failwith "parser returned wrong emphasis attributes"
+      | i -> fail_inline "attributes should target the complete emphasis" i
+      end
+  | i -> fail_inline "parser should attach attributes to emphasis" i
+
+let () =
+  match
+    inline_of_string ~djot_inline_attributes:true
+      ~extra_inline_containers:Extra_config.explicit "{=text=}{.marked}"
+  with
+  | Inline.Ext_attributes (a, _) ->
+      begin match Inline.Attributes.inline a with
+      | Inline.Ext_extra_inline_container _ -> ()
+      | i -> fail_inline "attributes should target the extra container" i
+      end
+  | i -> fail_inline "parser should attach attributes after extra containers" i
+
+let () =
+  match inline_of_string ~djot_inline_attributes:true "text{#foo\n.bar key=\"a b\"}" with
+  | Inline.Ext_attributes (a, _) ->
+      if attribute_string (Inline.Attributes.attributes a)
+         <> "#foo .bar key=\"a b\""
+      then failwith "parser returned wrong multiline inline attributes"
+  | i -> fail_inline "parser should parse multiline inline attributes" i
+
+let () =
+  match inline_of_string "text{.literal}" with
+  | Inline.Text ("text{.literal}", _) -> ()
+  | i -> fail_inline "default parser should keep attribute syntax literal" i
+
+let rec first_block = function
+  | Block.Blocks (b :: _, _) -> first_block b
+  | b -> b
+
+let () =
+  match
+    Doc.of_string ~djot_block_attributes:true
+      "{#water}\n{.important .large}\nDon't forget."
+    |> Doc.block |> first_block
+  with
+  | Block.Ext_attributes (a, _) ->
+      begin match Block.Attributes.block a with
+      | Block.Paragraph _ ->
+          if attribute_string (Block.Attributes.attributes a)
+             <> "#water .important .large"
+          then failwith "parser returned wrong block attributes"
+      | _ -> failwith "block attributes should target the paragraph"
+      end
+  | _ -> failwith "parser should attach repeated block attributes"
+
+let () =
+  match
+    Doc.of_string ~djot_block_attributes:true "{source=Iliad}\n> Sing, muse"
+    |> Doc.block |> first_block
+  with
+  | Block.Ext_attributes (a, _) ->
+      begin match Block.Attributes.block a with
+      | Block.Block_quote _ -> ()
+      | _ -> failwith "block attributes should target the block quote"
+      end
+  | _ -> failwith "parser should attach attributes before a block quote"
+
+let () =
+  match
+    Doc.of_string ~djot_block_attributes:true
+      "{#water\n  .important key=\"two words\"}\nFlow."
+    |> Doc.block |> first_block
+  with
+  | Block.Ext_attributes (a, _) ->
+      if attribute_string (Block.Attributes.attributes a)
+         <> "#water .important key=\"two words\""
+      then failwith "parser returned wrong multiline block attributes"
+  | _ -> failwith "parser should parse indented multiline block attributes"
+
+let () =
+  match
+    Doc.of_string ~djot_block_attributes:true "{#orphan}\n\nParagraph."
+    |> Doc.block
+  with
+  | Block.Blocks
+      ( Block.Ext_attributes (a, _)
+        :: Block.Blank_line _
+        :: Block.Paragraph _
+        :: _,
+        _ )
+    ->
+      begin match Block.Attributes.block a with
+      | Block.Blocks ([], _) -> ()
+      | _ -> failwith "orphan block attributes should have no target"
+      end
+  | _ -> failwith "blank lines should prevent block attribute attachment"
+
+let () =
+  let rendered =
+    Doc.of_string ~djot_inline_attributes:true "_text_{#foo .bar}"
+    |> Cmarkit_commonmark.of_doc
+  in
+  if rendered <> "_text_{#foo .bar}"
+  then failwith (Fmt.str "inline attribute roundtrip rendered %S" rendered)
+
+let () =
+  let rendered =
+    Doc.of_string ~djot_block_attributes:true "{#water}\nFlow."
+    |> Cmarkit_commonmark.of_doc
+  in
+  if rendered <> "{#water}\nFlow."
+  then failwith (Fmt.str "block attribute roundtrip rendered %S" rendered)
+
+let () =
+  let source = "text{#foo\n.bar %keep me% key=\"a b\"}" in
+  let rendered =
+    Doc.of_string ~djot_inline_attributes:true source
+    |> Cmarkit_commonmark.of_doc
+  in
+  if rendered <> source
+  then failwith (Fmt.str "multiline attribute roundtrip rendered %S" rendered)
+
+let () =
+  let rendered =
+    Doc.of_string ~djot_inline_attributes:true "_text_{#foo .bar}"
+    |> Cmarkit_html.of_doc ~safe:false
+  in
+  if rendered <> "<p><em id=\"foo\" class=\"bar\">text</em></p>\n"
+  then failwith (Fmt.str "inline attribute HTML rendered %S" rendered)
+
+let () =
+  let rendered =
+    Doc.of_string ~djot_block_attributes:true "{#water .important}\nFlow."
+    |> Cmarkit_html.of_doc ~safe:false
+  in
+  if rendered <> "<p id=\"water\" class=\"important\">Flow.</p>\n"
+  then failwith (Fmt.str "block attribute HTML rendered %S" rendered)
+
 let () =
   match inline_of_string "__jia__" with
   | Inline.Strong_emphasis ({ inline = Inline.Text ("jia", _); _ }, _) -> ()

@@ -85,7 +85,24 @@ module Inline_struct = struct
   }
   [@@deriving sexp_of]
 
+  type attribute_spec = Inline_struct_.attribute_spec = {
+    start : byte_pos;
+    attribute : Attribute.t;
+    endline : line_span;
+    next : byte_pos;
+  }
+
+  let sexp_of_attribute_spec a =
+    let open Sexplib0.Sexp in
+    List
+      [ List [ Atom "start"; sexp_of_byte_pos a.start ]
+      ; List [ Atom "attribute"; Atom (Attribute.to_string a.attribute) ]
+      ; List [ Atom "endline"; sexp_of_line_span a.endline ]
+      ; List [ Atom "next"; sexp_of_byte_pos a.next ]
+      ]
+
   type token = Inline_struct_.token =
+    | Attribute_spec of attribute_spec
     | Autolink_or_html_start of { start : byte_pos }
     | Backticks of { start : byte_pos; count : int; escaped : bool }
     | Emphasis_marks of emphasis_marks
@@ -211,6 +228,44 @@ let () =
   parse "invalid underscore" "text ^block_id";
   parse "escaped caret" "text \\^block-id";
   parse "list item paragraph" "- item ^item-id"
+
+let () =
+  show_sep ~title:"Djot attributes" ();
+  let sexp_of = Sexp.make_sexp_of () in
+  let parse_inline title markdown =
+    with_output ~h2:true ~title
+      ~f:(fun () ->
+        markdown
+        |> Inline_parse_api.of_string ~djot_inline_attributes:true
+        |> sexp_of.inline
+        |> print_sexp)
+      ()
+  in
+  let parse_block title markdown =
+    with_output ~h2:true ~title
+      ~f:(fun () ->
+        markdown
+        |> Doc.of_string ~djot_block_attributes:true
+        |> sexp_of.doc
+        |> print_sexp)
+      ()
+  in
+  parse_inline "stacked text attributes" "avant{lang=fr}{.blue}";
+  parse_inline "emphasis attributes" "_text_{#foo .bar}";
+  with_output ~h2:true ~title:"extra container attributes"
+    ~f:(fun () ->
+      "{=text=}{.marked}"
+      |> Inline_parse_api.of_string ~djot_inline_attributes:true
+           ~extra_inline_containers:Extra_config.explicit
+      |> sexp_of.inline
+      |> print_sexp)
+    ();
+  parse_inline "multiline inline attributes" "text{#foo\n.bar key=\"a b\"}";
+  parse_block "stacked block attributes"
+    "{#water}\n{.important .large}\nFlow.";
+  parse_block "block quote attributes" "{source=Iliad}\n> Sing, muse";
+  parse_block "multiline block attributes"
+    "{#water\n  .important key=\"two words\"}\nFlow."
 
 let () =
   show_sep ~title:"intraword emphasis knob tokenization" ();

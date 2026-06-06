@@ -225,6 +225,21 @@ module Extra_inline_container = struct
   let inline c = c.inline
 end
 
+module Attributes = struct
+  type inline = t
+  type t =
+    { inline : inline;
+      attributes : Attribute.t;
+      specs : Attribute.t list }
+
+  let make ~specs inline =
+    let attributes = List.fold_left Attribute.merge Attribute.empty specs in
+    { inline; attributes; specs }
+  let inline a = a.inline
+  let attributes a = a.attributes
+  let specs a = a.specs
+end
+
 module Math_span = struct
   type t = { display : bool; tex_layout : Block_line.tight list; }
   let make ~display tex_layout = { display; tex_layout }
@@ -238,6 +253,7 @@ end
 type t +=
 | Ext_strikethrough of Strikethrough.t node
 | Ext_extra_inline_container of Extra_inline_container.t node
+| Ext_attributes of Attributes.t node
 | Ext_math_span of Math_span.t node
 
 (* Functions on inlines *)
@@ -251,6 +267,7 @@ let meta ?(ext = ext_none) = function
 | Image (_, m) | Inlines (_, m) | Link (_, m) | Raw_html (_, m)
 | Strong_emphasis (_, m)  | Text (_, m) -> m
 | Ext_strikethrough (_, m) | Ext_extra_inline_container (_, m) -> m
+| Ext_attributes (_, m) -> m
 | Ext_math_span (_, m) -> m
 | i -> ext i
 
@@ -285,6 +302,8 @@ let rec normalize ?(ext = ext_none) = function
     let inline = normalize ~ext (Extra_inline_container.inline c) in
     let c = Extra_inline_container.make (Extra_inline_container.kind c) inline in
     Ext_extra_inline_container (c, m)
+| Ext_attributes (a, m) ->
+    Ext_attributes (Attributes.make ~specs:a.specs (normalize ~ext a.inline), m)
 | i -> ext i
 
 let ext_none ~break_on_soft = ext_none
@@ -316,6 +335,8 @@ let to_plain_text ?(ext = ext_none) ~break_on_soft i =
       loop ~break_on_soft acc (i :: is)
   | Ext_extra_inline_container (c, _) :: is ->
       loop ~break_on_soft acc (Extra_inline_container.inline c :: is)
+  | Ext_attributes (a, _) :: is ->
+      loop ~break_on_soft acc (Attributes.inline a :: is)
   | Ext_math_span (m, _) :: is ->
       loop ~break_on_soft (push (Math_span.tex m) acc) is
   | i :: is ->

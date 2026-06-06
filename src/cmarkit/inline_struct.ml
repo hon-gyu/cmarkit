@@ -50,7 +50,14 @@ type math_span_marks =
     may_open : bool;
     may_close : bool; }
 
+type attribute_spec =
+  { start : byte_pos;
+    attribute : Attribute.t;
+    endline : line_span;
+    next : byte_pos }
+
 type token =
+| Attribute_spec of attribute_spec
 | Autolink_or_html_start of { start : byte_pos }
 | Backticks of
     { start : byte_pos;
@@ -76,7 +83,7 @@ type token =
 | Math_span_marks of math_span_marks
 
 let token_start = function
-| Autolink_or_html_start { start } | Backticks { start }
+| Attribute_spec { start } | Autolink_or_html_start { start } | Backticks { start }
 | Emphasis_marks { start } | Extra_inline_container_marks { start }
 | Inline { start } -> start |  Link_start { start }
 | Newline { start } | Right_brack { start } -> start
@@ -380,6 +387,47 @@ let try_add_math_span_marks_token acc s line ~start =
   if not may_open && not may_close then acc, next else
   Math_span_marks { start; count; may_open; may_close } :: acc, next
 
+let scan_attribute_spec s line lines ~start =
+  let b = Buffer.create 32 in
+  let rec loop line lines k in_quote escaped in_comment =
+    if k > line.last then
+      match lines with
+      | [] -> None
+      | next_line :: lines ->
+          Buffer.add_char b '\n';
+          loop next_line lines next_line.first in_quote false in_comment
+    else
+      let c = s.[k] in
+      if in_comment then begin
+        Buffer.add_char b c;
+        loop line lines (k + 1) in_quote false (c <> '%')
+      end else if escaped then begin
+        Buffer.add_char b c;
+        loop line lines (k + 1) in_quote false false
+      end else
+      match c with
+      | '\\' when in_quote ->
+          Buffer.add_char b c;
+          loop line lines (k + 1) in_quote true false
+      | '"' ->
+          Buffer.add_char b c;
+          loop line lines (k + 1) (not in_quote) false false
+      | '%' when not in_quote ->
+          Buffer.add_char b c;
+          loop line lines (k + 1) false false true
+      | '}' when not in_quote ->
+          begin match Attribute.of_string (Buffer.contents b) with
+          | None -> None
+          | Some attribute ->
+              Some
+                ({ start; attribute; endline = line; next = k + 1 }, lines)
+          end
+      | c ->
+          Buffer.add_char b c;
+          loop line lines (k + 1) in_quote false false
+  in
+  loop line lines (start + 1) false false false
+
 let tokenize ?oymarkit_mod ~exts s lines =
   (* For inlines this is where we conditionalize for extensions. All code
       paths after that no longer check for p.exts: there just won't be
@@ -393,6 +441,7 @@ let tokenize ?oymarkit_mod ~exts s lines =
     else
     if s.[k] = '\\'
     then loop ~exts s lines line ~prev_bslash:(not prev_bslash) acc (k+1) else
+    let jumped = ref None in
     let acc, next = match s.[k] with
     | '`' -> add_backtick_token acc s line ~prev_bslash ~start:k
     | c when prev_bslash ->
@@ -411,8 +460,18 @@ let tokenize ?oymarkit_mod ~exts s lines =
             with
             | Some r -> r
             | None ->
-                try_add_marked_emphasis_opener_token oymarkit_mod acc s line
-                  ~start:k
+                begin match
+                  if Oymarkit_mod.djot_inline_attributes oymarkit_mod
+                  then scan_attribute_spec s line lines ~start:k
+                  else None
+                with
+                | Some (spec, remaining) ->
+                    jumped := Some (remaining, spec.endline);
+                    Attribute_spec spec :: acc, spec.next
+                | None ->
+                    try_add_marked_emphasis_opener_token oymarkit_mod acc s line
+                      ~start:k
+                end
             end
         | _ -> acc, k + 1
         end
@@ -477,7 +536,10 @@ let tokenize ?oymarkit_mod ~exts s lines =
     | '$' when exts -> try_add_math_span_marks_token acc s line ~start:k
     | _ -> acc, k + 1
     in
-    loop ~exts s lines line ~prev_bslash:false acc next
+    match !jumped with
+    | None -> loop ~exts s lines line ~prev_bslash:false acc next
+    | Some (lines, line) ->
+        loop ~exts s lines line ~prev_bslash:false acc next
   in
   let line = List.hd lines and lines = List.tl lines in
   let cidx, toks = loop ~exts s lines line ~prev_bslash:false [] line.first in
@@ -750,6 +812,7 @@ let find_link_text_tokens p toks start_line ~start =
   | Right_brack { start = last } :: toks when nest = 0 ->
       let acc = rev_tokens_and_shorten_last_line ~to_last:(last - 1) [] acc in
       Some (toks, line, acc, last)
+  | Attribute_spec _ as t :: toks -> loop toks line nest (t :: acc)
   | Backticks { start; count; escaped } :: toks ->
       begin match try_code p toks line ~start ~count ~escaped with
       | None -> loop toks line nest acc
@@ -843,6 +906,8 @@ and first_pass p toks line =
       link reference data gets parsed as atoms. *)
   let rec loop p toks line ~had_link acc = match toks with
   | [] -> List.rev acc, had_link
+  | Attribute_spec _ as t :: toks ->
+      loop p toks line ~had_link (t :: acc)
   | Backticks { start; count; escaped } :: toks ->
       begin match try_code p toks line ~start ~count ~escaped with
       | None -> loop p toks line ~had_link acc
@@ -1091,6 +1156,7 @@ and try_extra_inline_container p start_toks start_line ~opener =
 and second_pass p toks line =
   let rec loop p toks line acc = match toks with
   | [] -> List.rev acc
+  | Attribute_spec _ as t :: toks -> loop p toks line (t :: acc)
   | Emphasis_marks ({ may_open } as opener) :: toks ->
       if not may_open then loop p toks line acc else
       begin match try_emphasis p toks line ~opener with
@@ -1135,6 +1201,47 @@ and last_pass p toks line =
       | i -> i :: acc
       in
       loop toks endline acc next
+  | Attribute_spec { start; attribute; endline; next } :: toks ->
+      let wrap target specs =
+        let attrs = Inline.Attributes.make ~specs target in
+        Inline.Ext_attributes (attrs, Inline.meta target)
+      in
+      let add_to_target acc =
+        match acc with
+        | Inline.Ext_attributes (a, meta) :: acc ->
+            let specs = Inline.Attributes.specs a @ [attribute] in
+            Inline.Ext_attributes
+              (Inline.Attributes.make ~specs (Inline.Attributes.inline a), meta)
+            :: acc
+        | (Inline.Break _ | Inline.Inlines _) :: _ | [] -> []
+        | target :: acc -> wrap target [attribute] :: acc
+      in
+      if k = start then begin
+        match add_to_target acc with
+        | [] ->
+            let literal = "{" ^ Attribute.to_string attribute ^ "}" in
+            loop toks endline (Inline.Text (literal, Meta.none) :: acc) next
+        | acc -> loop toks endline acc next
+      end else begin
+        let last = start - 1 in
+        let rec target_first i =
+          if i < k then k else
+          match p.i.[i] with
+          | ' ' | '\t' -> i + 1
+          | _ -> target_first (i - 1)
+        in
+        let first = target_first last in
+        if first > last then
+          let acc = try_add_text_inline p line ~first:k ~last acc in
+          let literal = "{" ^ Attribute.to_string attribute ^ "}" in
+          loop toks endline (Inline.Text (literal, Meta.none) :: acc) next
+        else
+          let acc = try_add_text_inline p line ~first:k ~last:(first - 1) acc in
+          let target =
+            Inline.Text (clean_unesc_unref_span p { line with first; last })
+          in
+          loop toks endline (wrap target [attribute] :: acc) next
+      end
   | (Backticks _ | Autolink_or_html_start _ | Link_start _ | Right_brack _
     | Emphasis_marks _ | Right_paren _ | Strikethrough_marks _
     | Extra_inline_container_marks _ | Math_span_marks _) :: _ ->
@@ -1241,7 +1348,7 @@ let rec finish_col p line blanks_before is toks k = match toks with
         let is = match text with Some t -> t :: is | None -> is in
         (make_col p is, (blanks_before, after)), toks', k
     end
-| (Backticks _ | Autolink_or_html_start _ | Link_start _ | Right_brack _
+| (Attribute_spec _ | Backticks _ | Autolink_or_html_start _ | Link_start _ | Right_brack _
   | Emphasis_marks _ | Right_paren _ | Strikethrough_marks _
   | Extra_inline_container_marks _ | Math_span_marks _ | Newline _ ) :: _ ->
     assert false
@@ -1261,7 +1368,7 @@ let rec parse_cols p line acc toks k = match toks with
         let col, toks, k = finish_col p line before is toks next in
         parse_cols p line (col :: acc) toks k
     end
-| (Backticks _ | Autolink_or_html_start _ | Link_start _ | Right_brack _
+| (Attribute_spec _ | Backticks _ | Autolink_or_html_start _ | Link_start _ | Right_brack _
   | Emphasis_marks _ | Right_paren _ | Strikethrough_marks _
   | Extra_inline_container_marks _ | Math_span_marks _ | Newline _ ) :: _ ->
     assert false

@@ -19,6 +19,7 @@ module Match = Cmarkit_base
 module Textloc = Cmarkit_base.Textloc
 module Meta = Cmarkit_base.Meta
 module Layout = Common_.Layout
+module Attribute = Attribute
 
 type byte_pos = Textloc.byte_pos
 type line_span = Match.line_span =
@@ -108,6 +109,9 @@ module Mapper = struct
           let kind = Inline.Extra_inline_container.kind c in
           let* inline = map_inline m (Inline.Extra_inline_container.inline c) in
           Some (Ext_extra_inline_container (Inline.Extra_inline_container.make kind inline, meta))
+      | Ext_attributes (a, meta) ->
+          let* inline = map_inline m (Inline.Attributes.inline a) in
+          Some (Ext_attributes (Inline.Attributes.make ~specs:(Inline.Attributes.specs a) inline, meta))
       | ext -> m.inline_ext_default m ext
 
   let rec map_block m b = match m.block m b with
@@ -158,6 +162,9 @@ module Mapper = struct
           | None -> (* Can be empty *) Blocks ([], Meta.none) | Some b -> b
           in
           Some (Ext_footnote_definition ({ fn with block}, meta))
+      | Ext_attributes (a, meta) ->
+          let* block = map_block m (Block.Attributes.block a) in
+          Some (Ext_attributes (Block.Attributes.make ~specs:(Block.Attributes.specs a) block, meta))
       | ext -> m.block_ext_default m ext
 
   let map_doc m d =
@@ -216,6 +223,8 @@ module Folder = struct
       | Ext_strikethrough (inline, _) -> fold_inline f acc inline
       | Ext_extra_inline_container (c, _) ->
           fold_inline f acc (Inline.Extra_inline_container.inline c)
+      | Ext_attributes (a, _) ->
+          fold_inline f acc (Inline.Attributes.inline a)
   | ext -> f.inline_ext_default f acc ext
 
   let rec fold_block f acc b = match f.block f acc b with
@@ -242,6 +251,7 @@ module Folder = struct
           in
           List.fold_left fold_row acc t.Table.rows
       | Ext_footnote_definition (fn, _) -> fold_block f acc fn.block
+      | Ext_attributes (a, _) -> fold_block f acc (Block.Attributes.block a)
       | ext -> f.block_ext_default f acc ext
 
   let fold_doc f acc d = fold_block f acc (Doc.block d)

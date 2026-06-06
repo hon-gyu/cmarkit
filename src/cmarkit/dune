@@ -10,6 +10,7 @@
  (modules
   cmarkit_
   common_
+  attribute
   inline
   block
   doc

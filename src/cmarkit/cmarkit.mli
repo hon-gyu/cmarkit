@@ -261,6 +261,19 @@ module Meta : sig
   (** [find k m] the value of [k] in [m], if any. *)
 end
 
+module Attribute : sig
+  type t
+
+  val empty : t
+  val id : t -> string option
+  val classes : t -> string list
+  val key_values : t -> (string * string) list
+  val source : t -> string option
+  val merge : t -> t -> t
+  val of_string : string -> t option
+  val to_string : t -> string
+end
+
 type 'a node = 'a * Meta.t
 (** The type for abstract syntax tree nodes. The data of type ['a] and its
     metadata. *)
@@ -900,6 +913,16 @@ module Inline : sig
     (** [inline c] is [c]'s contained inline. *)
   end
 
+  module Attributes : sig
+    type inline := t
+    type t
+
+    val make : specs:Attribute.t list -> inline -> t
+    val inline : t -> inline
+    val attributes : t -> Attribute.t
+    val specs : t -> Attribute.t list
+  end
+
   (** Math span. *)
   module Math_span : sig
     type t
@@ -926,6 +949,7 @@ module Inline : sig
   type t +=
   | Ext_strikethrough of Strikethrough.t node
   | Ext_extra_inline_container of Extra_inline_container.t node
+  | Ext_attributes of Attributes.t node
   | Ext_math_span of Math_span.t node (** *)
   (** The supported inline extensions. These inlines are only parsed when
       {!Doc.of_string} is called with [strict:false]. *)
@@ -1241,6 +1265,16 @@ module Block : sig
     (** [trailing_blanks] are trailing blanks on the last line. *)
   end
 
+  module Attributes : sig
+    type block := t
+    type t
+
+    val make : specs:Attribute.t list -> block -> t
+    val block : t -> block
+    val attributes : t -> Attribute.t
+    val specs : t -> Attribute.t list
+  end
+
   (** Thematic breaks. *)
   module Thematic_break : sig
 
@@ -1271,6 +1305,7 @@ module Block : sig
         Link reference definitions}, kept for layout *)
   | List of List'.t node
   | Paragraph of Paragraph.t node
+  | Ext_attributes of Attributes.t node
   | Thematic_break of Thematic_break.t node
     (** {{:https://spec.commonmark.org/0.31.2/#paragraphs}Thematic break} *)
   (** The CommonMark {{:https://spec.commonmark.org/0.31.2/#leaf-blocks}leaf}
@@ -1438,7 +1473,8 @@ module Doc : sig
     ?strong_emphasis_delims:char list -> ?intraword_emphasis:bool ->
     ?marked_emphasis_delims:bool -> ?strong_emphasis_width:int ->
     ?extra_inline_containers:Inline.Extra_inline_container.Config.t ->
-    ?block_id:bool ->
+    ?block_id:bool -> ?djot_inline_attributes:bool ->
+    ?djot_block_attributes:bool ->
     ?strict:bool -> string -> t
     (** [of_string md] is a document from the UTF-8 encoded CommonMark
         document [md].
@@ -1502,6 +1538,12 @@ module Doc : sig
       attached to the paragraph metadata as a {!Block.Block_id.t}. The marker
       remains part of the paragraph inline content. The default is [false],
       which preserves CommonMark behavior.}
+   {- If [djot_inline_attributes] is [true], Djot [{...}] attribute
+      specifiers immediately following inline content are represented by
+      {!Inline.Ext_attributes}.}
+   {- If [djot_block_attributes] is [true], Djot attribute lines immediately
+      preceding a block are represented by {!Block.Ext_attributes}. Continued
+      lines inside a block attribute must be indented.}
    {- If [resolver] is provided this is used resolve label definitions
       and references. See {{!Label.resolvers}here} for details. Defaults to
       {!Label.default_resolver}.}
