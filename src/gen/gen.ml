@@ -190,29 +190,6 @@ let rec gen_block ?(rule_lead_exclude_chars = []) config st n =
       let block_quote_of_b b =
         Block.(Block_quote (Block.Block_quote.make b, Meta.none))
       in
-      let gen_list_block =
-        let marker = '-' in
-        (* The item's leading block sits on the marker line, so a thematic break
-           there must not reuse the marker char (would collapse to a thematic
-           break on reparse). *)
-        let item_lead_exclude =
-          if config.no_marker_colliding_thematic_break then [ marker ] else []
-        in
-        let gen_item =
-          map
-            (fun block -> (Block.List_item.make block, Meta.none))
-            (gen_block ~rule_lead_exclude_chars:item_lead_exclude config st
-               (n / 2))
-        in
-        let gen_len =
-          if config.no_empty_list then int_range 1 (max 1 (n / 2))
-          else int_bound (n / 2)
-        in
-        map
-          (fun items ->
-            Block.(List (Block.List'.make (`Unordered marker) items, Meta.none)))
-          (list_size gen_len gen_item)
-      in
       oneof_weighted
         [
           (2, gen_leaf_block ~rule_lead_exclude_chars config st);
@@ -221,8 +198,46 @@ let rec gen_block ?(rule_lead_exclude_chars = []) config st n =
           (* A block quote's [>] absorbs the leading position, so the marker
              collision cannot reach inside; drop [lead_exclude]. *)
           (1, map block_quote_of_b (gen_block config st (n / 2)));
-          (1, gen_list_block);
+          (* A list is never a thematic break, so the leading position never
+             reaches it; it manages its own items' leading position. *)
+          (1, gen_list config st n);
         ]
+
+and gen_list config st n : Block.t G.t =
+  let open G in
+  (* Start integer for ordered lists; the renderer only keeps the first item's
+     value, so a small spread is enough. *)
+  let gen_start = oneof_list_weighted [ (6, 1); (1, 0); (1, 2); (1, 9); (1, 42) ] in
+  let* type' =
+    oneof_weighted
+      [
+        (3, return (`Unordered '-'));
+        (1, return (`Unordered '+'));
+        (1, return (`Unordered '*'));
+        (2, map (fun s -> `Ordered (s, '.')) gen_start);
+        (1, map (fun s -> `Ordered (s, ')')) gen_start);
+      ]
+  in
+  (* For a bullet list, the item's leading block sits on the marker line, so a
+     thematic break there must not reuse the marker char (would collapse to a
+     thematic break on reparse). Ordered markers never collide. *)
+  let item_lead_exclude =
+    match type' with
+    | `Unordered c when config.no_marker_colliding_thematic_break -> [ c ]
+    | _ -> []
+  in
+  let gen_item =
+    map
+      (fun block -> (Block.List_item.make block, Meta.none))
+      (gen_block ~rule_lead_exclude_chars:item_lead_exclude config st (n / 2))
+  in
+  let gen_len =
+    if config.no_empty_list then int_range 1 (max 1 (n / 2))
+    else int_bound (n / 2)
+  in
+  map
+    (fun items -> Block.(List (Block.List'.make type' items, Meta.none)))
+    (list_size gen_len gen_item)
 
 and gen_blocks ?(rule_lead_exclude_chars = []) config st n : Block.t G.t =
   let open G in
@@ -255,33 +270,33 @@ let%expect_test "Default config should give a sensible distribution" =
     {|
                                             Boxplot
     ┌─────────────────────────┬────────────────────────────────────────────────────────────┐
-    │n=1000                   │↓0                                                       11↓│
+    │n=1000                   │↓0                                                        8↓│
     ├─────────────────────────┼────────────────────────────────────────────────────────────┤
-    │blank_line               │[--------------+--------------------------]                 │
-    │p5=0.00|p95=8.00|mu=2.93 │                                                            │
+    │blank_line               │[------------------+------------------------]               │
+    │p5=0.00|p95=6.00|mu=2.58 │                                                            │
     ├─────────────────────────┼────────────────────────────────────────────────────────────┤
-    │block_quote              │[-------------------------------------------+--------------~│
-    │p5=0.00|p95=22.00|mu=8.30│                                                            │
+    │block_quote              │[-----------------------------------------------------+----~│
+    │p5=0.00|p95=15.00|mu=7.35│                                                            │
     ├─────────────────────────┼────────────────────────────────────────────────────────────┤
-    │blocks                   │[------------------------------------------+---------------~│
-    │p5=0.00|p95=20.00|mu=8.19│                                                            │
+    │blocks                   │[----------------------------------------------------+-----~│
+    │p5=0.00|p95=15.00|mu=7.30│                                                            │
     ├─────────────────────────┼────────────────────────────────────────────────────────────┤
-    │code_block               │[--------------+--------------------------------]           │
-    │p5=0.00|p95=9.00|mu=2.90 │                                                            │
+    │code_block               │[------------------+------------------------]               │
+    │p5=0.00|p95=6.00|mu=2.64 │                                                            │
     ├─────────────────────────┼────────────────────────────────────────────────────────────┤
-    │heading                  │[--------------+----------------]                           │
-    │p5=0.00|p95=6.00|mu=2.80 │                                                            │
+    │heading                  │[-----------------+-----------------]                       │
+    │p5=0.00|p95=5.00|mu=2.49 │                                                            │
     ├─────────────────────────┼────────────────────────────────────────────────────────────┤
-    │html_block               │[--------------+---------------------]                      │
-    │p5=0.00|p95=7.00|mu=2.90 │                                                            │
+    │html_block               │[-----------------+-------------------------]               │
+    │p5=0.00|p95=6.00|mu=2.51 │                                                            │
     ├─────────────────────────┼────────────────────────────────────────────────────────────┤
-    │list                     │[--------------------------------------------+-------------~│
-    │p5=0.00|p95=20.00|mu=8.53│                                                            │
+    │list                     │[------------------------------------------------------+---~│
+    │p5=0.00|p95=16.00|mu=7.51│                                                            │
     ├─────────────────────────┼────────────────────────────────────────────────────────────┤
-    │paragraph                │[---------------+--------------------]                      │
-    │p5=0.00|p95=7.00|mu=3.00 │                                                            │
+    │paragraph                │[------------------+------------------------]               │
+    │p5=0.00|p95=6.00|mu=2.60 │                                                            │
     ├─────────────────────────┼────────────────────────────────────────────────────────────┤
-    │thematic_break           │[--------------+--------------------------------]           │
-    │p5=0.00|p95=9.00|mu=2.87 │                                                            │
+    │thematic_break           │[-----------------+-------------------------]               │
+    │p5=0.00|p95=6.00|mu=2.56 │                                                            │
     └─────────────────────────┴────────────────────────────────────────────────────────────┘
     |}]

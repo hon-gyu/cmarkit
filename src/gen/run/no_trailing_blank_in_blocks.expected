@@ -1,7 +1,7 @@
 
 --- Failure --------------------------------------------------------------------
 
-Test no trailing blank line in blocks failed (46 shrink steps):
+Test no trailing blank line in blocks failed (12 shrink steps):
 
 { block: (Blocks Blank_line)
 ; cm: ┌┐
