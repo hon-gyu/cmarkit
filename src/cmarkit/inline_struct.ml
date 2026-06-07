@@ -898,7 +898,17 @@ let rec try_link p start_toks start_line ~image ~start =
         let text_start =
           let first = start + (if image then 2 else 1) in
           let last =
-            if start_line == line then text_last - 1 else start_line.last
+            (* OYMARKIT CHANGE: was [start_line == line], a physical-equality
+               test used as a proxy for "the closing ] is on the same source
+               line as the opening [". That proxy is unsound: [try_code] (and
+               the other inline scanners) rebuild the line record via
+               [{ start_line with first }], so a code span before a nested
+               link/image breaks physical identity even though we are still on
+               the same line. The [else] branch then over-extends [last] to the
+               whole line, leaking the trailing "](dest)" into the link text as
+               literal text. Compare line positions instead. *)
+            if start_line.line_pos = line.line_pos
+            then text_last - 1 else start_line.last
           in
           { start_line with first; last }
         in
@@ -1014,7 +1024,10 @@ and try_emphasis p start_toks start_line ~opener =
       let emph =
         let text_start =
           let last =
-            if start_line == line then text_last else start_line.last
+            (* OYMARKIT CHANGE: line_pos compare instead of physical equality;
+               see the note in [try_link]. *)
+            if start_line.line_pos = line.line_pos
+            then text_last else start_line.last
           in
           { start_line with first = text_first; last }
         in
@@ -1073,7 +1086,10 @@ and try_strikethrough p start_toks start_line ~opener =
         let last = closer.start - 1 in
         let text_start =
           let last =
-            if start_line == line then last else start_line.last
+            (* OYMARKIT CHANGE: line_pos compare instead of physical equality;
+               see the note in [try_link]. *)
+            if start_line.line_pos = line.line_pos
+            then last else start_line.last
           in
           { start_line with first; last }
         in
@@ -1144,7 +1160,10 @@ and try_extra_inline_container p start_toks start_line ~opener =
         let last = closer.start - 1 in
         let text_start =
           let last =
-            if start_line == line then last else start_line.last
+            (* OYMARKIT CHANGE: line_pos compare instead of physical equality;
+               see the note in [try_link]. *)
+            if start_line.line_pos = line.line_pos
+            then last else start_line.last
           in
           { start_line with first; last }
         in

@@ -1,36 +1,52 @@
 
 --- Failure --------------------------------------------------------------------
 
-Test roundtrip failed (56 shrink steps):
+Test roundtrip failed (93 shrink steps):
 
 { block: (Paragraph
           (Inlines (Text jia) (Text jia) (Text jia) (Text jia) (Text jia)
+           (Text jia) (Text jia) (Text jia) (Text jia) (Text jia) (Text jia)
+           (Text jia) (Text jia) (Text jia) (Text jia) (Text jia) (Text jia)
+           (Text jia) (Text jia) (Text jia) (Text jia) (Text jia) (Text jia)
            (Text jia) (Text jia) (Text jia) (Text jia)
-           (Emphasis
+           (Image
             (Emphasis
-             (Link
+             (Emphasis
               (Image
-               (Inlines (Text jia) (Text jia) (Text jia) (Text jia)
-                (Text jia) (Text jia) (Text jia) (Text jia)
-                (Inlines (Text jia) (Code_span add)
-                 (Image (Emphasis (Inlines (Inlines (Text jia)))))))))))))
-; cm: ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-      │jiajiajiajiajiajiajiajiajia{_{_[![jiajiajiajiajiajiajiajiajia`add`![{_jia_}](https://example.com/img.png)](https://example.com/img.png)](https://example.com)_}_}│
-      └─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+               (Image
+                (Link
+                 (Image
+                  (Inlines (Text jia) (Text jia) (Text jia) (Text jia)
+                   (Text jia)
+                   (Inlines (Text jia) (Text jia) (Text jia) (Text jia)
+                    (Inlines (Image (Code_span add)))
+                    (Emphasis
+                     (Inlines (Code_span add) (Image (Emphasis (Text jia))))))))))))))))
+; cm: ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+      │jiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajia![{_{_![![[![jiajiajiajiajiajiajiajiajia![`add`](https://example.com/img.png){_`add`![{_jia_}](https://example.com/img.png)_}](https://example.com/img.png)](https://example.com)](https://example.com/img.png)](https://example.com/img.png)_}_}](https://example.com/img.png)│
+      └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ; "reparse":
   (Paragraph
-   (Inlines (Text jiajiajiajiajiajiajiajiajia)
-    (Emphasis
+   (Inlines
+    (Text
+     jiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajia)
+    (Image
      (Emphasis
-      (Link
+      (Emphasis
        (Image
-        (Inlines (Text jiajiajiajiajiajiajiajiajia) (Code_span add)
-         (Image (Emphasis (Text jia)))
-         (Text "](https://example.com/img.png)](https://example.com)_}_}"))))))))
+        (Image
+         (Link
+          (Image
+           (Inlines (Text jiajiajiajiajiajiajiajiajia)
+            (Image (Code_span add))
+            (Emphasis
+             (Inlines (Code_span add) (Image (Emphasis (Text jia)))))
+            (Text
+             "](https://example.com/img.png)](https://example.com)](https://example.com/img.png)](https://example.com/img.png)_}_}](https://example.com/img.png)")))))))))))
 ; "reparse_cm":
-  ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-  │jiajiajiajiajiajiajiajiajia{_{_[![jiajiajiajiajiajiajiajiajia`add`![{_jia_}](https://example.com/img.png)\](https://example.com/img.png)\](https://example.com)\_}\_}](https://example.com/img.png)](https://example.com)_}_}│
-  └─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+  │jiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajiajia![{_{_![![[![jiajiajiajiajiajiajiajiajia![`add`](https://example.com/img.png){_`add`![{_jia_}](https://example.com/img.png)_}\](https://example.com/img.png)\](https://example.com)\](https://example.com/img.png)\](https://example.com/img.png)\_}\_}\](https://example.com/img.png)](https://example.com/img.png)](https://example.com)](https://example.com/img.png)](https://example.com/img.png)_}_}](https://example.com/img.png)│
+  └─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 }
 ================================================================================
 failure (1 tests failed, 0 tests errored, ran 1 tests)
