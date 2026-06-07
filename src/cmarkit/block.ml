@@ -395,6 +395,56 @@ and absorb_following_lists l rest =
   | _ -> (l, rest)
 
 [@@@ocamlformat "disable"]
+[@@@ocamlformat "enable"]
+(* Oymarkit: Indented code blocks are the only [Code_block]s the parser coalesces: two
+   adjacent ones (separated only by blank lines) are a single block whose content
+   includes those blanks as empty lines. Fenced blocks are self-delimiting and
+   never fuse, so the merge only touches [`Indented] ones. Same
+   representational-freedom family as adjacent-list merging (see
+   doc/same-content-principle.md), gated by the parallel
+   [OYMARKIT_DISABLE_MERGE_ADJACENT_CODE] environment variable. *)
+
+let merge_adjacent_code_env = "OYMARKIT_DISABLE_MERGE_ADJACENT_CODE"
+
+let merge_adjacent_indented_cb_enabled () =
+  match
+    Option.map String.lowercase_ascii (Sys.getenv_opt merge_adjacent_code_env)
+  with
+  | Some ("1" | "true" | "yes" | "on") -> false
+  | _ -> true
+
+let cb_is_indented cb =
+  match cb.Code_block.layout with
+  | `Indented -> true
+  | `Fenced _ -> false
+
+(* Each blank line between two fused indented code blocks becomes one empty
+   content line, reproducing the parser's [[a; ""; b]] shape for [    a\n\n    b]. *)
+let blank_code_lines blanks = List.map (fun _ -> ("", Meta.none)) blanks
+
+(* Fuse every maximal run of indented [Code_block]s separated only by
+   [Blank_line]s. Operates on an already-flattened, normalised block list. *)
+let rec merge_adjacent_indented_cb = function
+  | Code_block (cb, m) :: rest when cb_is_indented cb ->
+      let cb, rest = absorb_following_code cb rest in
+      Code_block (cb, m) :: merge_adjacent_indented_cb rest
+  | b :: rest -> b :: merge_adjacent_indented_cb rest
+  | [] -> []
+
+and absorb_following_code cb rest =
+  let rec span_blanks acc = function
+    | (Blank_line _ as bl) :: bs -> span_blanks (bl :: acc) bs
+    | bs -> (List.rev acc, bs)
+  in
+  match span_blanks [] rest with
+  | blanks, Code_block (cb2, _) :: rest when cb_is_indented cb2 ->
+      let code =
+        cb.Code_block.code @ blank_code_lines blanks @ cb2.Code_block.code
+      in
+      absorb_following_code { cb with Code_block.code } rest
+  | _ -> (cb, rest)
+
+[@@@ocamlformat "disable"]
 
 let rec normalize ?(ext = ext_none) = function
 | Blank_line _ | Code_block _ | Heading _ | Html_block _
@@ -421,6 +471,7 @@ let rec normalize ?(ext = ext_none) = function
        [Blocks [Blocks [x; y]; z]] would keep its inner [Blocks]). *)
     let bs = loop [] (b :: bs) in
     let bs = if merge_adjacent_lists_enabled () then merge_adjacent_lists bs else bs in
+    let bs = if merge_adjacent_indented_cb_enabled () then merge_adjacent_indented_cb bs else bs in
     (match bs with [b] -> b | _ -> Blocks (bs, m))
 | Ext_footnote_definition (fn, m) ->
     let fn = { fn with block = normalize ~ext fn.block } in
