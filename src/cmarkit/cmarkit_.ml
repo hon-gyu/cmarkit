@@ -162,6 +162,11 @@ module Mapper = struct
           | None -> (* Can be empty *) Blocks ([], Meta.none) | Some b -> b
           in
           Some (Ext_footnote_definition ({ fn with block}, meta))
+      | Ext_div (d, meta) ->
+          let block = match map_block m (Block.Div.block d) with
+          | None -> (* Can be empty *) Blocks ([], Meta.none) | Some b -> b
+          in
+          Some (Ext_div ({ d with block }, meta))
       | Ext_attributes (a, meta) ->
           let* block = map_block m (Block.Attributes.block a) in
           Some (Ext_attributes (Block.Attributes.make ~specs:(Block.Attributes.specs a) block, meta))
@@ -251,6 +256,7 @@ module Folder = struct
           in
           List.fold_left fold_row acc t.Table.rows
       | Ext_footnote_definition (fn, _) -> fold_block f acc fn.block
+      | Ext_div (d, _) -> fold_block f acc (Block.Div.block d)
       | Ext_attributes (a, _) -> fold_block f acc (Block.Attributes.block a)
       | ext -> f.block_ext_default f acc ext
 

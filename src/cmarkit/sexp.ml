@@ -149,6 +149,13 @@ let sexp_of_block_core : block_sexp =
       with_meta
         meta
         (Sexp.List [ Atom "Block_quote"; recurse_block (Block.Block_quote.block bq) ])
+    | Block.Ext_div (d, meta) ->
+      let class' = match Block.Div.class' d with
+      | None -> [] | Some (cls, _) -> [ Sexp.Atom cls ]
+      in
+      with_meta meta
+        (Sexp.List
+           (Sexp.Atom "Div" :: class' @ [ recurse_block (Block.Div.block d) ]))
     | Block.List (l, meta) ->
       let items =
         List.map (Block.List'.items l) ~f:(fun (item, _item_meta) ->

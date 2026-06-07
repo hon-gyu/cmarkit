@@ -127,8 +127,16 @@ module Block_struct = struct
 
   type paragraph = { maybe_ref : bool; lines : line_span list }
 
+  type div_fence =
+    { indent : Layout.indent;
+      fence_len : int; (* number of colons in the opening fence *)
+      opening_fence : line_span; (* colons (+ layout before class) *)
+      class' : line_span option;
+      closing_fence : line_span option; (* [None] until closed *) }
+
   type t =
   | Block_quote of Layout.indent * line_span (* loc of initial marker *) * t list
+  | Ext_div of div_fence * t list (* Oymarkit djot div, children reversed *)
   | Blank_line of space_pad * line_span
   | Code_block of code_block
   | Heading of heading
@@ -203,6 +211,19 @@ module Block_struct = struct
     let closing_fence = None in
     let fence = { indent; opening_fence; fence; info_string; closing_fence } in
     Code_block (`Fenced {fence; code = []})
+
+  let div_block p ~indent ~fence_first ~fence_last ~class_span =
+    let fence_len = fence_last - fence_first + 1 in
+    let opening_fence, class' = match class_span with
+    | None ->
+        current_line_span p ~first:fence_first ~last:p.current_line_last_char,
+        None
+    | Some (cfirst, clast) ->
+        current_line_span p ~first:fence_first ~last:(cfirst - 1),
+        Some (current_line_span p ~first:cfirst ~last:clast)
+    in
+    let fence = { indent; fence_len; opening_fence; class'; closing_fence = None}in
+    Ext_div (fence, [])
 
   let html_block p ~end_cond ~indent_start =
     let first = indent_start and last = p.current_line_last_char in
@@ -397,6 +418,9 @@ module Block_struct = struct
   let rec end_doc p = function
   | Block_quote (indent, marker, bq) :: bs ->
       Block_quote (indent, marker, end_doc p bq) :: bs
+  | Ext_div (fence, children) :: bs ->
+      (* closed by the end of document: [closing_fence] stays [None] *)
+      Ext_div (fence, end_doc p children) :: bs
   | List list :: bs -> close_list p list bs
   | Paragraph par :: bs -> close_paragraph p par bs
   | Code_block (`Indented ls) :: bs -> close_indented_code_block p ls bs
@@ -455,6 +479,10 @@ module Block_struct = struct
           let r = Match.fenced_code_block_start p.i ~last ~start in
           if r <> Nomatch then r else
           Paragraph_line
+      | ':' when Oymarkit_mod.div p.oymarkit_mod ->
+          let r = Match.div_open p.i ~last ~start in
+          if r <> Nomatch then r else
+          Paragraph_line
       | '<' ->
           let r = Match.html_block_start p.i ~last ~start in
           if r <> Nomatch then r else
@@ -496,6 +524,8 @@ module Block_struct = struct
       bs
   | Fenced_code_block_line (fence_first, fence_last, info) ->
       fenced_code_block p ~indent ~fence_first ~fence_last ~info :: bs
+  | Ext_div_line (fence_first, fence_last, class_span) ->
+      div_block p ~indent ~fence_first ~fence_last ~class_span :: bs
   | Html_block_line end_cond -> html_block p ~end_cond ~indent_start :: bs
   | Paragraph_line -> paragraph p ~start:indent_start :: bs
   | Ext_table_row last -> table p ~indent ~last :: bs
@@ -593,6 +623,9 @@ module Block_struct = struct
     | Fenced_code_block_line (fence_first, fence_last, info) ->
         let bs = close_paragraph p par bs in
         fenced_code_block p ~indent ~fence_first ~fence_last ~info :: bs
+    | Ext_div_line (fence_first, fence_last, class_span) ->
+        let bs = close_paragraph p par bs in
+        div_block p ~indent ~fence_first ~fence_last ~class_span :: bs
     | Html_block_line end_cond ->
         html_block p ~end_cond ~indent_start :: (close_paragraph p par bs)
     | Nomatch -> assert false
@@ -750,6 +783,46 @@ module Block_struct = struct
         let bs = close_list p list bs in
         add_open_blocks_with_line_class p ~indent ~indent_start bs ltype
 
+  (* Oymarkit djot divs.
+
+     A div has no per-line marker; its content is block-level and runs until a
+     closing fence ([:::] at least as long as the opening) or a boundary. Divs
+     nest, and a closing fence closes the {e innermost} open div it is long
+     enough for, so [try_close_inner_div] walks the open-div spine inside-out
+     before [try_add_to_div] considers closing the div at hand. *)
+  and try_close_inner_div p ~line_len ~close = function
+  | Ext_div (f, ch) :: bs when f.closing_fence = None ->
+      begin match try_close_inner_div p ~line_len ~close ch with
+      | Some ch -> Some (Ext_div (f, ch) :: bs)
+      | None ->
+          if line_len >= f.fence_len
+          then Some (Ext_div ({ f with closing_fence = Some (close ()) }, ch):: bs)
+          else None
+      end
+  | _ -> None
+
+  and try_add_to_div p fence children bs =
+    match fence.closing_fence with
+    | Some _ -> (* closed: this line starts a new sibling block *)
+        add_open_blocks p (Ext_div (fence, children) :: bs)
+    | None ->
+        let start = p.current_char and last = p.current_line_last_char in
+        match Match.div_close p.i ~last ~start with
+        | Some line_len ->
+            let close () =
+              let first = Match.first_non_blank p.i ~last ~start in
+              current_line_span p ~first ~last
+            in
+            begin match try_close_inner_div p ~line_len ~close children with
+            | Some children -> Ext_div (fence, children) :: bs
+            | None ->
+                if line_len >= fence.fence_len
+                then Ext_div ({ fence with closing_fence = Some (close ()) },
+                              children) :: bs
+                else Ext_div (fence, add_line p children) :: bs
+            end
+        | None -> Ext_div (fence, add_line p children) :: bs
+
   and add_line p = function
   | Paragraph par :: bs -> try_add_to_paragraph p par bs
   | ((Thematic_break _ | Heading _ | Blank_line _ | Linkref_def _
@@ -759,6 +832,7 @@ module Block_struct = struct
   | Code_block (`Indented ls) :: bs -> try_add_to_indented_code_block p ls bs
   | Code_block (`Fenced f) :: bs -> try_add_to_fenced_code_block p f bs
   | Block_quote (ind, marker, bq) :: bs -> try_add_to_block_quote p ind bq marker bs
+  | Ext_div (fence, children) :: bs -> try_add_to_div p fence children bs
   | Html_block html :: bs -> try_add_to_html_block p html bs
   | Ext_table (ind, rows) :: bs -> try_add_to_table p ind rows bs
   | Ext_footnote (i, l, blocks) :: bs -> try_add_to_footnote p i l blocks bs
@@ -1017,6 +1091,8 @@ let split_attribute_paragraph p (par : Block_struct.paragraph) =
 let rec prepare_block_struct p = function
 | Block_struct.Block_quote (indent, marker, bs) ->
     [Block_struct.Block_quote (indent, marker, prepare_block_structs p bs)]
+| Block_struct.Ext_div (fence, bs) ->
+    [Block_struct.Ext_div (fence, prepare_block_structs p bs)]
 | Block_struct.List l ->
     let item (i : Block_struct.list_item) =
       { i with blocks = prepare_block_structs p i.blocks }
@@ -1072,6 +1148,38 @@ let rec block_struct_to_block_quote p indent marker bs =
     meta_of_metas p ~first:first_meta ~last:(Block.meta block)
   in
   Block.Block_quote ({indent; block}, meta)
+
+and block_struct_to_div p (fence : Block_struct.div_fence) bs =
+  let block = match bs with
+  | [] -> Block.empty
+  | last :: rest ->
+      let last = block_struct_to_block p last in
+      let blocks =
+        List.fold_left (fun acc b -> block_struct_to_block p b :: acc) [last] rest
+      in
+      begin match blocks with
+      | [b] -> b
+      | blocks ->
+          let first = Block.meta (List.hd blocks) and last = Block.meta last in
+          Block.Blocks (blocks, meta_of_metas p ~first ~last)
+      end
+  in
+  let opening_fence = layout_clean_raw_span p fence.opening_fence in
+  let class' = Option.map (clean_raw_span p) fence.class' in
+  let closing_fence = Option.map (layout_clean_raw_span p) fence.closing_fence in
+  let meta =
+    let first = meta p (textloc_of_span p fence.opening_fence) in
+    let last = match fence.closing_fence with
+    | Some cf -> meta p (textloc_of_span p cf)
+    | None -> Block.meta block
+    in
+    meta_of_metas p ~first ~last
+  in
+  let div =
+    { Block.Div.indent = fence.indent; opening_fence; class'; closing_fence;
+      block }
+  in
+  Block.Ext_div (div, meta)
 
 and block_struct_to_footnote_definition p indent (label, defined_label) bs =
   let add_block p acc b = block_struct_to_block p b :: acc in
@@ -1170,6 +1278,7 @@ and block_struct_to_block p = function
     Block.Ext_attributes
       (Block.Attributes.make ~specs Block.empty, Meta.none)
 | Block_struct.Ext_table (i, rows) -> block_struct_to_table p i rows
+| Block_struct.Ext_div (fence, bs) -> block_struct_to_div p fence bs
 | Block_struct.Ext_footnote (i, labels, bs) ->
     block_struct_to_footnote_definition p i labels bs
 
@@ -1185,6 +1294,8 @@ let block_struct_to_doc p (doc, meta) =
   | Block.Blocks (bs, meta) -> Block.Blocks (resolve_blocks bs, meta)
   | Block.Ext_footnote_definition (fn, meta) ->
       Block.Ext_footnote_definition ({ fn with block = resolve_block fn.block }, meta)
+  | Block.Ext_div (d, meta) ->
+      Block.Ext_div ({ d with block = resolve_block (Block.Div.block d) }, meta)
   | b -> b
   and resolve_blocks bs =
     let is_empty = function Block.Blocks ([], _) -> true | _ -> false in

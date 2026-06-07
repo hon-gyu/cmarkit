@@ -297,6 +297,13 @@ let block_quote c bq =
   C.string c "\\end{quote}";
   newline c
 
+let div c d =
+  newline c;
+  C.string c "\\begin{quote}";
+  C.block c (Block.Div.block d);
+  C.string c "\\end{quote}";
+  newline c
+
 let code_block c cb =
   let info = Option.map fst (Block.Code_block.info_string cb) in
   let lang = Option.bind info Block.Code_block.language_of_info_string in
@@ -459,6 +466,7 @@ let block c = function
 | Block.Thematic_break _ -> thematic_break c; true
 | Block.Ext_math_block (cb, _)-> math_block c cb; true
 | Block.Ext_table (t, _)-> table c t; true
+| Block.Ext_div (d, _) -> div c d; true
 | Block.Ext_attributes (a, _) -> block_attributes c a; true
 | Block.Blank_line _ -> true
 | Block.Link_reference_definition _

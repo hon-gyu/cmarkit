@@ -1394,11 +1394,45 @@ module Block : sig
     (** A label definition for footnotes. *)
   end
 
+  (** Djot divs. *)
+  module Div : sig
+
+    type block := t
+
+    type t
+    (** The type for {{:https://djot.net/}djot} divs: a fenced container of
+        block-level content with an optional class name. Only parsed when
+        {!Doc.of_string} is called with [div:true]. *)
+
+    val make :
+      ?indent:Layout.indent -> ?opening_fence:Layout.string node ->
+      ?class':string node -> ?closing_fence:Layout.string node option ->
+      block -> t
+    (** [make b] is a div with content [b]. *)
+
+    val indent : t -> Layout.indent
+    (** [indent d] is the indentation to the opening fence. *)
+
+    val opening_fence : t -> Layout.string node
+    (** [opening_fence d] is the opening colon fence (excluding the class). *)
+
+    val class' : t -> string node option
+    (** [class' d] is the div's class name, if any. *)
+
+    val closing_fence : t -> Layout.string node option
+    (** [closing_fence d] is the closing colon fence, or [None] if the div
+        was closed by the end of the document or its containing block. *)
+
+    val block : t -> block
+    (** [block d] is the div's content. *)
+  end
+
   type t +=
   | Ext_math_block of Code_block.t node
     (** {{!Cmarkit.ext_math_display}display math}*)
   | Ext_table of Table.t node (** *)
   | Ext_footnote_definition of Footnote.t node (** *)
+  | Ext_div of Div.t node (** djot {{!Block.Div}div} *)
   (** The supported block extensions. These blocks are only parsed when
       {!Doc.of_string} is called with [strict:false]. *)
 
@@ -1474,7 +1508,7 @@ module Doc : sig
     ?marked_emphasis_delims:bool -> ?strong_emphasis_width:int ->
     ?extra_inline_containers:Inline.Extra_inline_container.Config.t ->
     ?block_id:bool -> ?djot_inline_attributes:bool ->
-    ?djot_block_attributes:bool ->
+    ?djot_block_attributes:bool -> ?div:bool ->
     ?strict:bool -> string -> t
     (** [of_string md] is a document from the UTF-8 encoded CommonMark
         document [md].

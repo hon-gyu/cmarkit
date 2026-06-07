@@ -302,10 +302,32 @@ module Footnote = struct
     Def ({ indent = 0; label; defined_label; block = empty}, Meta.none)
 end
 
+module Div = struct
+  type nonrec t =
+    { indent : Layout.indent;
+      opening_fence : Layout.string node;
+      class' : string node option;
+      closing_fence : Layout.string node option;
+      block : t; }
+
+  let make
+      ?(indent = 0) ?(opening_fence = Layout.empty) ?class'
+      ?(closing_fence = Some Layout.empty) block
+    =
+    { indent; opening_fence; class'; closing_fence; block }
+
+  let indent d = d.indent
+  let opening_fence d = d.opening_fence
+  let class' d = d.class'
+  let closing_fence d = d.closing_fence
+  let block d = d.block
+end
+
 type t +=
 | Ext_math_block of Code_block.t node
 | Ext_table of Table.t node
 | Ext_footnote_definition of Footnote.t node
+| Ext_div of Div.t node
 
 (* Functions on blocks *)
 
@@ -318,6 +340,7 @@ let meta ?(ext = ext_none) = function
 | List (_, m) | Paragraph (_, m) | Thematic_break (_, m)
 | Ext_math_block (_, m) | Ext_table (_, m)
 | Ext_attributes (_, m)
+| Ext_div (_, m)
 | Ext_footnote_definition (_, m) -> m
 | b -> ext b
 [@@@ocamlformat "enable"]
@@ -476,6 +499,8 @@ let rec normalize ?(ext = ext_none) = function
 | Ext_footnote_definition (fn, m) ->
     let fn = { fn with block = normalize ~ext fn.block } in
     Ext_footnote_definition (fn, m)
+| Ext_div (d, m) ->
+    Ext_div ({ d with block = normalize ~ext d.block }, m)
 | Ext_attributes (a, m) ->
     Ext_attributes (Attributes.make ~specs:a.specs (normalize ~ext a.block), m)
 | b -> ext b
@@ -504,4 +529,5 @@ let rec defs
       | Some def -> Label.Map.add (Label.key def) (Footnote.Def fn) init
       in
       defs ~ext ~init (Footnote.block (fst fn))
+  | Ext_div (d, _) -> defs ~ext ~init (Div.block d)
   | b -> ext init b

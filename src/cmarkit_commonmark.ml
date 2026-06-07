@@ -336,6 +336,26 @@ let block_quote c bq  =
   push_indent c (`Q (Block.Block_quote.indent bq));
   C.block c (Block.Block_quote.block bq); pop_indent c
 
+let div c d =
+  let class' = Block.Div.class' d in
+  newline c; push_indent c (`I (Block.Div.indent d)); indent c;
+  begin match fst (Block.Div.opening_fence d) with
+  | "" -> (* synthesized: ::: + optional space + class *)
+      C.string c ":::";
+      (match class' with
+       | None -> () | Some (cls, _) -> C.byte c ' '; C.string c cls)
+  | opening -> (* opening already holds the layout up to the class *)
+      C.string c opening;
+      (match class' with None -> () | Some (cls, _) -> C.string c cls)
+  end;
+  C.block c (Block.Div.block d);
+  begin match Block.Div.closing_fence d with
+  | None -> ()
+  | Some (close, _) ->
+      newline c; indent c; C.string c (if close = "" then ":::" else close)
+  end;
+  pop_indent c
+
 let code_block c cb = match Block.Code_block.layout cb with
 | `Indented ->
     newline c; push_indent c (`I 4); indent c;
@@ -485,6 +505,7 @@ let block c = function
 | Block.Ext_math_block (cb, _) -> code_block c cb; true
 | Block.Ext_table (t, _) -> table c t; true
 | Block.Ext_footnote_definition (t, _) -> footnote c t; true
+| Block.Ext_div (d, _) -> div c d; true
 | Block.Ext_attributes (a, _) -> block_attributes c a; true
 | _ -> newline c; indent c; C.string c "<!-- Unknown Cmarkit block -->"; true
 

@@ -498,6 +498,17 @@ let table c t =
   rows c (Block.Table.col_count t) ~align:[] (Block.Table.rows t);
   C.string c "</table></div>"
 
+let div c d =
+  C.string c "<div";
+  begin match Block.Div.class' d with
+  | None -> ()
+  | Some (cls, _) ->
+      C.string c " class=\""; html_escaped_string c cls; C.byte c '\"'
+  end;
+  C.string c ">\n";
+  C.block c (Block.Div.block d);
+  C.string c "</div>\n"
+
 let block_attributes c a =
   let attrs = Block.Attributes.attributes a in
   match Block.Attributes.block a with
@@ -523,6 +534,7 @@ let block c = function
 | Block.Thematic_break (_, _) -> thematic_break c; true
 | Block.Ext_math_block (cb, _) -> math_block c cb; true
 | Block.Ext_table (t, _) -> table c t; true
+| Block.Ext_div (d, _) -> div c d; true
 | Block.Ext_attributes (a, _) -> block_attributes c a; true
 | Block.Blank_line _
 | Block.Link_reference_definition _

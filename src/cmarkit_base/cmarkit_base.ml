@@ -1036,6 +1036,8 @@ type line_type =
 | Thematic_break_line of last
 | Ext_table_row of last
 | Ext_footnote_label of rev_spans * last * string
+| Ext_div_line of first * last * (first * last) option
+  (* Oymarkit djot div: colon fence span and optional class name span *)
 | Nomatch
 
 let thematic_break s ~last ~start =
@@ -1158,6 +1160,56 @@ let fenced_code_block_continue ~fence:(fc, fcount) s ~last ~start =
     try fence s last k (k + 1) with Exit -> `Code
   in
   if start > last then `Code else loop s start last start
+
+(* Oymarkit djot divs. https://djot.net/
+
+   A div opens with a line of >= 3 colons optionally followed by whitespace and
+   a single class name (a run of non-whitespace), and nothing else. It closes
+   with a line of >= 3 colons (and only trailing whitespace). Closing matching
+   (a closing fence must be at least as long as the opening) is handled by the
+   parser; here we just recognize the lines and report the colon run length. *)
+
+let div_open s ~last ~start =
+  let rec class_name s last first k =
+    if k > last then Some (first, last) else
+    if s.[k] = ' ' || s.[k] = '\t'
+    then (if first_non_blank s ~last ~start:k > last then Some (first, k - 1)
+          else None (* extra content after the class name *))
+    else class_name s last first (k + 1)
+  in
+  let rec fence s last fence_first k =
+    if k <= last && s.[k] = ':' then fence s last fence_first (k + 1) else
+    let fence_last = k - 1 in
+    if fence_last - fence_first + 1 < 3 then Nomatch else
+    let after_blank = first_non_blank s ~last ~start:k in
+    if after_blank > last then Ext_div_line (fence_first, fence_last, None) else
+    match class_name s last after_blank after_blank with
+    | None -> Nomatch
+    | Some span -> Ext_div_line (fence_first, fence_last, Some span)
+  in
+  let rec loop s first last k =
+    if k > last then Nomatch else
+    if k - first + 1 < 4 && s.[k] = ' ' then loop s first last (k + 1) else
+    if s.[k] <> ':' then Nomatch else
+    fence s last k (k + 1)
+  in
+  if start > last then Nomatch else loop s start last start
+
+let div_close s ~last ~start =
+  (* [Some n] if the line is a closing fence of [n] colons, [None] otherwise. *)
+  let rec fence s last fence_first k =
+    if k <= last && s.[k] = ':' then fence s last fence_first (k + 1) else
+    let fcount = k - fence_first in
+    if fcount < 3 then None else
+    if first_non_blank s ~last ~start:k > last then Some fcount else None
+  in
+  let rec loop s first last k =
+    if k > last then None else
+    if k - first + 1 < 4 && s.[k] = ' ' then loop s first last (k + 1) else
+    if s.[k] <> ':' then None else
+    fence s last k (k + 1)
+  in
+  if start > last then None else loop s start last start
 
 let html_start_cond_1_set =
   String_set.of_list ["pre"; "script"; "style"; "textarea"]
