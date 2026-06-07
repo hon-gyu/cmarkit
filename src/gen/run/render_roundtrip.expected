@@ -1,17 +1,21 @@
 
 --- Failure --------------------------------------------------------------------
 
-Test roundtrip failed (4 shrink steps):
+Test roundtrip failed (19 shrink steps):
 
-{ block: (List Thematic_break)
-; cm: ┌─────┐
-      │-·---│
-      └─────┘
+{ block: (Blocks Blank_line (Html_block <div>) (Blocks Thematic_break))
+; cm: ┌──────┐
+      │↵     │
+      │<div>↵│
+      │---   │
+      └──────┘
 ; "reparse":
-  Thematic_break
+  (Blocks Blank_line (Html_block  "<div>\
+                                 \n---"))
 ; "reparse_cm":
   ┌─────┐
-  │- ---│
+  │<div>│
+  │---  │
   └─────┘
 }
 ================================================================================

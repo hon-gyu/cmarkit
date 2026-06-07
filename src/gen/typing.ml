@@ -140,6 +140,68 @@ let no_empty_list : Property.t =
   in
   { name; check }
 
+(** {1 No marker-colliding thematic break in a list item}
+
+    A bullet list item whose {e leading} block is a thematic break of the same
+    character as the bullet marker has no syntactic witness. The marker and the
+    thematic break share the item's first line, e.g. [- ---], which is a uniform
+    run of [-] and therefore parses as a {!Block.Thematic_break} (a thematic
+    break takes precedence over a list item), not a list. Only [-] and [*] are
+    affected: they are the characters that are both bullet markers and thematic
+    break characters ([+] is marker-only, [_] is thematic-break-only, ordered
+    markers never collide). So [* ---] is fine — mixed characters, no uniform
+    run — and must not be rejected. *)
+
+(* First non-blank character of a thematic break's layout art. *)
+let thematic_break_char (tb : Block.Thematic_break.t) : char option =
+  let s = Block.Thematic_break.layout tb in
+  let n = String.length s in
+  let rec find i =
+    if i >= n then None
+    else match s.[i] with ' ' | '\t' -> find (i + 1) | c -> Some c
+  in
+  find 0
+
+(* The block that renders on the item's first (marker) line: peel [Blocks]
+   splicing down to its head. *)
+let rec leading_block (b : Block.t) : Block.t option =
+  match b with
+  | Block.Blocks (b0 :: _, _) -> leading_block b0
+  | Block.Blocks ([], _) -> None
+  | other -> Some other
+
+let no_marker_colliding_thematic_break : Property.t =
+  let name = "no marker-colliding thematic break in list item" in
+  let item_collides marker (item, _) =
+    match leading_block (Block.List_item.block item) with
+    | Some (Block.Thematic_break (tb, _)) ->
+        thematic_break_char tb = Some marker
+    | _ -> false
+  in
+  let rec check : Block.t -> Property.result =
+   fun b ->
+    let here =
+      match b with
+      | Block.List (l, _) as list -> (
+          match Block.List'.type' l with
+          | `Unordered marker
+            when List.exists (item_collides marker) (Block.List'.items l) ->
+              Property.Fail (b, [ ("list", Block list) ])
+          | _ -> Pass)
+      | _ -> Pass
+    in
+    match here with
+    | Property.Fail _ -> here
+    | Property.Pass ->
+        List.fold_left
+          (fun acc child ->
+            match acc with
+            | Property.Fail _ -> acc
+            | Property.Pass -> check child)
+          Property.Pass (child_blocks b)
+  in
+  { name; check }
+
 (** {1 No HTML-block-starting paragraph}
 
     A paragraph whose rendered first line starts with CommonMark HTML block
@@ -196,6 +258,7 @@ let typed : Property.t =
       & no_empty_paragraph
       & no_empty_blocks
       & no_empty_list
+      & no_marker_colliding_thematic_break
       & no_html_block_starting_paragraph)
   in
   let name' = "typed: " ^ p.name in
