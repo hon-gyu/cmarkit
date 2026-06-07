@@ -1210,13 +1210,25 @@ and second_pass p toks line =
 
 (* Last pass *)
 
-and last_pass p toks line =
+and last_pass p toks start_line =
   (* Only [Inline] and [Newline] tokens remain. We fold over them to
       convert them to [inline] values and [Break]s. [Text] inlines
       are created for data between them. *)
   let rec loop toks line acc k = match toks with
   | [] ->
-      List.rev (try_add_text_inline p line ~first:k ~last:line.last acc)
+      (* OYMARKIT CHANGE: bound the trailing text to the text span, not to the
+         whole physical line. [line.last] is the end of the current source
+         line; but when the last token is an emphasis (or code span) it rebuilds
+         the line record and hands back one that still points at the real end of
+         line, past the closing [ ] ] of an enclosing link/image. The fill below
+         would then leak that enclosing "](dest)" in as literal text. While we
+         are still on the line we started on, cap at [start_line.last] (the
+         intended text-span end); only on a later line is [line.last] the right
+         bound. Same [line_pos] idiom as the [try_link] fix. *)
+      let last =
+        if start_line.line_pos = line.line_pos then start_line.last else line.last
+      in
+      List.rev (try_add_text_inline p line ~first:k ~last acc)
   | Newline { start; break_type; newline } :: toks ->
       let acc = try_add_text_inline p line ~first:k ~last:(start - 1) acc in
       let break = break_inline p line ~start ~break_type ~newline in
@@ -1274,7 +1286,7 @@ and last_pass p toks line =
     | Extra_inline_container_marks _ | Math_span_marks _) :: _ ->
       assert false
   in
-  loop toks line [] line.first
+  loop toks start_line [] start_line.first
 
 and parse_tokens p toks first_line =
   let toks, had_link = first_pass p toks first_line in
