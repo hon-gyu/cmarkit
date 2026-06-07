@@ -63,6 +63,36 @@ let code_block_egs : Block.t list =
     ]
   |> List.map (fun cb -> Block.(Code_block (cb, Meta.none)))
 
+(* Render-order peeling for the html-block absorption rule
+   ({!Typing.no_html_block_absorbing_successor}). Absorption only crosses
+   [Blocks] siblings; a [Block_quote]/[List] boundary stops it, so we peel
+   [Blocks] tails/heads but no further. *)
+let rec trailing_absorbing : Block.t -> bool = function
+  | Block.Blocks (bs, _) -> (
+      match List.rev bs with last :: _ -> trailing_absorbing last | [] -> false)
+  | Block.Html_block (lines, _) -> Common_.html_block_absorbs lines
+  | _ -> false
+
+let rec leads_with_blank : Block.t -> bool = function
+  | Block.Blocks (b0 :: _, _) -> leads_with_blank b0
+  | Block.Blank_line _ -> true
+  | _ -> false
+
+(* Insert a [Blank_line] between any two consecutive siblings where the first's
+   render-order trailing leaf is an absorbing html block and the second does not
+   already start with a blank line. Never appends after the last element, so a
+   genuinely-final html block keeps no trailing blank. *)
+let separate_absorbing_html (bs : Block.t list) : Block.t list =
+  let blank = Block.Blank_line ("", Meta.none) in
+  let rec go = function
+    | a :: (b :: _ as rest) ->
+        if trailing_absorbing a && not (leads_with_blank b) then
+          a :: blank :: go rest
+        else a :: go rest
+    | last -> last
+  in
+  go bs
+
 let html_block_egs : Block.t list =
   [
     [ ("<div>", Meta.none) ];
@@ -86,6 +116,11 @@ module Bconfig = struct
         (** A bullet list item whose leading block is a thematic break of the
             {e same} character as the marker collapses on reparse: [- ---] is a
             uniform [-] run, so it parses as a thematic break, not a list. *)
+    no_html_block_absorbing_successor : bool;
+        (** A type-6/7 (and any unclosed) HTML block stays open at its last line
+            and swallows the block that renders right after it. Insert a
+            [Blank_line] between them (only ever {e between} siblings, never
+            after the last, so a final html block keeps no trailing blank). *)
     (* inline <-> block interaction rules
     -------------------- *)
     no_html_block_starting_paragraph : bool;
@@ -105,6 +140,7 @@ module Bconfig = struct
       no_empty_blocks = false;
       no_empty_list = false;
       no_marker_colliding_thematic_break = false;
+      no_html_block_absorbing_successor = false;
       no_html_block_starting_paragraph = true;
       no_break_in_atx_heading = false;
       inline = Iconfig.typed;
@@ -127,6 +163,7 @@ module Bconfig = struct
       no_empty_blocks = true;
       no_empty_list = true;
       no_marker_colliding_thematic_break = true;
+      no_html_block_absorbing_successor = true;
       no_html_block_starting_paragraph = true;
       no_break_in_atx_heading = true;
       inline = Iconfig.typed;
@@ -257,6 +294,11 @@ and gen_blocks ?(rule_lead_exclude_chars = []) config st n : Block.t G.t =
       let* head = gen_block ~rule_lead_exclude_chars config' st n in
       let* tail = list_size (return (len - 1)) (gen_block config' st n) in
       return (head :: tail)
+  in
+  let blocks =
+    if config.no_html_block_absorbing_successor then
+      separate_absorbing_html blocks
+    else blocks
   in
   return (Block.Blocks (blocks, Meta.none))
 

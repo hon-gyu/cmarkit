@@ -249,6 +249,50 @@ let no_html_block_starting_paragraph : Property.t =
   in
   { name; check }
 
+(** {1 No HTML block absorbing its successor}
+
+    A type-6/7 HTML block (or any whose end condition its own lines never meet)
+    stays open at its last line, so on reparse it swallows whatever block renders
+    right after it — unless that successor is a [Blank_line] (which closes it) or
+    a container boundary intervenes. We check on the {!Cmarkit_.Block.normalize}d
+    tree so render-order adjacency is literal: normalize splices every nested
+    [Blocks] flat, so a trailing html block buried in an inner [Blocks] sits
+    directly before its real successor. Only [Blocks] siblings can collide; a
+    [Block_quote]/[List] boundary stops absorption, so scanning each flat
+    [Blocks] list is enough. *)
+let no_html_block_absorbing_successor : Property.t =
+  let name = "no html block absorbing successor" in
+  let absorbing = function
+    | Block.Html_block (lines, _) -> Common_.html_block_absorbs lines
+    | _ -> false
+  in
+  let blank = function Block.Blank_line _ -> true | _ -> false in
+  let rec has_bad_pair = function
+    | a :: (b :: _ as rest) ->
+        (absorbing a && not (blank b)) || has_bad_pair rest
+    | _ -> false
+  in
+  let rec check : Block.t -> Property.result =
+   fun b ->
+    let here =
+      match b with
+      | Block.Blocks (bs, _) as blocks when has_bad_pair bs ->
+          Property.Fail (b, [ ("blocks", Block blocks) ])
+      | _ -> Pass
+    in
+    match here with
+    | Property.Fail _ -> here
+    | Property.Pass ->
+        List.fold_left
+          (fun acc child ->
+            match acc with
+            | Property.Fail _ -> acc
+            | Property.Pass -> check child)
+          Property.Pass (child_blocks b)
+  in
+  let check b = check (Block.normalize b) in
+  { name; check }
+
 (* All rules aggregated *)
 let typed : Property.t =
   let p =
@@ -259,6 +303,7 @@ let typed : Property.t =
       & no_empty_blocks
       & no_empty_list
       & no_marker_colliding_thematic_break
+      & no_html_block_absorbing_successor
       & no_html_block_starting_paragraph)
   in
   let name' = "typed: " ^ p.name in
