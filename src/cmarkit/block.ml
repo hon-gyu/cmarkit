@@ -320,6 +320,81 @@ let meta ?(ext = ext_none) = function
 | Ext_attributes (_, m)
 | Ext_footnote_definition (_, m) -> m
 | b -> ext b
+[@@@ocamlformat "enable"]
+(* Oymarkit: merging adjacent same-kind lists in [normalize].
+
+   Two sibling [List]s of the same "kind" (same bullet character, or same
+   ordered delimiter -- the ordered start number is irrelevant) separated by
+   nothing but [Blank_line]s have no syntactic witness as two lists: the parser
+   always fuses them into one (the blank lines only make the result loose). A
+   [List] is a pure grouping container for its items -- the syntax lives in the
+   item markers, not the list -- exactly as [Blocks] is for blocks, so this is
+   the same representational freedom [normalize] already removes for nested and
+   singleton [Blocks]. See doc/same-content-principle.md.
+
+   Gated behind the [OYMARKIT_DISABLE_MERGE_ADJACENT_LISTS] environment variable
+   (set to [1]/[true]/[yes]/[on], case-insensitive) so it can be toggled without
+   recompiling. When unset this is the identity and [normalize] keeps cmarkit's
+   original behaviour. *)
+
+let merge_adjacent_lists_env = "OYMARKIT_DISABLE_MERGE_ADJACENT_LISTS"
+
+let merge_adjacent_lists_enabled () =
+  match
+    Option.map String.lowercase_ascii (Sys.getenv_opt merge_adjacent_lists_env)
+  with
+  | Some ("1" | "true" | "yes" | "on") -> false
+  | _ -> true
+
+(* The merge "kind": ordered lists merge on their delimiter, unordered on their
+   bullet; the ordered start number does not affect merging. *)
+let list_kind : List'.type' -> [ `U of char | `O of char ] = function
+  | `Unordered c -> `U c
+  | `Ordered (_, c) -> `O c
+
+(* Append [blanks] (the [Blank_line]s that sat between two fused lists) into the
+   last item's content, reproducing the loose-list shape the parser emits for
+   blank-separated items. No-op when [blanks] is empty (a gap-free fuse stays
+   tight). *)
+let push_blanks_into_last_item items blanks =
+  match blanks with
+  | [] -> items
+  | _ -> (
+      match List.rev items with
+      | [] -> items
+      | (last, m) :: rev_init ->
+          let block =
+            match last.List_item.block with
+            | Blocks (bs, bm) -> Blocks (bs @ blanks, bm)
+            | b -> Blocks (b :: blanks, Meta.none)
+          in
+          List.rev (({ last with List_item.block }, m) :: rev_init))
+
+(* Fuse every maximal run of same-kind [List]s separated only by [Blank_line]s.
+   Operates on an already-flattened, normalised block list. *)
+let rec merge_adjacent_lists = function
+  | List (l, m) :: rest ->
+      let l, rest = absorb_following_lists l rest in
+      List (l, m) :: merge_adjacent_lists rest
+  | b :: rest -> b :: merge_adjacent_lists rest
+  | [] -> []
+
+and absorb_following_lists l rest =
+  let kind = list_kind l.List'.type' in
+  let rec span_blanks acc = function
+    | (Blank_line _ as bl) :: bs -> span_blanks (bl :: acc) bs
+    | bs -> (List.rev acc, bs)
+  in
+  match span_blanks [] rest with
+  | blanks, List (l2, _) :: rest when list_kind l2.List'.type' = kind ->
+      let items =
+        push_blanks_into_last_item l.List'.items blanks @ l2.List'.items
+      in
+      let tight = l.List'.tight && l2.List'.tight && blanks = [] in
+      absorb_following_lists { l with List'.items; tight } rest
+  | _ -> (l, rest)
+
+[@@@ocamlformat "disable"]
 
 let rec normalize ?(ext = ext_none) = function
 | Blank_line _ | Code_block _ | Heading _ | Html_block _
@@ -341,6 +416,7 @@ let rec normalize ?(ext = ext_none) = function
     | [] -> List.rev acc
     in
     let bs = loop [normalize ~ext b] bs in
+    let bs = if merge_adjacent_lists_enabled () then merge_adjacent_lists bs else bs in
     (match bs with [b] -> b | _ -> Blocks (bs, m))
 | Ext_footnote_definition (fn, m) ->
     let fn = { fn with block = normalize ~ext fn.block } in
