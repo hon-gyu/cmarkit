@@ -1,18 +1,31 @@
 
 --- Failure --------------------------------------------------------------------
 
-Test roundtrip failed (10 shrink steps):
+Test roundtrip failed (27 shrink steps):
 
-{ block: (Blocks (Blocks Blank_line Blank_line) Blank_line)
-; cm: ┌─┐
-      │↵│
-      │↵│
-      └─┘
+{ block: (Blocks Blank_line Blank_line Blank_line Blank_line Blank_line
+          Blank_line
+          (Blocks Blank_line (Code_block no-info "indented code")
+           (Code_block no-info "indented code")))
+; cm: ┌──────────────────┐
+      │↵                 │
+      │↵                 │
+      │↵                 │
+      │↵                 │
+      │↵                 │
+      │↵                 │
+      │↵                 │
+      │····indented·code↵│
+      │····indented·code │
+      └──────────────────┘
 ; "reparse":
-  (Blocks Blank_line Blank_line Blank_line)
+  (Blocks Blank_line Blank_line Blank_line Blank_line Blank_line Blank_line
+   Blank_line (Code_block no-info "indented code" "indented code"))
 ; "reparse_cm":
-  ┌┐
-  └┘
+  ┌─────────────────┐
+  │    indented code│
+  │    indented code│
+  └─────────────────┘
 }
 ================================================================================
 failure (1 tests failed, 0 tests errored, ran 1 tests)

@@ -415,7 +415,11 @@ let rec normalize ?(ext = ext_none) = function
     | b :: bs -> loop (normalize ~ext b :: acc) bs
     | [] -> List.rev acc
     in
-    let bs = loop [normalize ~ext b] bs in
+    (* Route the head through [loop] too: pre-normalizing it and seeding it
+       whole leaves a multi-element nested [Blocks] at head position un-spliced,
+       violating the "no [Blocks _] case" contract (e.g.
+       [Blocks [Blocks [x; y]; z]] would keep its inner [Blocks]). *)
+    let bs = loop [] (b :: bs) in
     let bs = if merge_adjacent_lists_enabled () then merge_adjacent_lists bs else bs in
     (match bs with [b] -> b | _ -> Blocks (bs, m))
 | Ext_footnote_definition (fn, m) ->
