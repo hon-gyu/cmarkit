@@ -112,6 +112,34 @@ let no_empty_blocks : Property.t =
   in
   { name; check }
 
+(** {1 No empty list}
+
+    A [List] with zero items renders to nothing: a list has no syntax of its own,
+    it exists only as the grouping of its item markers. With no item there is no
+    marker, so the parser never emits an empty list (it would emit a
+    [Blank_line] / nothing instead). Same family as {!no_empty_blocks}. *)
+let no_empty_list : Property.t =
+  let name = "no empty list" in
+  let rec check : Block.t -> Property.result =
+   fun b ->
+    let here =
+      match b with
+      | Block.List (l, _) as list when Block.List'.items l = [] ->
+          Property.Fail (b, [ ("list", Block list) ])
+      | _ -> Pass
+    in
+    match here with
+    | Property.Fail _ -> here
+    | Property.Pass ->
+        List.fold_left
+          (fun acc child ->
+            match acc with
+            | Property.Fail _ -> acc
+            | Property.Pass -> check child)
+          Property.Pass (child_blocks b)
+  in
+  { name; check }
+
 (** {1 No HTML-block-starting paragraph}
 
     A paragraph whose rendered first line starts with CommonMark HTML block
@@ -167,6 +195,7 @@ let typed : Property.t =
       (* & no_trailing_blank_line_in_blocks *)
       & no_empty_paragraph
       & no_empty_blocks
+      & no_empty_list
       & no_html_block_starting_paragraph)
   in
   let name' = "typed: " ^ p.name in

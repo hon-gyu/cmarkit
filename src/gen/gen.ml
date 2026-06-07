@@ -52,6 +52,9 @@ module Bconfig = struct
     no_trailing_blank_line_in_blocks : bool;
     no_empty_paragraph : bool;
     no_empty_blocks : bool;
+    no_empty_list : bool;
+        (** A [List] with zero items has no syntactic witness (no item marker),
+            so the parser never emits one. *)
     (* inline <-> block interaction rules
     -------------------- *)
     no_html_block_starting_paragraph : bool;
@@ -69,6 +72,7 @@ module Bconfig = struct
       no_trailing_blank_line_in_blocks = false;
       no_empty_paragraph = false;
       no_empty_blocks = false;
+      no_empty_list = false;
       no_html_block_starting_paragraph = true;
       no_break_in_atx_heading = false;
       inline = Iconfig.typed;
@@ -89,6 +93,7 @@ module Bconfig = struct
       default with
       no_empty_paragraph = true;
       no_empty_blocks = true;
+      no_empty_list = true;
       no_html_block_starting_paragraph = true;
       no_break_in_atx_heading = true;
       inline = Iconfig.typed;
@@ -155,10 +160,14 @@ let rec gen_block config st n =
             (fun block -> (Block.List_item.make block, Meta.none))
             (gen_block config st (n / 2))
         in
+        let gen_len =
+          if config.no_empty_list then int_range 1 (max 1 (n / 2))
+          else int_bound (n / 2)
+        in
         map
           (fun items ->
             Block.(List (Block.List'.make (`Unordered '-') items, Meta.none)))
-          (list_size (int_bound (n / 2)) gen_item)
+          (list_size gen_len gen_item)
       in
       oneof_weighted
         [

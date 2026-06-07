@@ -1,16 +1,18 @@
 
 --- Failure --------------------------------------------------------------------
 
-Test roundtrip failed (2 shrink steps):
+Test roundtrip failed (4 shrink steps):
 
-{ block: (Blocks (List))
-; cm: ┌┐
-      └┘
+{ block: (List Thematic_break)
+; cm: ┌─────┐
+      │-·---│
+      └─────┘
 ; "reparse":
-  Blank_line
+  Thematic_break
 ; "reparse_cm":
-  ┌┐
-  └┘
+  ┌─────┐
+  │- ---│
+  └─────┘
 }
 ================================================================================
 failure (1 tests failed, 0 tests errored, ran 1 tests)
