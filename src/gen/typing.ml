@@ -293,6 +293,59 @@ let no_html_block_absorbing_successor : Property.t =
   let check b = check (Block.normalize b) in
   { name; check }
 
+(** {1 No ambiguous indented code after a list}
+
+    An indented code block that renders after a list, with only blank lines
+    between them, is ambiguous when the final list item's continuation indent is
+    at most four columns. The code block's four-space prefix then continues the
+    item, so the parser keeps the line inside the list rather than opening a
+    top-level code block. Wider list markers can close the list and are valid. A
+    fenced code block preserves the same content and block structure in every
+    case.
+
+    We check the normalized tree so nested [Blocks] wrappers cannot hide the
+    render-order adjacency. Container boundaries still stop the interaction. *)
+let no_ambiguous_indented_code_after_list : Property.t =
+  let name = "no ambiguous indented code after list" in
+  let ambiguous_list = function
+    | Block.List (l, _) -> (
+        match Common_.list_last_item_continuation_indent l with
+        | Some indent -> indent <= 4
+        | None -> false)
+    | _ -> false
+  in
+  let indented_code = function
+    | Block.Code_block (cb, _) -> Block.Code_block.layout cb = `Indented
+    | _ -> false
+  in
+  let rec has_bad_sequence after_list = function
+    | [] -> false
+    | Block.Blank_line _ :: bs -> has_bad_sequence after_list bs
+    | (Block.List _ as list) :: bs -> has_bad_sequence (ambiguous_list list) bs
+    | b :: _ when after_list && indented_code b -> true
+    | _ :: bs -> has_bad_sequence false bs
+  in
+  let rec check : Block.t -> Property.result =
+   fun b ->
+    let here =
+      match b with
+      | Block.Blocks (bs, _) as blocks when has_bad_sequence false bs ->
+          Property.Fail (b, [ ("blocks", Block blocks) ])
+      | _ -> Pass
+    in
+    match here with
+    | Property.Fail _ -> here
+    | Property.Pass ->
+        List.fold_left
+          (fun acc child ->
+            match acc with
+            | Property.Fail _ -> acc
+            | Property.Pass -> check child)
+          Property.Pass (child_blocks b)
+  in
+  let check b = check (Block.normalize b) in
+  { name; check }
+
 (* All rules aggregated *)
 let typed : Property.t =
   let p =
@@ -304,6 +357,7 @@ let typed : Property.t =
       & no_empty_list
       & no_marker_colliding_thematic_break
       & no_html_block_absorbing_successor
+      & no_ambiguous_indented_code_after_list
       & no_html_block_starting_paragraph)
   in
   let name' = "typed: " ^ p.name in

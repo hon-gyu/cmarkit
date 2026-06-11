@@ -93,6 +93,89 @@ let separate_absorbing_html (bs : Block.t list) : Block.t list =
   in
   go bs
 
+(** Fence indented code blocks in the render-order context rejected by
+    {!Typing.no_ambiguous_indented_code_after_list}.
+
+    The traversal carries one bit of sibling state: whether the last non-blank
+    block at the current container level was a list whose final item accepts a
+    four-space continuation line. Blank lines and nested [Blocks] preserve this
+    state because neither establishes a CommonMark container boundary.
+    [Block_quote], [List], and footnote contents are rewritten independently,
+    so their boundaries reset the outer state.
+
+    When such a list is followed by an [`Indented] code block, only the code
+    block's layout is changed to the default fenced layout. Its content,
+    metadata, and surrounding block structure are preserved.
+
+    An alternative is context-aware sibling generation in {!gen_blocks}: after
+    generating a list, its successor could be generated with indented code
+    disabled. That would avoid this repair traversal, but it would thread
+    render-order state through the recursive [gen_block]/[gen_blocks] API,
+    including nested [Blocks]. This post-generation rewrite keeps the core
+    generator compositional while retaining the generated code block rather
+    than filtering out the entire AST. *)
+let fence_ambiguous_indented_code (block : Block.t) : Block.t =
+  let rec rewrite after_list = function
+    | Block.Blocks (bs, meta) ->
+        let after_list, bs = rewrite_blocks after_list bs in
+        (after_list, Block.Blocks (bs, meta))
+    | Block.Blank_line _ as block -> (after_list, block)
+    | Block.List (l, meta) ->
+        let rewrite_item (item, item_meta) =
+          let _, block = rewrite false (Block.List_item.block item) in
+          let item =
+            Block.List_item.make
+              ~before_marker:(Block.List_item.before_marker item)
+              ~marker:(Block.List_item.marker item)
+              ~after_marker:(Block.List_item.after_marker item)
+              ?ext_task_marker:(Block.List_item.ext_task_marker item)
+              block
+          in
+          (item, item_meta)
+        in
+        let items = List.map rewrite_item (Block.List'.items l) in
+        let l =
+          Block.List'.make ~tight:(Block.List'.tight l) (Block.List'.type' l)
+            items
+        in
+        let after_list =
+          match Common_.list_last_item_continuation_indent l with
+          | Some indent -> indent <= 4
+          | None -> after_list
+        in
+        (after_list, Block.List (l, meta))
+    | Block.Block_quote (bq, meta) ->
+        let _, block = rewrite false (Block.Block_quote.block bq) in
+        let bq =
+          Block.Block_quote.make ~indent:(Block.Block_quote.indent bq) block
+        in
+        (false, Block.Block_quote (bq, meta))
+    | Block.Ext_footnote_definition (fn, meta) ->
+        let _, block = rewrite false (Block.Footnote.block fn) in
+        let fn =
+          Block.Footnote.make ~indent:(Block.Footnote.indent fn)
+            ~defined_label:(Block.Footnote.defined_label fn)
+            (Block.Footnote.label fn) block
+        in
+        (false, Block.Ext_footnote_definition (fn, meta))
+    | Block.Code_block (cb, meta)
+      when after_list && Block.Code_block.layout cb = `Indented ->
+        let cb =
+          Block.Code_block.make
+            ?info_string:(Block.Code_block.info_string cb)
+            (Block.Code_block.code cb)
+        in
+        (false, Block.Code_block (cb, meta))
+    | block -> (false, block)
+  and rewrite_blocks after_list = function
+    | [] -> (after_list, [])
+    | block :: blocks ->
+        let after_list, block = rewrite after_list block in
+        let after_list, blocks = rewrite_blocks after_list blocks in
+        (after_list, block :: blocks)
+  in
+  snd (rewrite false block)
+
 let html_block_egs : Block.t list =
   [
     [ ("<div>", Meta.none) ];
@@ -121,6 +204,10 @@ module Bconfig = struct
             and swallows the block that renders right after it. Insert a
             [Blank_line] between them (only ever {e between} siblings, never
             after the last, so a final html block keeps no trailing blank). *)
+    no_ambiguous_indented_code_after_list : bool;
+        (** If a list's final continuation indent is at most four columns, an
+            indented code block after it becomes item content. Use a fenced
+            layout in that context. *)
     (* inline <-> block interaction rules
     -------------------- *)
     no_html_block_starting_paragraph : bool;
@@ -141,6 +228,7 @@ module Bconfig = struct
       no_empty_list = false;
       no_marker_colliding_thematic_break = false;
       no_html_block_absorbing_successor = false;
+      no_ambiguous_indented_code_after_list = false;
       no_html_block_starting_paragraph = true;
       no_break_in_atx_heading = false;
       inline = Iconfig.typed;
@@ -164,6 +252,7 @@ module Bconfig = struct
       no_empty_list = true;
       no_marker_colliding_thematic_break = true;
       no_html_block_absorbing_successor = true;
+      no_ambiguous_indented_code_after_list = true;
       no_html_block_starting_paragraph = true;
       no_break_in_atx_heading = true;
       inline = Iconfig.typed;
@@ -303,7 +392,10 @@ and gen_blocks ?(rule_lead_exclude_chars = []) config st n : Block.t G.t =
   return (Block.Blocks (blocks, Meta.none))
 
 let mk_gen_block ?(config = Bconfig.default) () : Block.t G.t =
-  G.(sized_size nat_small @@ gen_block config init_state)
+  let gen = G.(sized_size nat_small @@ gen_block config init_state) in
+  if config.no_ambiguous_indented_code_after_list then
+    G.map fence_ambiguous_indented_code gen
+  else gen
 
 let%expect_test "Default config should give a sensible distribution" =
   Pp_distr.pp_gen ~display:`Boxplot () Format.std_formatter (mk_gen_block ())

@@ -91,3 +91,24 @@ let () =
             (enable (fun c ->
                  { c with no_html_block_starting_paragraph = false })))
        () T.no_html_block_starting_paragraph
+
+(* no_ambiguous_indented_code_after_list
+   ------------------------------------- *)
+
+let () =
+  run
+  @@ P.qcheck_test_of_t ~count
+       ~gen:
+         (gen
+            (enable (fun c ->
+                 { c with no_ambiguous_indented_code_after_list = true })))
+       () T.no_ambiguous_indented_code_after_list
+
+let () =
+  run
+  @@ P.qcheck_test_of_t ~count ~negative:true
+       ~gen:
+         (gen
+            (enable (fun c ->
+                 { c with no_ambiguous_indented_code_after_list = false })))
+       () T.no_ambiguous_indented_code_after_list

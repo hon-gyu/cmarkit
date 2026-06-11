@@ -115,3 +115,41 @@ let reparse ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis
        ?marked_emphasis_delims ?strong_emphasis_width ?extra_inline_containers
        ?block_id ?djot_inline_attributes ?djot_block_attributes
   |> Doc.block
+
+(** Continuation indentation of the final list item as it will be emitted by
+    the CommonMark renderer.
+
+    This is the number of leading columns that a following line must have to
+    remain inside that item:
+
+    [before-marker + rendered-marker-width + after-marker]
+
+    The rendered marker width cannot be read uniformly from
+    {!Block.List_item.marker}: unordered lists always render the marker selected
+    by {!Block.List'.type'}, while ordered lists preserve a non-empty stored
+    marker but otherwise synthesize one from the item's ordinal and separator.
+    The final item's ordinal is [start + item-count - 1].
+
+    [None] means the list has no final item. In particular, callers should not
+    treat an empty list as having the usual two-column ["- "] continuation
+    indent. *)
+let list_last_item_continuation_indent (l : Block.List'.t) : int option =
+  match List.rev (Block.List'.items l) with
+  | [] -> None
+  | (item, _) :: _ ->
+      let marker_length =
+        match Block.List'.type' l with
+        | `Unordered _ -> 1
+        | `Ordered (start, sep) ->
+            let marker = fst (Block.List_item.marker item) in
+            if marker <> "" then String.length marker
+            else
+              let number = start + List.length (Block.List'.items l) - 1 in
+              let sep = if sep = '.' || sep = ')' then sep else '.' in
+              String.length (Int.to_string number)
+              + String.length (String.make 1 sep)
+      in
+      Some
+        (Block.List_item.before_marker item
+        + marker_length
+        + Block.List_item.after_marker item)
