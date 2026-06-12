@@ -176,6 +176,75 @@ let fence_ambiguous_indented_code (block : Block.t) : Block.t =
   in
   snd (rewrite false block)
 
+(** Insert an outside blank line between adjacent block-quote siblings.
+
+    Nested [Blocks] are transparent in render order, so the traversal carries
+    adjacency state through them. Actual containers are rewritten
+    independently. This preserves the two quote nodes and their inner block
+    boundaries.
+
+    TODO: this is quite complicated and I am not entirely sure if this is
+    the best way
+    *)
+let separate_adjacent_block_quotes (block : Block.t) : Block.t =
+  let blank = Block.Blank_line ("", Meta.none) in
+  let rec rewrite = function
+    | Block.Blocks (bs, meta) ->
+        let _, bs = rewrite_blocks false bs in
+        Block.Blocks (bs, meta)
+    | Block.Block_quote (bq, meta) ->
+        let block = rewrite (Block.Block_quote.block bq) in
+        let bq =
+          Block.Block_quote.make ~indent:(Block.Block_quote.indent bq) block
+        in
+        Block.Block_quote (bq, meta)
+    | Block.List (l, meta) ->
+        let rewrite_item (item, item_meta) =
+          let block = rewrite (Block.List_item.block item) in
+          let item =
+            Block.List_item.make
+              ~before_marker:(Block.List_item.before_marker item)
+              ~marker:(Block.List_item.marker item)
+              ~after_marker:(Block.List_item.after_marker item)
+              ?ext_task_marker:(Block.List_item.ext_task_marker item)
+              block
+          in
+          (item, item_meta)
+        in
+        let items = List.map rewrite_item (Block.List'.items l) in
+        let l =
+          Block.List'.make ~tight:(Block.List'.tight l) (Block.List'.type' l)
+            items
+        in
+        Block.List (l, meta)
+    | Block.Ext_footnote_definition (fn, meta) ->
+        let block = rewrite (Block.Footnote.block fn) in
+        let fn =
+          Block.Footnote.make ~indent:(Block.Footnote.indent fn)
+            ~defined_label:(Block.Footnote.defined_label fn)
+            (Block.Footnote.label fn) block
+        in
+        Block.Ext_footnote_definition (fn, meta)
+    | block -> block
+  and rewrite_blocks after_quote = function
+    | [] -> (after_quote, [])
+    | Block.Blocks (bs, meta) :: rest ->
+        let after_quote, bs = rewrite_blocks after_quote bs in
+        let block = Block.Blocks (bs, meta) in
+        let after_quote, rest = rewrite_blocks after_quote rest in
+        (after_quote, block :: rest)
+    | (Block.Block_quote _ as quote) :: rest ->
+        let quote = rewrite quote in
+        let prefix = if after_quote then [ blank; quote ] else [ quote ] in
+        let after_quote, rest = rewrite_blocks true rest in
+        (after_quote, prefix @ rest)
+    | block :: rest ->
+        let block = rewrite block in
+        let after_quote, rest = rewrite_blocks false rest in
+        (after_quote, block :: rest)
+  in
+  rewrite block
+
 let html_block_egs : Block.t list =
   [
     [ ("<div>", Meta.none) ];
@@ -208,6 +277,9 @@ module Bconfig = struct
         (** If a list's final continuation indent is at most four columns, an
             indented code block after it becomes item content. Use a fenced
             layout in that context. *)
+    no_adjacent_block_quotes : bool;
+        (** Adjacent quote-marker runs parse as one block quote. Insert an
+            outside blank line to preserve two sibling quote containers. *)
     (* inline <-> block interaction rules
     -------------------- *)
     no_html_block_starting_paragraph : bool;
@@ -229,6 +301,7 @@ module Bconfig = struct
       no_marker_colliding_thematic_break = false;
       no_html_block_absorbing_successor = false;
       no_ambiguous_indented_code_after_list = false;
+      no_adjacent_block_quotes = false;
       no_html_block_starting_paragraph = true;
       no_break_in_atx_heading = false;
       inline = Iconfig.typed;
@@ -253,6 +326,7 @@ module Bconfig = struct
       no_marker_colliding_thematic_break = true;
       no_html_block_absorbing_successor = true;
       no_ambiguous_indented_code_after_list = true;
+      no_adjacent_block_quotes = true;
       no_html_block_starting_paragraph = true;
       no_break_in_atx_heading = true;
       inline = Iconfig.typed;
@@ -393,8 +467,13 @@ and gen_blocks ?(rule_lead_exclude_chars = []) config st n : Block.t G.t =
 
 let mk_gen_block ?(config = Bconfig.default) () : Block.t G.t =
   let gen = G.(sized_size nat_small @@ gen_block config init_state) in
-  if config.no_ambiguous_indented_code_after_list then
-    G.map fence_ambiguous_indented_code gen
+  let gen =
+    if config.no_ambiguous_indented_code_after_list then
+      G.map fence_ambiguous_indented_code gen
+    else gen
+  in
+  if config.no_adjacent_block_quotes then
+    G.map separate_adjacent_block_quotes gen
   else gen
 
 let%expect_test "Default config should give a sensible distribution" =

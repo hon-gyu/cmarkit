@@ -346,6 +346,59 @@ let no_ambiguous_indented_code_after_list : Property.t =
   let check b = check (Block.normalize b) in
   { name; check }
 
+(** {1 No adjacent block quotes}
+
+    Two adjacent [Block_quote] siblings render as one uninterrupted run of
+    quote-marker lines, so the parser produces one quote container rather than
+    recovering the sibling boundary. A top-level [Blank_line] between them is
+    sufficient to close the first quote and preserve both containers.
+
+    We considered canonicalizing
+
+    [Block_quote a; Block_quote b]
+
+    to
+
+    [Block_quote (Blocks [a; b])].
+
+    That is not valid in general because parsing the contiguous quoted lines is
+    not equivalent to structurally appending the inner blocks. For example, two
+    paragraph payloads may become one continued paragraph; lists and indented
+    code have their own merging rules; and HTML blocks may absorb following
+    content. A correct general canonicalization would have to reproduce block
+    parsing inside the quote. We therefore retain the intended two-container
+    structure and require an explicit outside separator instead.
+
+    The check runs on the normalized tree so nested [Blocks] wrappers cannot
+    hide render-order adjacency. It recurses independently into block quotes,
+    lists, and other containers. *)
+let no_adjacent_block_quotes : Property.t =
+  let rec has_adjacent_quotes = function
+    | Block.Block_quote _ :: Block.Block_quote _ :: _ -> true
+    | _ :: bs -> has_adjacent_quotes bs
+    | [] -> false
+  in
+  let rec check : Block.t -> Property.result =
+   fun b ->
+    let here =
+      match b with
+      | Block.Blocks (bs, _) as blocks when has_adjacent_quotes bs ->
+          Property.Fail (b, [ ("blocks", Block blocks) ])
+      | _ -> Pass
+    in
+    match here with
+    | Property.Fail _ -> here
+    | Property.Pass ->
+        List.fold_left
+          (fun acc child ->
+            match acc with
+            | Property.Fail _ -> acc
+            | Property.Pass -> check child)
+          Property.Pass (child_blocks b)
+  in
+  let check b = check (Block.normalize b) in
+  { name = "no adjacent block quotes"; check }
+
 (* All rules aggregated *)
 let typed : Property.t =
   let p =
@@ -358,6 +411,7 @@ let typed : Property.t =
       & no_marker_colliding_thematic_break
       & no_html_block_absorbing_successor
       & no_ambiguous_indented_code_after_list
+      & no_adjacent_block_quotes
       & no_html_block_starting_paragraph)
   in
   let name' = "typed: " ^ p.name in

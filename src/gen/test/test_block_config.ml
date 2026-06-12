@@ -112,3 +112,20 @@ let () =
             (enable (fun c ->
                  { c with no_ambiguous_indented_code_after_list = false })))
        () T.no_ambiguous_indented_code_after_list
+
+(* no_adjacent_block_quotes
+   ------------------------ *)
+
+let () =
+  run
+  @@ P.qcheck_test_of_t ~count
+       ~gen:
+         (gen (enable (fun c -> { c with no_adjacent_block_quotes = true })))
+       () T.no_adjacent_block_quotes
+
+let () =
+  run
+  @@ P.qcheck_test_of_t ~count ~negative:true
+       ~gen:
+         (gen (enable (fun c -> { c with no_adjacent_block_quotes = false })))
+       () T.no_adjacent_block_quotes
