@@ -24,6 +24,16 @@ let child_blocks : Block.t -> Block.t list = function
   | Block.Ext_footnote_definition (fn, _) -> [ Block.Footnote.block fn ]
   | _ -> []
 
+(** {1 No trailing blank line in blocks}
+    A trailing Blank_line inside Blocks is not roundtrippable because it has no
+    stable Markdown syntax of its own.
+
+    In the AST, Blocks [a; Blank_line] says: “there is a blank-line node after
+    a, and it belongs to this exact Blocks container.” But when rendered, that
+    final blank line only becomes whitespace at the end of the container. On
+    parse, CommonMark does not preserve “this blank belongs inside that nested
+    Blocks wrapper”; it uses blank lines to close or separate blocks. So the
+    parser may drop it, or attach it to a surrounding container. *)
 let no_trailing_blank_line_in_blocks : Property.t =
   let name = "no trailing blank line in blocks" in
   let rec check : Block.t -> Property.result =
@@ -114,9 +124,9 @@ let no_empty_blocks : Property.t =
 
 (** {1 No empty list}
 
-    A [List] with zero items renders to nothing: a list has no syntax of its own,
-    it exists only as the grouping of its item markers. With no item there is no
-    marker, so the parser never emits an empty list (it would emit a
+    A [List] with zero items renders to nothing: a list has no syntax of its
+    own, it exists only as the grouping of its item markers. With no item there
+    is no marker, so the parser never emits an empty list (it would emit a
     [Blank_line] / nothing instead). Same family as {!no_empty_blocks}. *)
 let no_empty_list : Property.t =
   let name = "no empty list" in
@@ -158,7 +168,12 @@ let thematic_break_char (tb : Block.Thematic_break.t) : char option =
   let n = String.length s in
   let rec find i =
     if i >= n then None
-    else match s.[i] with ' ' | '\t' -> find (i + 1) | c -> Some c
+    else
+      match s.[i] with
+      | ' '
+      | '\t' ->
+          find (i + 1)
+      | c -> Some c
   in
   find 0
 
@@ -252,21 +267,24 @@ let no_html_block_starting_paragraph : Property.t =
 (** {1 No HTML block absorbing its successor}
 
     A type-6/7 HTML block (or any whose end condition its own lines never meet)
-    stays open at its last line, so on reparse it swallows whatever block renders
-    right after it — unless that successor is a [Blank_line] (which closes it) or
-    a container boundary intervenes. We check on the {!Cmarkit_.Block.normalize}d
-    tree so render-order adjacency is literal: normalize splices every nested
-    [Blocks] flat, so a trailing html block buried in an inner [Blocks] sits
-    directly before its real successor. Only [Blocks] siblings can collide; a
-    [Block_quote]/[List] boundary stops absorption, so scanning each flat
-    [Blocks] list is enough. *)
+    stays open at its last line, so on reparse it swallows whatever block
+    renders right after it — unless that successor is a [Blank_line] (which
+    closes it) or a container boundary intervenes. We check on the
+    {!Cmarkit_.Block.normalize}d tree so render-order adjacency is literal:
+    normalize splices every nested [Blocks] flat, so a trailing html block
+    buried in an inner [Blocks] sits directly before its real successor. Only
+    [Blocks] siblings can collide; a [Block_quote]/[List] boundary stops
+    absorption, so scanning each flat [Blocks] list is enough. *)
 let no_html_block_absorbing_successor : Property.t =
   let name = "no html block absorbing successor" in
   let absorbing = function
     | Block.Html_block (lines, _) -> Common_.html_block_absorbs lines
     | _ -> false
   in
-  let blank = function Block.Blank_line _ -> true | _ -> false in
+  let blank = function
+    | Block.Blank_line _ -> true
+    | _ -> false
+  in
   let rec has_bad_pair = function
     | a :: (b :: _ as rest) ->
         (absorbing a && not (blank b)) || has_bad_pair rest
@@ -404,14 +422,11 @@ let typed : Property.t =
   let p =
     Property.(
       none
-      (* & no_trailing_blank_line_in_blocks *)
+      & no_trailing_blank_line_in_blocks
       & no_empty_paragraph
-      & no_empty_blocks
-      & no_empty_list
-      & no_marker_colliding_thematic_break
+      & no_empty_blocks & no_empty_list & no_marker_colliding_thematic_break
       & no_html_block_absorbing_successor
-      & no_ambiguous_indented_code_after_list
-      & no_adjacent_block_quotes
+      & no_ambiguous_indented_code_after_list & no_adjacent_block_quotes
       & no_html_block_starting_paragraph)
   in
   let name' = "typed: " ^ p.name in

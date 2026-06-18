@@ -1,47 +1,40 @@
 
 --- Failure --------------------------------------------------------------------
 
-Test roundtrip failed (45 shrink steps):
+Test roundtrip failed (23 shrink steps):
 
-{ block: (List Blank_line Blank_line Blank_line
-          (List Blank_line Blank_line Blank_line Blank_line Blank_line
-           Blank_line (Blocks Blank_line Blank_line Blank_line Blank_line)))
-; cm: ┌─────┐
-      │-·↵  │
-      │-·↵  │
-      │-·↵  │
-      │-·-·↵│
-      │··-·↵│
-      │··-·↵│
-      │··-·↵│
-      │··-·↵│
-      │··-·↵│
-      │··-·↵│
-      │····↵│
-      │····↵│
-      │···· │
-      └─────┘
+{ block: (List Blank_line Blank_line Blank_line Blank_line Blank_line
+          Blank_line Blank_line (Blocks Thematic_break (Code_block no-info)))
+; cm: ┌───────┐
+      │-·↵    │
+      │-·↵    │
+      │-·↵    │
+      │-·↵    │
+      │-·↵    │
+      │-·↵    │
+      │-·↵    │
+      │-··***↵│
+      │··```↵ │
+      │··```  │
+      └───────┘
 ; "reparse":
   (Blocks
-   (List Blank_line Blank_line Blank_line
-    (List Blank_line Blank_line Blank_line Blank_line Blank_line Blank_line
-     (Blocks Blank_line Blank_line Blank_line)))
-   Blank_line)
+   (List Blank_line Blank_line Blank_line Blank_line Blank_line Blank_line
+    Blank_line Thematic_break)
+   (Code_block no-info))
 ; "reparse_cm":
-  ┌────┐
-  │-   │
-  │-   │
-  │-   │
-  │- - │
-  │  - │
-  │  - │
-  │  - │
-  │  - │
-  │  - │
-  │  - │
-  │    │
-  │    │
-  └────┘
+  ┌──────┐
+  │-     │
+  │-     │
+  │-     │
+  │-     │
+  │-     │
+  │-     │
+  │-     │
+  │-  ***│
+  │  ``` │
+  │  ``` │
+  └──────┘
 }
 ================================================================================
 failure (1 tests failed, 0 tests errored, ran 1 tests)
