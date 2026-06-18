@@ -1,5 +1,17 @@
+
+--- Failure --------------------------------------------------------------------
+
+Test no trailing blank line in blocks failed (36 shrink steps):
+
+{ block: (Blocks Thematic_break Blank_line)
+; cm: ┌────┐
+      │***↵│
+      └────┘
+; "blocks":
+  (Blocks Thematic_break Blank_line)
+}
 ================================================================================
-success (ran 1 tests)
+failure (1 tests failed, 0 tests errored, ran 1 tests)
 
 
 ================================================================================

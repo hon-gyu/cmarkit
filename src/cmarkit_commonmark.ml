@@ -11,8 +11,10 @@ module C = Cmarkit_renderer.Context
 (* Renderer state *)
 
 type indent =
-[ `I of int | `L of int * string * int * Uchar.t option | `Q of int
-| `Fn of int * Label.t ]
+[ `I of int
+  | `L of int * string * int * int * Uchar.t option (* Oymarkit diff *)
+  | `Q of int
+  | `Fn of int * Label.t ]
 
 type state =
   { nl : string; (* newline to output. *)
@@ -147,14 +149,14 @@ let rec indent c =
       nchars c n ' '; loop c (i :: acc) is
   | `Q n as i :: is ->
       nchars c n ' '; C.byte c '>';  C.byte c ' '; loop c (i :: acc) is
-  | `L (before, m, after, task) :: is ->
+  | `L (before, m, after, continuation_extra, task) :: is -> (* Oymarkit diff *)
       nchars c before ' '; C.string c m; nchars c after ' ';
       let after = match task with
       | None -> after
       | Some u -> C.byte c '['; C.utf_8_uchar c u; C.string c "] "; after
       in
       (* On the next call we'll just indent for the list item *)
-      loop c (`I (before + String.length m + after) :: acc) is
+      loop c (`I (before + String.length m + after + continuation_extra) :: acc) is (* Oymarkit diff *)
   | `Fn (before, label) :: is ->
       nchars c before ' ';
       C.byte c '['; link_label_lines c (Label.text label);
@@ -411,11 +413,50 @@ let link_reference_definition c ld =
   C.string c "]:";
   link_definition c ld
 
+(* Oymarkit begin: upstream cmarkit uses [after] both for the marker line and
+   for subsequent list-item continuation lines. That loses AST roundtrips for a
+   list item whose first child block has its own leading indentation, e.g.
+
+     -  ***
+       ```
+       ```
+
+   The parser derives the item continuation column from the total first-line
+   spaces after the marker. Keep the marker-line rendering unchanged, but carry
+   an extra continuation offset for later sibling block lines when needed. *)
+let rec first_line_indent = function
+| Block.Blocks (b :: _, _) -> first_line_indent b
+| Block.Blocks ([], _) -> 0
+| Block.Code_block (cb, _) -> (
+    match Block.Code_block.layout cb with
+    | `Indented -> 4
+    | `Fenced f -> f.indent)
+| Block.Heading (h, _) -> (
+    match Block.Heading.layout h with
+    | `Atx l -> l.indent
+    | `Setext l -> l.leading_indent)
+| Block.Paragraph (p, _) -> Block.Paragraph.leading_indent p
+| Block.Thematic_break (t, _) -> Block.Thematic_break.indent t
+| Block.Ext_table (t, _) -> Block.Table.indent t
+| Block.Ext_footnote_definition (fn, _) -> Block.Footnote.indent fn
+| Block.Ext_div (d, _) -> Block.Div.indent d
+| _ -> 0
+
+let list_item_continuation_extra after i =
+  let first = first_line_indent (Block.List_item.block i) in
+  let first_line_after = after + first in
+  let continuation_after =
+    if first_line_after > 4 then 1 else Int.min first_line_after 4
+  in
+  Int.max 0 (continuation_after - after)
+(* Oymarkit end *)
+
 let unordered_item c marker (i, _) =
   let before = Block.List_item.before_marker i in
   let after = Block.List_item.after_marker i in
+  let continuation_extra = list_item_continuation_extra after i in (* Oymarkit diff *)
   let task = Option.map fst (Block.List_item.ext_task_marker i) in
-  push_indent c (`L (before, marker, after, task));
+  push_indent c (`L (before, marker, after, continuation_extra, task));
   C.block c (Block.List_item.block i);
   pop_indent c
 
@@ -424,8 +465,9 @@ let ordered_item c sep num (i, _) =
   let marker = fst (Block.List_item.marker i) in
   let marker = if marker = "" then Int.to_string num ^ sep else marker in
   let after = Block.List_item.after_marker i in
+  let continuation_extra = list_item_continuation_extra after i in (* Oymarkit diff *)
   let task = Option.map fst (Block.List_item.ext_task_marker i) in
-  push_indent c (`L (before, marker, after, task));
+  push_indent c (`L (before, marker, after, continuation_extra, task));
   C.block c (Block.List_item.block i);
   pop_indent c;
   num + 1

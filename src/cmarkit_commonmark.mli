@@ -47,8 +47,13 @@ val newline : Cmarkit_renderer.context -> unit
 
 type indent =
 [ `I of int (** Identation by given amount. *)
-| `L of int * string * int * Uchar.t option
-   (** Indent before, list marker, indent after, list item task extension *)
+(* Oymarkit begin: [`L] carries an extra continuation indent after [indent
+   after] so list items whose first child block has leading indentation can
+   render later sibling blocks at the parser's continuation column. *)
+| `L of int * string * int * int * Uchar.t option
+   (** Indent before, list marker, indent after, extra continuation indent,
+       list item task extension *)
+(* Oymarkit end *)
 | `Q of int (** Identation followed by a block quote marker and a space *)
 | `Fn of int * Cmarkit.Label.t (** Indent before, label (footnote extension)*)]
 (** The type for specifying block indentation. *)

@@ -6,6 +6,12 @@ let fail_inline msg i =
   let sexp = (Sexp.make_sexp_of ()).inline i in
   failwith (Fmt.str "%s: %a" msg Sexplib0.Sexp.pp_hum sexp)
 
+let fail_block msg b =
+  let sexp = (Sexp.make_sexp_of ()).block b in
+  failwith (Fmt.str "%s: %a" msg Sexplib0.Sexp.pp_hum sexp)
+
+let block_sexp b = (Sexp.make_sexp_of ()).block b
+
 let text s = Inline.Text (s, Meta.none)
 module Extra_config = Inline.Extra_inline_container.Config
 
@@ -411,5 +417,26 @@ let () =
       | i -> fail_inline "same-kind extra containers should nest" i
       end
   | i -> fail_inline "parser should parse nested same-kind extra containers" i
+
+let () =
+  let thematic_break =
+    Block.Thematic_break
+      (Block.Thematic_break.make ~indent:1 ~layout:"***" (), Meta.none)
+  in
+  let code_block = Block.Code_block (Block.Code_block.make [], Meta.none) in
+  let item_block = Block.Blocks ([ thematic_break; code_block ], Meta.none) in
+  let item = Block.List_item.make item_block, Meta.none in
+  let block =
+    Block.List (Block.List'.make (`Unordered '-') [ item ], Meta.none)
+  in
+  let rendered = Cmarkit_commonmark.of_doc (Doc.make block) in
+  let reparsed = rendered |> Doc.of_string |> Doc.block in
+  if not (Sexplib0.Sexp.equal (block_sexp block) (block_sexp reparsed)) then
+    fail_block
+      (Fmt.str
+         "renderer should indent list-item sibling blocks enough to reparse; \
+          rendered %S"
+         rendered)
+      reparsed
 
 let () = print_endline "EOF"
