@@ -6,13 +6,15 @@
 
 open Cmarkit_
 
-(** {1 No trailing blank lines in blocks}
+(** {1 No trailing blank lines in nested blocks}
 
-    [Blank_line] at the tail of a [Blocks] list renders as nothing (the `\n` it
-    contributes merely closes the preceding block's last line), so
-    [parse(render(Blocks [...; Blank_line]))] will never reconstruct the
-    trailing [Blank_line]. Any such node is a generator artifact with no
-    syntactic witness. *)
+    [Blank_line] at the tail of a nested [Blocks] list after non-blank sibling
+    content has no stable ownership: the blank line only closes or separates
+    surrounding blocks, so [parse(render(Blocks [nonblank; ...; Blank_line]))]
+    can attach it to an enclosing container instead of the nested [Blocks].
+    Top-level trailing blank lines and blank-only nested containers are
+    different: the parser can emit them, so this rule intentionally allows
+    those shapes. *)
 
 (* Immediate child blocks of [b], so the check can descend into nested
    structures (block quotes, list items, footnote definitions, ...). *)
@@ -24,25 +26,16 @@ let child_blocks : Block.t -> Block.t list = function
   | Block.Ext_footnote_definition (fn, _) -> [ Block.Footnote.block fn ]
   | _ -> []
 
-(** {1 No trailing blank line in blocks}
-    A trailing Blank_line inside Blocks is not roundtrippable because it has no
-    stable Markdown syntax of its own.
-
-    In the AST, Blocks [a; Blank_line] says: “there is a blank-line node after
-    a, and it belongs to this exact Blocks container.” But when rendered, that
-    final blank line only becomes whitespace at the end of the container. On
-    parse, CommonMark does not preserve “this blank belongs inside that nested
-    Blocks wrapper”; it uses blank lines to close or separate blocks. So the
-    parser may drop it, or attach it to a surrounding container. *)
 let no_trailing_blank_line_in_blocks : Property.t =
   let name = "no trailing blank line in blocks" in
-  let rec check : Block.t -> Property.result =
+  let blank = function Block.Blank_line _ -> true | _ -> false in
+  let rec check ~is_root : Block.t -> Property.result =
    fun b ->
     let here =
       match b with
-      | Block.Blocks (bs, _) as blocks -> (
+      | Block.Blocks (bs, _) as blocks when not is_root -> (
           match List.rev bs with
-          | Block.Blank_line _ :: _ ->
+          | Block.Blank_line _ :: rest when List.exists (Fun.negate blank) rest ->
               Property.Fail (b, [ ("blocks", Block blocks) ])
           | _ -> Pass)
       | _ -> Pass
@@ -55,10 +48,10 @@ let no_trailing_blank_line_in_blocks : Property.t =
           (fun acc child ->
             match acc with
             | Property.Fail _ -> acc
-            | Property.Pass -> check child)
+            | Property.Pass -> check ~is_root:false child)
           Property.Pass (child_blocks b)
   in
-  { name; check }
+  { name; check = check ~is_root:true }
 
 (** {1 No empty paragraph}
 
@@ -422,7 +415,7 @@ let typed : Property.t =
   let p =
     Property.(
       none
-      & no_trailing_blank_line_in_blocks
+      (* & no_trailing_blank_line_in_blocks *)
       & no_empty_paragraph
       & no_empty_blocks & no_empty_list & no_marker_colliding_thematic_break
       & no_html_block_absorbing_successor

@@ -329,8 +329,9 @@ module Bconfig = struct
       no_adjacent_block_quotes = true;
       no_html_block_starting_paragraph = true;
       no_break_in_atx_heading = true;
-      no_trailing_blank_line_in_blocks = true;
       inline = Iconfig.typed;
+      (* *)
+      no_trailing_blank_line_in_blocks = false;
     }
 end
 
