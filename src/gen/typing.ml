@@ -143,6 +143,67 @@ let no_empty_list : Property.t =
   in
   { name; check }
 
+(** {1 No leading blank prefix before list-item content}
+
+    A list item may start with one blank line before its first non-blank block:
+
+    {[
+      -
+        x
+    ]}
+
+    still parses as one list item containing [Blank_line; Paragraph "x"].
+    With two or more leading blanks, the parser has already closed the
+    blank-only item before the following non-blank line is processed:
+
+    {[
+      -
+
+        x
+    ]}
+
+    reparses as a blank-only list item followed by an outside paragraph. This
+    is about the prefix before the first real item content; blank-only items
+    remain parser-emittable and are intentionally allowed. *)
+let no_list_item_leading_blank_prefix : Property.t =
+  let name = "no list-item leading blank prefix" in
+  let blank = function
+    | Block.Blank_line _ -> true
+    | _ -> false
+  in
+  let bad_item_block block =
+    match Block.normalize block with
+    | Block.Blocks (bs, _) ->
+        let rec count_blanks count = function
+        | b :: bs when blank b -> count_blanks (count + 1) bs
+        | [] -> false
+        | _ :: _ -> count >= 2
+        in
+        count_blanks 0 bs
+    | _ -> false
+  in
+  let item_bad (item, _) = bad_item_block (Block.List_item.block item) in
+  let rec check : Block.t -> Property.result =
+   fun b ->
+    let here =
+      match b with
+      | Block.List (l, _) as list when List.exists item_bad (Block.List'.items l)
+        ->
+          Property.Fail (b, [ ("list", Block list) ])
+      | _ -> Pass
+    in
+    match here with
+    | Property.Fail _ -> here
+    | Property.Pass ->
+        List.fold_left
+          (fun acc child ->
+            match acc with
+            | Property.Fail _ -> acc
+            | Property.Pass -> check child)
+          Property.Pass (child_blocks b)
+  in
+  { name; check }
+
 (** {1 No marker-colliding thematic break in a list item}
 
     A bullet list item whose {e leading} block is a thematic break of the same
@@ -418,6 +479,7 @@ let typed : Property.t =
       (* & no_trailing_blank_line_in_blocks *)
       & no_empty_paragraph
       & no_empty_blocks & no_empty_list & no_marker_colliding_thematic_break
+      & no_list_item_leading_blank_prefix
       & no_html_block_absorbing_successor
       & no_ambiguous_indented_code_after_list & no_adjacent_block_quotes
       & no_html_block_starting_paragraph)

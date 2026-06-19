@@ -1,33 +1,31 @@
 
 --- Failure --------------------------------------------------------------------
 
-Test roundtrip failed (50 shrink steps):
+Test roundtrip failed (47 shrink steps):
 
 { block: (List Blank_line Blank_line Blank_line
           (List Blank_line Blank_line Blank_line Blank_line Blank_line
            Blank_line
-           (Blocks Blank_line Blank_line Blank_line Thematic_break)))
-; cm: ┌───────┐
-      │-·↵    │
-      │-·↵    │
-      │-·↵    │
-      │-·-·↵  │
-      │··-·↵  │
-      │··-·↵  │
-      │··-·↵  │
-      │··-·↵  │
-      │··-·↵  │
-      │··-·↵  │
-      │····↵  │
-      │····↵  │
-      │····---│
-      └───────┘
+           (Blocks Blank_line (Paragraph (Text jia)) (Paragraph (Text jia)))))
+; cm: ┌────────┐
+      │-·↵     │
+      │-·↵     │
+      │-·↵     │
+      │-·-·↵   │
+      │··-·↵   │
+      │··-·↵   │
+      │··-·↵   │
+      │··-·↵   │
+      │··-·↵   │
+      │··-·↵   │
+      │····jia↵│
+      │····jia │
+      └────────┘
 ; "reparse":
   (List Blank_line Blank_line Blank_line
-   (Blocks
-    (List Blank_line Blank_line Blank_line Blank_line Blank_line Blank_line
-     (Blocks Blank_line Blank_line Blank_line))
-    Thematic_break))
+   (List Blank_line Blank_line Blank_line Blank_line Blank_line Blank_line
+    (Blocks Blank_line
+     (Paragraph (Inlines (Text jia) (Break soft) (Text jia))))))
 ; "reparse_cm":
   ┌───────┐
   │-      │
@@ -40,9 +38,8 @@ Test roundtrip failed (50 shrink steps):
   │  -    │
   │  -    │
   │  -    │
-  │       │
-  │       │
-  │    ---│
+  │    jia│
+  │    jia│
   └───────┘
 }
 ================================================================================

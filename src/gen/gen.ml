@@ -264,6 +264,10 @@ module Bconfig = struct
     no_empty_list : bool;
         (** A [List] with zero items has no syntactic witness (no item marker),
             so the parser never emits one. *)
+    no_list_item_leading_blank_prefix : bool;
+        (** A list item with two or more leading blank lines before its first
+            non-blank block closes before that content on reparse. Blank-only
+            items are still allowed. *)
     no_marker_colliding_thematic_break : bool;
         (** A bullet list item whose leading block is a thematic break of the
             {e same} character as the marker collapses on reparse: [- ---] is a
@@ -298,6 +302,7 @@ module Bconfig = struct
       no_empty_paragraph = false;
       no_empty_blocks = false;
       no_empty_list = false;
+      no_list_item_leading_blank_prefix = false;
       no_marker_colliding_thematic_break = false;
       no_html_block_absorbing_successor = false;
       no_ambiguous_indented_code_after_list = false;
@@ -323,6 +328,7 @@ module Bconfig = struct
       no_empty_paragraph = true;
       no_empty_blocks = true;
       no_empty_list = true;
+      no_list_item_leading_blank_prefix = true;
       no_marker_colliding_thematic_break = true;
       no_html_block_absorbing_successor = true;
       no_ambiguous_indented_code_after_list = true;
@@ -382,6 +388,23 @@ let gen_leaf_block ?(rule_lead_exclude_chars = []) (config : Bconfig.t) st =
   let w_blank_line = if config.no_direct_blank_line then Some 0 else None in
   gen_leaf_block_ ~config ~rule_lead_exclude_chars ?w_blank_line ()
 
+let limit_list_item_leading_blank_prefix (block : Block.t) : Block.t =
+  let blank = function
+    | Block.Blank_line _ -> true
+    | _ -> false
+  in
+  let rec leading_blanks acc = function
+  | b :: bs when blank b -> leading_blanks (b :: acc) bs
+  | rest -> (List.rev acc, rest)
+  in
+  match Block.normalize block with
+  | Block.Blocks (bs, meta) -> (
+      match leading_blanks [] bs with
+      | _ :: _ :: _, (_ :: _ as rest) ->
+          Block.Blocks (List.hd bs :: rest, meta)
+      | _ -> block)
+  | _ -> block
+
 let rec gen_block ?(rule_lead_exclude_chars = []) config st n =
   let open G in
   match n with
@@ -428,7 +451,13 @@ and gen_list config st n : Block.t G.t =
   in
   let gen_item =
     map
-      (fun block -> (Block.List_item.make block, Meta.none))
+      (fun block ->
+        let block =
+          if config.no_list_item_leading_blank_prefix then
+            limit_list_item_leading_blank_prefix block
+          else block
+        in
+        (Block.List_item.make block, Meta.none))
       (gen_block ~rule_lead_exclude_chars:item_lead_exclude config st (n / 2))
   in
   let gen_len =

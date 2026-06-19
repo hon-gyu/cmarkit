@@ -51,6 +51,27 @@ let () =
        ~gen:(gen (enable (fun c -> { c with no_empty_blocks = false })))
        () T.no_empty_blocks
 
+(* no_list_item_leading_blank_prefix
+   --------------------------------- *)
+
+let () =
+  run
+  @@ P.qcheck_test_of_t ~count
+       ~gen:
+         (gen
+            (enable (fun c ->
+                 { c with no_list_item_leading_blank_prefix = true })))
+       () T.no_list_item_leading_blank_prefix
+
+let () =
+  run
+  @@ P.qcheck_test_of_t ~count ~negative:true
+       ~gen:
+         (gen
+            (enable (fun c ->
+                 { c with no_list_item_leading_blank_prefix = false })))
+       () T.no_list_item_leading_blank_prefix
+
 (* no_trailing_blank_line_in_blocks
    -------------------------------- *)
 
