@@ -51,6 +51,22 @@ multiline inline attributes
 ----------
 (Attributes "#foo .bar key=\"a b\"" (Text text))
 
+comment within attributes
+----------
+(Attributes #id (Text word))
+
+comment-only specifier dropped
+----------
+(Inlines (Text word) (Text " tail"))
+
+standalone comment dropped
+----------
+(Inlines (Text "Foo bar ") (Text " baz."))
+
+empty specifier dropped
+----------
+(Inlines (Text word) (Text " tail"))
+
 stacked block attributes
 ----------
 (Attributes "#water .important .large" (Paragraph (Text Flow.)))
@@ -62,6 +78,14 @@ block quote attributes
 multiline block attributes
 ----------
 (Attributes "#water .important key=\"two words\"" (Paragraph (Text Flow.)))
+
+block comment-only specifier dropped
+----------
+(Paragraph (Text Flow.))
+
+block comment among specifiers dropped
+----------
+(Attributes #water (Paragraph (Text Flow.)))
 
 intraword emphasis knob tokenization
 ==========

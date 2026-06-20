@@ -262,11 +262,24 @@ let () =
       |> print_sexp)
     ();
   parse_inline "multiline inline attributes" "text{#foo\n.bar key=\"a b\"}";
+  (* Djot comments: [%...%] inside a specifier is ignored. A comment kept
+     alongside real attributes is stripped but the attributes apply. A
+     specifier that is only a comment (or empty) is dropped entirely: it
+     neither attaches to a target nor renders literally. *)
+  parse_inline "comment within attributes" "word{#id % keep me %}";
+  parse_inline "comment-only specifier dropped" "word{% comment %} tail";
+  parse_inline "standalone comment dropped"
+    "Foo bar {% multi\nline comment %} baz.";
+  parse_inline "empty specifier dropped" "word{} tail";
   parse_block "stacked block attributes"
     "{#water}\n{.important .large}\nFlow.";
   parse_block "block quote attributes" "{source=Iliad}\n> Sing, muse";
   parse_block "multiline block attributes"
-    "{#water\n  .important key=\"two words\"}\nFlow."
+    "{#water\n  .important key=\"two words\"}\nFlow.";
+  parse_block "block comment-only specifier dropped"
+    "{% a block comment %}\nFlow.";
+  parse_block "block comment among specifiers dropped"
+    "{#water}\n{% note %}\nFlow."
 
 let () =
   show_sep ~title:"intraword emphasis knob tokenization" ();

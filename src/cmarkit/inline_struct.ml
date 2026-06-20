@@ -1316,6 +1316,13 @@ and last_pass p toks start_line =
       | i -> i :: acc
       in
       loop toks endline acc next
+  | Attribute_spec { start; attribute; endline; next } :: toks
+    when Attribute.is_empty attribute ->
+      (* Comment-only (or empty) specifier: Djot drops it from the output.
+         Flush any pending text up to the specifier, then skip it entirely
+         (it neither attaches to a target nor renders literally). *)
+      let acc = try_add_text_inline p line ~first:k ~last:(start - 1) acc in
+      loop toks endline acc next
   | Attribute_spec { start; attribute; endline; next } :: toks ->
       let wrap target specs =
         let attrs = Inline.Attributes.make ~specs target in

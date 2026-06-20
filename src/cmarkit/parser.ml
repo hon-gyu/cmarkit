@@ -1083,10 +1083,17 @@ let split_attribute_paragraph p (par : Block_struct.paragraph) =
   in
   match take [] lines with
   | [], _ -> [Block_struct.Paragraph par]
-  | specs, [] -> [Block_struct.Attribute_specs specs]
   | specs, lines ->
-      [ Block_struct.Attribute_specs specs;
-        Block_struct.Paragraph { par with lines = List.rev lines } ]
+      (* Comment-only (or empty) specifiers are dropped, per Djot. A block
+         made up solely of them disappears entirely. *)
+      let specs = List.filter (fun s -> not (Attribute.is_empty s)) specs in
+      match specs, lines with
+      | [], [] -> []
+      | [], lines -> [Block_struct.Paragraph { par with lines = List.rev lines }]
+      | specs, [] -> [Block_struct.Attribute_specs specs]
+      | specs, lines ->
+          [ Block_struct.Attribute_specs specs;
+            Block_struct.Paragraph { par with lines = List.rev lines } ]
 
 let rec prepare_block_struct p = function
 | Block_struct.Block_quote (indent, marker, bs) ->
