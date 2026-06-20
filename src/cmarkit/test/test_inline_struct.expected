@@ -266,6 +266,127 @@ embed form
 verbatim spacing preserved
 ----------
 [[ a # b | c ]]
+callout parse
+==========
+title and body
+----------
+((Block_quote
+  (Paragraph (Inlines (Text "[!info] Title") (Break soft) (Text Body))))
+ (meta (callout info (fold none))))
+
+title only (default title)
+----------
+((Block_quote (Paragraph (Text [!tip]))) (meta (callout tip (fold none))))
+
+foldable collapsed
+----------
+((Block_quote
+  (Paragraph (Inlines (Text "[!faq]- Question?") (Break soft) (Text Answer))))
+ (meta (callout faq (fold closed))))
+
+foldable expanded
+----------
+((Block_quote
+  (Paragraph (Inlines (Text "[!note]+ Expanded") (Break soft) (Text body))))
+ (meta (callout note (fold open))))
+
+case insensitive kind
+----------
+((Block_quote (Paragraph (Text "[!WARNING] Watch out")))
+ (meta (callout warning (fold none))))
+
+not a callout
+----------
+(Block_quote (Paragraph (Text "just a quote")))
+
+empty kind rejected
+----------
+(Block_quote (Paragraph (Text "[!] nope")))
+
+kind with space rejected
+----------
+(Block_quote (Paragraph (Text "[!bad kind] x")))
+
+nested callout
+----------
+((Block_quote
+  (Blocks (Paragraph (Inlines (Text [!quote]) (Break soft) (Text outer)))
+   ((Block_quote
+     (Paragraph (Inlines (Text "[!note] inner") (Break soft) (Text deep))))
+    (meta (callout note (fold none))))))
+ (meta (callout quote (fold none))))
+
+callout restricted kinds
+==========
+allowed kind
+----------
+((Block_quote (Paragraph (Text "[!info] yes")))
+ (meta (callout info (fold none))))
+
+disallowed kind stays blockquote
+----------
+(Block_quote (Paragraph (Text "[!tip] no")))
+
+callout html rendering
+==========
+non-foldable
+----------
+<div class="callout" data-callout="info">
+<div class="callout-title">Title</div>
+<div class="callout-content">
+<p>Body</p>
+</div>
+</div>
+
+foldable expanded
+----------
+<details class="callout" data-callout="note" open>
+<summary class="callout-title">T</summary>
+<div class="callout-content">
+<p>body</p>
+</div>
+</details>
+
+foldable collapsed
+----------
+<details class="callout" data-callout="faq">
+<summary class="callout-title">T</summary>
+<div class="callout-content">
+<p>body</p>
+</div>
+</details>
+
+formatted title
+----------
+<div class="callout" data-callout="info">
+<div class="callout-title">See <strong>bold</strong> and <a href="u">text</a></div>
+<div class="callout-content">
+<p>body</p>
+</div>
+</div>
+
+title starts with formatting
+----------
+<div class="callout" data-callout="tip">
+<div class="callout-title"><strong>right away</strong></div>
+<div class="callout-content">
+<p>body</p>
+</div>
+</div>
+
+callout commonmark roundtrip is stable
+==========
+with body
+----------
+stable: true
+> \[!info\] T
+> body
+> more
+foldable
+----------
+stable: true
+> \[!faq\]- Q?
+> A
 extra inline container AST support
 ==========
 sexp

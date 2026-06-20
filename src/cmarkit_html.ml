@@ -371,6 +371,31 @@ let block_quote c bq =
   C.block c (Block.Block_quote.block bq);
   C.string c "</blockquote>\n"
 
+let callout c co bq =
+  let kind = Block.Callout.kind co in
+  let inner = Block.Block_quote.block bq in
+  let title = Block.Callout.title co inner in (* derived inline, may be None *)
+  let body = Block.Callout.strip_header inner in
+  (* Non-foldable callouts use <div>/<div class=callout-title>; foldable ones
+     use <details>/<summary> with [open] when expanded by default. *)
+  let outer, title_tag, openattr = match Block.Callout.fold co with
+  | None -> "div", "div", ""
+  | Some Block.Callout.Foldable_open -> "details", "summary", " open"
+  | Some Block.Callout.Foldable_closed -> "details", "summary", ""
+  in
+  C.byte c '<'; C.string c outer; C.string c " class=\"callout\" data-callout=\"";
+  html_escaped_string c kind; C.byte c '"'; C.string c openattr;
+  C.string c ">\n";
+  C.byte c '<'; C.string c title_tag; C.string c " class=\"callout-title\">";
+  (match title with
+   | Some t -> C.inline c t (* preserves emphasis, links, wikilinks, … *)
+   | None -> html_escaped_string c (String.capitalize_ascii kind));
+  C.string c "</"; C.string c title_tag; C.string c ">\n";
+  C.string c "<div class=\"callout-content\">\n";
+  C.block c body;
+  C.string c "</div>\n";
+  C.string c "</"; C.string c outer; C.string c ">\n"
+
 let code_block c cb =
   let i = Option.map fst (Block.Code_block.info_string cb) in
   let lang = Option.bind i Block.Code_block.language_of_info_string in
@@ -544,7 +569,11 @@ let block_attributes c a =
       C.block c block; C.string c "</div>\n"
 
 let block c = function
-| Block.Block_quote (bq, _) -> block_quote c bq; true
+| Block.Block_quote (bq, meta) ->
+    (match Block.Callout.find meta with
+     | Some co -> callout c co bq
+     | None -> block_quote c bq);
+    true
 | Block.Blocks (bs, _) -> List.iter (C.block c) bs; true
 | Block.Code_block (cb, _) -> code_block c cb; true
 | Block.Heading (h, _) -> heading c h; true

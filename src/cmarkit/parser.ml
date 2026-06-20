@@ -1147,6 +1147,11 @@ let rec block_struct_to_block_quote p indent marker bs =
     let first_meta = meta p marker_loc in
     meta_of_metas p ~first:first_meta ~last:(Block.meta block)
   in
+  let meta =
+    match Block.Callout.detect (Oymarkit_mod.callout p.oymarkit_mod) block with
+    | None -> meta
+    | Some callout -> Block.Callout.add callout meta
+  in
   Block.Block_quote ({indent; block}, meta)
 
 and block_struct_to_div p (fence : Block_struct.div_fence) bs =

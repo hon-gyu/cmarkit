@@ -223,6 +223,178 @@ let empty = Blocks ([], Meta.none)
 
 (* Extensions *)
 
+(* Alias for the open block type so the [Callout] module below can refer to it
+   while shadowing [t] with the callout metadata type. *)
+type block = t
+
+module Callout = struct
+  (* Obsidian callouts. A callout is a blockquote whose first line is a
+     [\[!kind\](+|-)? title] header. We do not introduce a new block: the node
+     stays a {!Block_quote} and a [t] is attached to its [Meta.t] (cf.
+     {!Block_id}). The header line is kept in the body so CommonMark roundtrips
+     verbatim; renderers strip it with {!strip_header}. *)
+
+  type fold = Foldable_open | Foldable_closed
+
+  (* [kind] and [fold] are the decoded interpretation of the header; the title
+     is *not* stored — it lives in the block-quote body (the header line, kept
+     for roundtrip) and is the single source of truth, derived on demand by
+     {!title}. This keeps the title a true inline container that mappers
+     traverse, with no duplicated copy to fall out of sync. *)
+  type t = { kind : string; fold : fold option }
+
+  module Config = struct
+    type kinds = Any | Only of string list
+    type t = { enabled : bool; kinds : kinds }
+    let make ?(kinds = Any) () = { enabled = true; kinds }
+    let disabled = { enabled = false; kinds = Any }
+    let enabled c = c.enabled
+    let kinds c = c.kinds
+  end
+
+  let key : t Meta.key = Meta.key ()
+  let make ?fold kind = { kind; fold }
+  let kind c = c.kind
+  let fold c = c.fold
+  let find meta = Meta.find key meta
+  let add t meta = Meta.add key t meta
+
+  let is_kind_char = function
+  | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' | '-' -> true | _ -> false
+
+  let kind_allowed (config : Config.t) kind = match Config.kinds config with
+  | Config.Any -> true
+  | Config.Only kinds -> List.mem kind kinds
+
+  (* Parse a [\[!kind\](+|-)?] header from the leading text of a blockquote's
+     first paragraph. Only [kind] (lowercased, validated) and [fold] are
+     decoded here; the title is left in the body and recovered by {!title}. *)
+  let parse_header (config : Config.t) (s : string) : t option =
+    let len = String.length s in
+    if len < 4 || s.[0] <> '[' || s.[1] <> '!' then None else
+    match String.index_opt s ']' with
+    | None -> None
+    | Some close ->
+        let kind = String.lowercase_ascii (String.sub s 2 (close - 2)) in
+        if kind = "" || not (String.for_all is_kind_char kind) then None else
+        if not (kind_allowed config kind) then None else
+        let after = close + 1 in
+        let fold =
+          if after < len && s.[after] = '+' then Some Foldable_open
+          else if after < len && s.[after] = '-' then Some Foldable_closed
+          else None
+        in
+        Some { kind; fold }
+
+  let rec leading_text (inline : Inline.t) : string option = match inline with
+  | Inline.Text (s, _) -> Some s
+  | Inline.Inlines (i :: _, _) -> leading_text i
+  | _ -> None
+
+  (* [detect config inner] is the callout described by the header on the first
+     line of blockquote content [inner], if any. *)
+  let detect (config : Config.t) (inner : block) : t option =
+    if not (Config.enabled config) then None else
+    let first_inline = match inner with
+    | Paragraph (p, _) -> Some (Paragraph.inline p)
+    | Blocks (Paragraph (p, _) :: _, _) -> Some (Paragraph.inline p)
+    | _ -> None
+    in
+    match first_inline with
+    | None -> None
+    | Some inline ->
+        match leading_text inline with
+        | None -> None
+        | Some text -> parse_header config text
+
+  (* Drop everything in [inline] up to and including the first line [Break].
+     [None] if there is no break (the whole inline is the header line) or
+     nothing remains after it. Loc-free and does not re-parse. *)
+  let strip_first_line (inline : Inline.t) : Inline.t option =
+    let rec drop = function
+    | Inline.Break _ :: rest -> Some rest
+    | _ :: rest -> drop rest
+    | [] -> None
+    in
+    match inline with
+    | Inline.Inlines (is, m) ->
+        (match drop is with
+         | None | Some [] -> None
+         | Some [i] -> Some i
+         | Some is -> Some (Inline.Inlines (is, m)))
+    | _ -> None (* single inline = the whole header line, nothing follows *)
+
+  (* [strip_header inner] is the callout body: [inner] with its first line (the
+     [\[!kind\]...] header) removed. Used by renderers. *)
+  let strip_header (inner : block) : block =
+    let strip_para p meta rest =
+      match strip_first_line (Paragraph.inline p) with
+      | Some inline ->
+          let p' =
+            Paragraph.make ~leading_indent:(Paragraph.leading_indent p)
+              ~trailing_blanks:(Paragraph.trailing_blanks p) inline
+          in
+          (match rest with
+           | [] -> Paragraph (p', meta)
+           | _ -> Blocks (Paragraph (p', meta) :: rest, Meta.none))
+      | None ->
+          (match rest with
+           | [] -> empty
+           | [single] -> single
+           | _ -> Blocks (rest, Meta.none))
+    in
+    match inner with
+    | Paragraph (p, meta) -> strip_para p meta []
+    | Blocks (Paragraph (p, meta) :: rest, _) -> strip_para p meta rest
+    | other -> other
+
+  (* Byte length of the [\[!kind\](+|-)?] prefix in the (cleaned) leading text
+     node. [kind] preserves the source length under lowercasing, so this
+     relocates the prefix structurally without a stored offset. *)
+  let prefix_len (c : t) =
+    2 (* "[!" *) + String.length c.kind + 1 (* "]" *)
+    + (match c.fold with None -> 0 | Some _ -> 1)
+
+  let first_para_inline (inner : block) : Inline.t option = match inner with
+  | Paragraph (p, _) -> Some (Paragraph.inline p)
+  | Blocks (Paragraph (p, _) :: _, _) -> Some (Paragraph.inline p)
+  | _ -> None
+
+  (* The header line: inlines up to the first line [Break]. *)
+  let header_line (inline : Inline.t) : Inline.t list =
+    let rec take acc = function
+    | Inline.Break _ :: _ -> List.rev acc
+    | i :: rest -> take (i :: acc) rest
+    | [] -> List.rev acc
+    in
+    match inline with
+    | Inline.Inlines (is, _) -> take [] is
+    | i -> [i]
+
+  (* [title c inner] is the callout title as inline content: the header line
+     with the [\[!kind\](+|-)?] prefix and following blanks dropped. [None] for
+     a title-only-default callout (e.g. [\[!tip\]]). Inline formatting, links
+     and wikilinks in the title are preserved (they remain shared with the
+     body, so mappers transform them in place). *)
+  let title (c : t) (inner : block) : Inline.t option =
+    match first_para_inline inner with
+    | None -> None
+    | Some inline ->
+        match header_line inline with
+        | Inline.Text (s, m) :: rest ->
+            let len = String.length s in
+            let k = ref (min (prefix_len c) len) in
+            while !k < len && (s.[!k] = ' ' || s.[!k] = '\t') do incr k done;
+            let head =
+              if !k >= len then [] else [Inline.Text (String.sub s !k (len - !k), m)]
+            in
+            (match head @ rest with
+             | [] -> None
+             | [i] -> Some i
+             | is -> Some (Inline.Inlines (is, Meta.none)))
+        | _ -> None
+end
+
 module Table = struct
   type align = [ `Left | `Center | `Right ]
   type sep = align option * Layout.count
