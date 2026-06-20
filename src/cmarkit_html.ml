@@ -327,6 +327,25 @@ let inline_attributes c a =
       C.string c "<span"; attributes c attrs; C.byte c '>';
       C.inline c inline; C.string c "</span>"
 
+let wikilink c wl =
+  (* Vault-level href resolution is out of scope here: we emit a self-link to
+     the raw target (plus fragment) and show the display text, escaping both. *)
+  let href =
+    let b = Buffer.create 32 in
+    (match Inline.Wikilink.target wl with Some t -> Buffer.add_string b t | None -> ());
+    (match Inline.Wikilink.fragment wl with
+     | None -> ()
+     | Some (Inline.Wikilink.Heading hs) ->
+         List.iter (fun h -> Buffer.add_char b '#'; Buffer.add_string b h) hs
+     | Some (Inline.Wikilink.Block_ref id) ->
+         Buffer.add_string b "#^"; Buffer.add_string b id);
+    Buffer.contents b
+  in
+  C.string c "<a class=\"wikilink\" href=\"";
+  pct_encoded_string c href; C.string c "\">";
+  html_escaped_string c (Inline.Wikilink.to_plain_text wl);
+  C.string c "</a>"
+
 let inline c = function
 | Inline.Autolink (a, _) -> autolink c a; true
 | Inline.Break (b, _) -> break c b; true
@@ -342,6 +361,7 @@ let inline c = function
 | Inline.Ext_extra_inline_container (ic, _) -> extra_inline_container c ic; true
 | Inline.Ext_attributes (a, _) -> inline_attributes c a; true
 | Inline.Ext_math_span (ms, _) -> math_span c ms; true
+| Inline.Ext_wikilink (wl, _) -> wikilink c wl; true
 | _ -> comment c "<!-- Unknown Cmarkit inline -->"; true
 
 (* Block rendering *)

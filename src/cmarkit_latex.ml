@@ -267,6 +267,7 @@ let inline c = function
 | Inline.Ext_extra_inline_container (ic, _) -> extra_inline_container c ic; true
 | Inline.Ext_attributes (a, _) -> inline_attributes c a; true
 | Inline.Ext_math_span (ms, _) -> math_span c ms; true
+| Inline.Ext_wikilink (wl, _) -> text c (Inline.Wikilink.to_plain_text wl); true
 | _ -> comment c "Unknown Cmarkit inline"; true
 
 (* Block rendering *)

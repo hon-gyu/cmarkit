@@ -106,6 +106,23 @@ let sexp_of_inline_core : inline_sexp =
                      recurse (Inline.Attributes.inline a) ]
     | Inline.Ext_math_span (ms, m) ->
       m, Sexp.List [ Atom "Math_span"; Atom (Inline.Math_span.tex ms) ]
+    | Inline.Ext_wikilink (wl, m) ->
+      let opt = function None -> Sexp.Atom "" | Some s -> Sexp.Atom s in
+      let frag =
+        match Inline.Wikilink.fragment wl with
+        | None -> Sexp.Atom ""
+        | Some (Inline.Wikilink.Heading hs) ->
+          Sexp.List (Atom "Heading" :: List.map hs ~f:(fun h -> Sexp.Atom h))
+        | Some (Inline.Wikilink.Block_ref id) ->
+          Sexp.List [ Atom "Block_ref"; Atom id ]
+      in
+      ( m
+      , Sexp.List
+          [ Atom (if Inline.Wikilink.embed wl then "Wikilink_embed" else "Wikilink")
+          ; opt (Inline.Wikilink.target wl)
+          ; frag
+          ; opt (Inline.Wikilink.display wl)
+          ] )
     | _ -> Meta.none, Sexp.Atom "<unknown-inline>"
   in
   Some (with_meta meta body)

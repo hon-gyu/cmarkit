@@ -205,6 +205,67 @@ with markers
 parsed marked delimiters
 ----------
 {_hello_}
+wikilink tokenization
+==========
+disabled keeps link tokens
+----------
+((Link_start (start 0) (image false)) (Link_start (start 1) (image false))
+ (Right_brack (start 3)) (Right_brack (start 4)))
+
+enabled emits wikilink start
+----------
+((Wikilink_start (start 0) (embed false)))
+
+embed form
+----------
+((Wikilink_start (start 0) (embed true)))
+
+unterminated falls back to links
+----------
+((Link_start (start 0) (image false)) (Link_start (start 1) (image false)))
+
+wikilink parse
+==========
+target only
+----------
+(Wikilink Note "" "")
+
+heading and display
+----------
+(Wikilink Note (Heading H1 H2) Display)
+
+block reference
+----------
+(Wikilink Note (Block_ref block-1) "")
+
+embed
+----------
+(Wikilink_embed Pic.png "" "")
+
+display only
+----------
+(Wikilink "" "" "just text")
+
+among other inlines
+----------
+(Inlines (Text "a ") (Wikilink w "" "") (Text " and ") (Emphasis (Text b))
+ (Text " and ") (Link (Text l)))
+
+not parsed in code span
+----------
+(Code_span [[w]])
+
+wikilink commonmark roundtrip
+==========
+link form
+----------
+[[Note#H|D]]
+embed form
+----------
+![[Pic.png]]
+verbatim spacing preserved
+----------
+[[ a # b | c ]]
 extra inline container AST support
 ==========
 sexp

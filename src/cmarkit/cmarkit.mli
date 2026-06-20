@@ -946,13 +946,59 @@ module Inline : sig
         separated by space. The {!tex} function does that for you. *)
   end
 
+  (** Obsidian wikilinks. *)
+  module Wikilink : sig
+    type fragment =
+    | Heading of string list
+        (** The ['#']-separated heading path, e.g. [ ["H1"; "H2"] ] for
+            [ [[Note#H1#H2]] ]. *)
+    | Block_ref of string (** A block reference [id] for [ [[Note#^id]] ]. *)
+    (** The type for the part of a wikilink after the first ['#']. *)
+
+    type t
+    (** The type for {{!Cmarkit.ext_wikilink}wikilinks}. *)
+
+    val make : embed:bool -> string -> t
+    (** [make ~embed content] parses the text [content] found between the
+        wikilink brackets (without the brackets or leading ['!']) into a
+        wikilink. [embed] is [true] for the [ ![[...]] ] embed form. *)
+
+    val content : t -> string
+    (** [content w] is the raw text between the brackets, kept verbatim so
+        that rendering roundtrips. *)
+
+    val target : t -> string option
+    (** [target w] is the link target (before any ['#'] or ['|']), if any. *)
+
+    val fragment : t -> fragment option
+    (** [fragment w] is the heading or block reference, if any. *)
+
+    val display : t -> string option
+    (** [display w] is the display text (after ['|']), if any. *)
+
+    val embed : t -> bool
+    (** [embed w] is [true] if [w] is an [ ![[...]] ] embed. *)
+
+    val to_commonmark : t -> string
+    (** [to_commonmark w] renders [w] back to its [ [[...]] ] (or
+        [ ![[...]] ]) source. *)
+
+    val to_plain_text : t -> string
+    (** [to_plain_text w] is the display text, or the target, or the raw
+        content, in that order of preference. *)
+  end
+
   type t +=
   | Ext_strikethrough of Strikethrough.t node
   | Ext_extra_inline_container of Extra_inline_container.t node
   | Ext_attributes of Attributes.t node
-  | Ext_math_span of Math_span.t node (** *)
+  | Ext_math_span of Math_span.t node
+  | Ext_wikilink of Wikilink.t node (** *)
   (** The supported inline extensions. These inlines are only parsed when
-      {!Doc.of_string} is called with [strict:false]. *)
+      {!Doc.of_string} is called with [strict:false].
+
+      {!Ext_wikilink} is gated separately behind the [wikilink] argument of
+      {!Doc.of_string}. *)
 
   (** {1:funs Functions} *)
 
@@ -1508,7 +1554,7 @@ module Doc : sig
     ?marked_emphasis_delims:bool -> ?strong_emphasis_width:int ->
     ?extra_inline_containers:Inline.Extra_inline_container.Config.t ->
     ?block_id:bool -> ?djot_inline_attributes:bool ->
-    ?djot_block_attributes:bool -> ?div:bool ->
+    ?djot_block_attributes:bool -> ?div:bool -> ?wikilink:bool ->
     ?strict:bool -> string -> t
     (** [of_string md] is a document from the UTF-8 encoded CommonMark
         document [md].
@@ -1582,6 +1628,9 @@ module Doc : sig
    {- If [djot_block_attributes] is [true], Djot attribute lines immediately
       preceding a block are represented by {!Block.Ext_attributes}. Continued
       lines inside a block attribute must be indented.}
+   {- If [wikilink] is [true], Obsidian {{!ext_wikilink}wikilinks} [ [[...]] ]
+      and embeds [ ![[...]] ] are represented by {!Inline.Ext_wikilink}. The
+      default is [false]. This knob is independent of [strict].}
    {- If [resolver] is provided this is used resolve label definitions
       and references. See {{!Label.resolvers}here} for details. Defaults to
       {!Label.default_resolver}.}
@@ -1900,6 +1949,20 @@ end
        of extensions. [Cmarkit] will support those.}
     {- In the short term, there is no plan to support more extensions than
        those that are listed here.}}
+
+    {2:ext_wikilink Wikilinks}
+
+    Obsidian-style wikilinks, enabled by the [wikilink] argument of
+    {!Doc.of_string} (independently of [strict]).
+
+    {v See [[Note#Heading|display]] and embed ![[Other Note]]. v}
+
+    Text delimited by [ [[ ]] ] on a single line gets into an
+    {!Inline.extension-Ext_wikilink} node; a leading [!] marks an embed. The
+    content between the brackets is opaque (no nested inline parsing) and is
+    split into an optional target, a [#]-fragment (a heading path, or a [^]
+    block reference) and an optional [|] display text. See
+    {!Inline.Wikilink}.
 
     {2:ext_strikethrough Strikethrough}
 

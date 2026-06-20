@@ -123,6 +123,7 @@ module Inline_struct = struct
     | Right_paren of { start : byte_pos }
     | Strikethrough_marks of strikethrough_marks
     | Math_span_marks of math_span_marks
+    | Wikilink_start of { start : byte_pos; embed : bool }
   [@@deriving sexp_of]
 end
 
@@ -377,6 +378,61 @@ let () =
       Doc.of_string ~marked_emphasis_delims:true "{_hello_}"
       |> Cmarkit_commonmark.of_doc |> print_string)
     ()
+
+let () =
+  show_sep ~title:"wikilink tokenization" ();
+  let tokens title f =
+    with_output ~h2:true ~title ~f:(fun () -> print_tokens (f ())) ()
+  in
+  let toks ?(wikilink = true) s =
+    let line_spans = Inline_parse_api.line_spans s in
+    let parser =
+      Cmarkit_.Parser_common.parser ~wikilink ~strict:false s
+    in
+    let p, lines = (parser, line_spans) in
+    let _layout, _meta, lines = strip_paragraph p lines in
+    let _cidx, toks, _first_line =
+      tokenize ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i lines
+    in
+    toks
+  in
+  tokens "disabled keeps link tokens" (fun () -> toks ~wikilink:false "[[a]]");
+  tokens "enabled emits wikilink start" (fun () -> toks "[[a]]");
+  tokens "embed form" (fun () -> toks "![[a]]");
+  tokens "unterminated falls back to links" (fun () -> toks "[[a")
+
+let () =
+  show_sep ~title:"wikilink parse" ();
+  let sexp_of = Sexp.make_sexp_of () in
+  let parse title markdown =
+    with_output ~h2:true ~title
+      ~f:(fun () ->
+        markdown
+        |> Inline_parse_api.of_string ~wikilink:true ~strict:false
+        |> sexp_of.inline
+        |> print_sexp)
+      ()
+  in
+  parse "target only" "[[Note]]";
+  parse "heading and display" "[[Note#H1#H2|Display]]";
+  parse "block reference" "[[Note#^block-1]]";
+  parse "embed" "![[Pic.png]]";
+  parse "display only" "[[|just text]]";
+  parse "among other inlines" "a [[w]] and *b* and [l](u)";
+  parse "not parsed in code span" "`[[w]]`"
+
+let () =
+  show_sep ~title:"wikilink commonmark roundtrip" ();
+  let roundtrip title markdown =
+    with_output ~h2:true ~title
+      ~f:(fun () ->
+        Doc.of_string ~wikilink:true ~strict:false markdown
+        |> Cmarkit_commonmark.of_doc |> print_string)
+      ()
+  in
+  roundtrip "link form" "[[Note#H|D]]";
+  roundtrip "embed form" "![[Pic.png]]";
+  roundtrip "verbatim spacing preserved" "[[ a # b | c ]]"
 
 let () =
   show_sep ~title:"extra inline container AST support" ();
