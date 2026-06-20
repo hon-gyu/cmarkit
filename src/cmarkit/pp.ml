@@ -3,7 +3,7 @@
    show structure and a preview of inline content, dropping [Meta.t] and
    most layout. Use [~ext] to handle user-defined [Block.t] extensions. *)
 
-open Common
+open Common_
 open Block
 
 let h_epls = "…"
@@ -87,6 +87,11 @@ let rec pp_block_with ?(ext = pp_ext_default) ?ext_inline () ppf = function
     Format.fprintf ppf "@[<2>Paragraph@ %a@]"
       (pp_inline_preview ?ext_inline)
       (Paragraph.inline p)
+| Ext_attributes (a, _) ->
+    Format.fprintf ppf "@[<v 2>Attributes %S@,%a@]"
+      (Attribute.to_string (Block.Attributes.attributes a))
+      (pp_block_with ~ext ?ext_inline ())
+      (Block.Attributes.block a)
 | Thematic_break _ -> Format.pp_print_string ppf "Thematic_break"
 | Ext_math_block (cb, _) ->
     Format.fprintf ppf "Ext_math_block { lines=%d }"
@@ -97,6 +102,10 @@ let rec pp_block_with ?(ext = pp_ext_default) ?ext_inline () ppf = function
 | Ext_footnote_definition (fn, _) ->
     Format.fprintf ppf "@[<v 2>Ext_footnote_definition %a@,%a@]" pp_label
       (Footnote.label fn) (pp_block_with ~ext ?ext_inline ()) (Footnote.block fn)
+| Ext_div (d, _) ->
+    let class' = match Div.class' d with None -> "-" | Some (s, _) -> s in
+    Format.fprintf ppf "@[<v 2>Ext_div { class=%S }@,%a@]" class'
+      (pp_block_with ~ext ?ext_inline ()) (Div.block d)
 | b -> ext ppf b
 
 let pp_block = pp_block_with ()

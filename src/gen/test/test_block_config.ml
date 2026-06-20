@@ -51,6 +51,27 @@ let () =
        ~gen:(gen (enable (fun c -> { c with no_empty_blocks = false })))
        () T.no_empty_blocks
 
+(* no_list_item_leading_blank_prefix
+   --------------------------------- *)
+
+let () =
+  run
+  @@ P.qcheck_test_of_t ~count
+       ~gen:
+         (gen
+            (enable (fun c ->
+                 { c with no_list_item_leading_blank_prefix = true })))
+       () T.no_list_item_leading_blank_prefix
+
+let () =
+  run
+  @@ P.qcheck_test_of_t ~count ~negative:true
+       ~gen:
+         (gen
+            (enable (fun c ->
+                 { c with no_list_item_leading_blank_prefix = false })))
+       () T.no_list_item_leading_blank_prefix
+
 (* no_trailing_blank_line_in_blocks
    -------------------------------- *)
 
@@ -91,3 +112,41 @@ let () =
             (enable (fun c ->
                  { c with no_html_block_starting_paragraph = false })))
        () T.no_html_block_starting_paragraph
+
+(* no_ambiguous_indented_code_after_list
+   ------------------------------------- *)
+
+let () =
+  run
+  @@ P.qcheck_test_of_t ~count
+       ~gen:
+         (gen
+            (enable (fun c ->
+                 { c with no_ambiguous_indented_code_after_list = true })))
+       () T.no_ambiguous_indented_code_after_list
+
+let () =
+  run
+  @@ P.qcheck_test_of_t ~count ~negative:true
+       ~gen:
+         (gen
+            (enable (fun c ->
+                 { c with no_ambiguous_indented_code_after_list = false })))
+       () T.no_ambiguous_indented_code_after_list
+
+(* no_adjacent_block_quotes
+   ------------------------ *)
+
+let () =
+  run
+  @@ P.qcheck_test_of_t ~count
+       ~gen:
+         (gen (enable (fun c -> { c with no_adjacent_block_quotes = true })))
+       () T.no_adjacent_block_quotes
+
+let () =
+  run
+  @@ P.qcheck_test_of_t ~count ~negative:true
+       ~gen:
+         (gen (enable (fun c -> { c with no_adjacent_block_quotes = false })))
+       () T.no_adjacent_block_quotes

@@ -1,3 +1,5 @@
+[@@@ocamlformat "disable"]
+
 (*---------------------------------------------------------------------------
    Copyright (c) 2023 The cmarkit programmers. All rights reserved.
    SPDX-License-Identifier: ISC
@@ -9,8 +11,10 @@ module C = Cmarkit_renderer.Context
 (* Renderer state *)
 
 type indent =
-[ `I of int | `L of int * string * int * Uchar.t option | `Q of int
-| `Fn of int * Label.t ]
+[ `I of int
+  | `L of int * string * int * int * Uchar.t option (* Oymarkit diff *)
+  | `Q of int
+  | `Fn of int * Label.t ]
 
 type state =
   { nl : string; (* newline to output. *)
@@ -145,14 +149,14 @@ let rec indent c =
       nchars c n ' '; loop c (i :: acc) is
   | `Q n as i :: is ->
       nchars c n ' '; C.byte c '>';  C.byte c ' '; loop c (i :: acc) is
-  | `L (before, m, after, task) :: is ->
+  | `L (before, m, after, continuation_extra, task) :: is -> (* Oymarkit diff *)
       nchars c before ' '; C.string c m; nchars c after ' ';
       let after = match task with
       | None -> after
       | Some u -> C.byte c '['; C.utf_8_uchar c u; C.string c "] "; after
       in
       (* On the next call we'll just indent for the list item *)
-      loop c (`I (before + String.length m + after) :: acc) is
+      loop c (`I (before + String.length m + after + continuation_extra) :: acc) is (* Oymarkit diff *)
   | `Fn (before, label) :: is ->
       nchars c before ' ';
       C.byte c '['; link_label_lines c (Label.text label);
@@ -201,16 +205,29 @@ let code_span c cs =
   nchars c (Inline.Code_span.backtick_count cs) '`';
   tight_block_lines c (Inline.Code_span.code_layout cs);
   nchars c (Inline.Code_span.backtick_count cs) '`'
+[@@@ocamlformat "enable"]
+
+let marked_emphasis_open c e =
+  if Inline.Emphasis.open_marker e then C.byte c '{'
+
+let marked_emphasis_close c e =
+  if Inline.Emphasis.close_marker e then C.byte c '}'
+
+[@@@ocamlformat "disable"]
 
 let emphasis c e =
   let delim = Inline.Emphasis.delim e and i = Inline.Emphasis.inline e in
   let delim = if not (delim = '*' || delim = '_') then '*' else delim in
-  C.byte c delim; C.inline c i; C.byte c delim
+  marked_emphasis_open c e;
+  C.byte c delim; C.inline c i; C.byte c delim;
+  marked_emphasis_close c e
 
 let strong_emphasis c e =
   let delim = Inline.Emphasis.delim e and i = Inline.Emphasis.inline e in
   let delim = if not (delim = '*' || delim = '_') then '*' else delim in
-  C.byte c delim;  C.byte c delim; C.inline c i; C.byte c delim; C.byte c delim
+  marked_emphasis_open c e;
+  C.byte c delim; C.byte c delim; C.inline c i; C.byte c delim; C.byte c delim;
+  marked_emphasis_close c e
 
 let link_title c open_delim title = match title with
 | None -> ()
@@ -263,6 +280,33 @@ let strikethrough c s =
   let i = Inline.Strikethrough.inline s in
   C.string c "~~"; C.inline c i; C.string c "~~"
 
+let extra_inline_container c ic =
+  let delim =
+    match Inline.Extra_inline_container.kind ic with
+    | Inline.Extra_inline_container.Highlight -> '='
+    | Inline.Extra_inline_container.Superscript -> '^'
+    | Inline.Extra_inline_container.Subscript -> '~'
+    | Inline.Extra_inline_container.Inserted -> '+'
+    | Inline.Extra_inline_container.Deleted -> '-'
+  in
+  C.byte c '{';
+  C.byte c delim;
+  C.inline c (Inline.Extra_inline_container.inline ic);
+  C.byte c delim;
+  C.byte c '}'
+
+let attribute_spec c a =
+  let body =
+    match Attribute.source a with
+    | Some source -> source
+    | None -> Attribute.to_string a
+  in
+  C.byte c '{'; C.string c body; C.byte c '}'
+
+let inline_attributes c a =
+  C.inline c (Inline.Attributes.inline a);
+  List.iter (attribute_spec c) (Inline.Attributes.specs a)
+
 let math_span c ms =
   let sep = if Inline.Math_span.display ms then "$$" else "$" in
   C.string c sep;
@@ -281,6 +325,8 @@ let inline c = function
 | Inline.Strong_emphasis (e, _) -> strong_emphasis c e; true
 | Inline.Text (t, _) -> text c t; true
 | Inline.Ext_strikethrough (s, _) -> strikethrough c s; true
+| Inline.Ext_extra_inline_container (ic, _) -> extra_inline_container c ic; true
+| Inline.Ext_attributes (a, _) -> inline_attributes c a; true
 | Inline.Ext_math_span (m, _) -> math_span c m; true
 | _ -> C.string c "<!-- Unknown Cmarkit inline -->"; true
 
@@ -291,6 +337,26 @@ let blank_line c l = newline c; indent c; C.string c l
 let block_quote c bq  =
   push_indent c (`Q (Block.Block_quote.indent bq));
   C.block c (Block.Block_quote.block bq); pop_indent c
+
+let div c d =
+  let class' = Block.Div.class' d in
+  newline c; push_indent c (`I (Block.Div.indent d)); indent c;
+  begin match fst (Block.Div.opening_fence d) with
+  | "" -> (* synthesized: ::: + optional space + class *)
+      C.string c ":::";
+      (match class' with
+       | None -> () | Some (cls, _) -> C.byte c ' '; C.string c cls)
+  | opening -> (* opening already holds the layout up to the class *)
+      C.string c opening;
+      (match class' with None -> () | Some (cls, _) -> C.string c cls)
+  end;
+  C.block c (Block.Div.block d);
+  begin match Block.Div.closing_fence d with
+  | None -> ()
+  | Some (close, _) ->
+      newline c; indent c; C.string c (if close = "" then ":::" else close)
+  end;
+  pop_indent c
 
 let code_block c cb = match Block.Code_block.layout cb with
 | `Indented ->
@@ -347,11 +413,50 @@ let link_reference_definition c ld =
   C.string c "]:";
   link_definition c ld
 
+(* Oymarkit begin: upstream cmarkit uses [after] both for the marker line and
+   for subsequent list-item continuation lines. That loses AST roundtrips for a
+   list item whose first child block has its own leading indentation, e.g.
+
+     -  ***
+       ```
+       ```
+
+   The parser derives the item continuation column from the total first-line
+   spaces after the marker. Keep the marker-line rendering unchanged, but carry
+   an extra continuation offset for later sibling block lines when needed. *)
+let rec first_line_indent = function
+| Block.Blocks (b :: _, _) -> first_line_indent b
+| Block.Blocks ([], _) -> 0
+| Block.Code_block (cb, _) -> (
+    match Block.Code_block.layout cb with
+    | `Indented -> 4
+    | `Fenced f -> f.indent)
+| Block.Heading (h, _) -> (
+    match Block.Heading.layout h with
+    | `Atx l -> l.indent
+    | `Setext l -> l.leading_indent)
+| Block.Paragraph (p, _) -> Block.Paragraph.leading_indent p
+| Block.Thematic_break (t, _) -> Block.Thematic_break.indent t
+| Block.Ext_table (t, _) -> Block.Table.indent t
+| Block.Ext_footnote_definition (fn, _) -> Block.Footnote.indent fn
+| Block.Ext_div (d, _) -> Block.Div.indent d
+| _ -> 0
+
+let list_item_continuation_extra after i =
+  let first = first_line_indent (Block.List_item.block i) in
+  let first_line_after = after + first in
+  let continuation_after =
+    if first_line_after > 4 then 1 else Int.min first_line_after 4
+  in
+  Int.max 0 (continuation_after - after)
+(* Oymarkit end *)
+
 let unordered_item c marker (i, _) =
   let before = Block.List_item.before_marker i in
   let after = Block.List_item.after_marker i in
+  let continuation_extra = list_item_continuation_extra after i in (* Oymarkit diff *)
   let task = Option.map fst (Block.List_item.ext_task_marker i) in
-  push_indent c (`L (before, marker, after, task));
+  push_indent c (`L (before, marker, after, continuation_extra, task));
   C.block c (Block.List_item.block i);
   pop_indent c
 
@@ -360,8 +465,9 @@ let ordered_item c sep num (i, _) =
   let marker = fst (Block.List_item.marker i) in
   let marker = if marker = "" then Int.to_string num ^ sep else marker in
   let after = Block.List_item.after_marker i in
+  let continuation_extra = list_item_continuation_extra after i in (* Oymarkit diff *)
   let task = Option.map fst (Block.List_item.ext_task_marker i) in
-  push_indent c (`L (before, marker, after, task));
+  push_indent c (`L (before, marker, after, continuation_extra, task));
   C.block c (Block.List_item.block i);
   pop_indent c;
   num + 1
@@ -419,6 +525,13 @@ let footnote c fn =
   C.block c (Block.Footnote.block fn);
   pop_indent c
 
+let block_attributes c a =
+  List.iter
+    (fun spec ->
+      newline c; indent c; attribute_spec c spec)
+    (Block.Attributes.specs a);
+  C.block c (Block.Attributes.block a)
+
 let block c = function
 | Block.Blank_line (l, _) -> blank_line c l; true
 | Block.Block_quote (b, _) -> block_quote c b; true
@@ -434,6 +547,8 @@ let block c = function
 | Block.Ext_math_block (cb, _) -> code_block c cb; true
 | Block.Ext_table (t, _) -> table c t; true
 | Block.Ext_footnote_definition (t, _) -> footnote c t; true
+| Block.Ext_div (d, _) -> div c d; true
+| Block.Ext_attributes (a, _) -> block_attributes c a; true
 | _ -> newline c; indent c; C.string c "<!-- Unknown Cmarkit block -->"; true
 
 (* Document rendering *)

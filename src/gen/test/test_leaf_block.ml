@@ -13,5 +13,6 @@ let () =
        [
          P.qcheck_test_of_t ~gen ()
            (P.roundtrip_with ~emphasis_delims:[ '_' ]
-              ~strong_emphasis_delims:[ '*' ] ());
+              ~strong_emphasis_delims:[ '*' ] ~intraword_emphasis:false
+              ~marked_emphasis_delims:true ());
        ]

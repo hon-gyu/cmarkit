@@ -6,13 +6,15 @@
 
 open Cmarkit_
 
-(** {1 No trailing blank lines in blocks}
+(** {1 No trailing blank lines in nested blocks}
 
-    [Blank_line] at the tail of a [Blocks] list renders as nothing (the `\n` it
-    contributes merely closes the preceding block's last line), so
-    [parse(render(Blocks [...; Blank_line]))] will never reconstruct the
-    trailing [Blank_line]. Any such node is a generator artifact with no
-    syntactic witness. *)
+    [Blank_line] at the tail of a nested [Blocks] list after non-blank sibling
+    content has no stable ownership: the blank line only closes or separates
+    surrounding blocks, so [parse(render(Blocks [nonblank; ...; Blank_line]))]
+    can attach it to an enclosing container instead of the nested [Blocks].
+    Top-level trailing blank lines and blank-only nested containers are
+    different: the parser can emit them, so this rule intentionally allows
+    those shapes. *)
 
 (* Immediate child blocks of [b], so the check can descend into nested
    structures (block quotes, list items, footnote definitions, ...). *)
@@ -26,13 +28,14 @@ let child_blocks : Block.t -> Block.t list = function
 
 let no_trailing_blank_line_in_blocks : Property.t =
   let name = "no trailing blank line in blocks" in
-  let rec check : Block.t -> Property.result =
+  let blank = function Block.Blank_line _ -> true | _ -> false in
+  let rec check ~is_root : Block.t -> Property.result =
    fun b ->
     let here =
       match b with
-      | Block.Blocks (bs, _) as blocks -> (
+      | Block.Blocks (bs, _) as blocks when not is_root -> (
           match List.rev bs with
-          | Block.Blank_line _ :: _ ->
+          | Block.Blank_line _ :: rest when List.exists (Fun.negate blank) rest ->
               Property.Fail (b, [ ("blocks", Block blocks) ])
           | _ -> Pass)
       | _ -> Pass
@@ -45,10 +48,10 @@ let no_trailing_blank_line_in_blocks : Property.t =
           (fun acc child ->
             match acc with
             | Property.Fail _ -> acc
-            | Property.Pass -> check child)
+            | Property.Pass -> check ~is_root:false child)
           Property.Pass (child_blocks b)
   in
-  { name; check }
+  { name; check = check ~is_root:true }
 
 (** {1 No empty paragraph}
 
@@ -112,6 +115,162 @@ let no_empty_blocks : Property.t =
   in
   { name; check }
 
+(** {1 No empty list}
+
+    A [List] with zero items renders to nothing: a list has no syntax of its
+    own, it exists only as the grouping of its item markers. With no item there
+    is no marker, so the parser never emits an empty list (it would emit a
+    [Blank_line] / nothing instead). Same family as {!no_empty_blocks}. *)
+let no_empty_list : Property.t =
+  let name = "no empty list" in
+  let rec check : Block.t -> Property.result =
+   fun b ->
+    let here =
+      match b with
+      | Block.List (l, _) as list when Block.List'.items l = [] ->
+          Property.Fail (b, [ ("list", Block list) ])
+      | _ -> Pass
+    in
+    match here with
+    | Property.Fail _ -> here
+    | Property.Pass ->
+        List.fold_left
+          (fun acc child ->
+            match acc with
+            | Property.Fail _ -> acc
+            | Property.Pass -> check child)
+          Property.Pass (child_blocks b)
+  in
+  { name; check }
+
+(** {1 No leading blank prefix before list-item content}
+
+    A list item may start with one blank line before its first non-blank block:
+
+    {[
+      -
+        x
+    ]}
+
+    still parses as one list item containing [Blank_line; Paragraph "x"].
+    With two or more leading blanks, the parser has already closed the
+    blank-only item before the following non-blank line is processed:
+
+    {[
+      -
+
+        x
+    ]}
+
+    reparses as a blank-only list item followed by an outside paragraph. This
+    is about the prefix before the first real item content; blank-only items
+    remain parser-emittable and are intentionally allowed. *)
+let no_list_item_leading_blank_prefix : Property.t =
+  let name = "no list-item leading blank prefix" in
+  let blank = function
+    | Block.Blank_line _ -> true
+    | _ -> false
+  in
+  let bad_item_block block =
+    match Block.normalize block with
+    | Block.Blocks (bs, _) ->
+        let rec count_blanks count = function
+        | b :: bs when blank b -> count_blanks (count + 1) bs
+        | [] -> false
+        | _ :: _ -> count >= 2
+        in
+        count_blanks 0 bs
+    | _ -> false
+  in
+  let item_bad (item, _) = bad_item_block (Block.List_item.block item) in
+  let rec check : Block.t -> Property.result =
+   fun b ->
+    let here =
+      match b with
+      | Block.List (l, _) as list when List.exists item_bad (Block.List'.items l)
+        ->
+          Property.Fail (b, [ ("list", Block list) ])
+      | _ -> Pass
+    in
+    match here with
+    | Property.Fail _ -> here
+    | Property.Pass ->
+        List.fold_left
+          (fun acc child ->
+            match acc with
+            | Property.Fail _ -> acc
+            | Property.Pass -> check child)
+          Property.Pass (child_blocks b)
+  in
+  { name; check }
+
+(** {1 No marker-colliding thematic break in a list item}
+
+    A bullet list item whose {e leading} block is a thematic break of the same
+    character as the bullet marker has no syntactic witness. The marker and the
+    thematic break share the item's first line, e.g. [- ---], which is a uniform
+    run of [-] and therefore parses as a {!Block.Thematic_break} (a thematic
+    break takes precedence over a list item), not a list. Only [-] and [*] are
+    affected: they are the characters that are both bullet markers and thematic
+    break characters ([+] is marker-only, [_] is thematic-break-only, ordered
+    markers never collide). So [* ---] is fine — mixed characters, no uniform
+    run — and must not be rejected. *)
+
+(* First non-blank character of a thematic break's layout art. *)
+let thematic_break_char (tb : Block.Thematic_break.t) : char option =
+  let s = Block.Thematic_break.layout tb in
+  let n = String.length s in
+  let rec find i =
+    if i >= n then None
+    else
+      match s.[i] with
+      | ' '
+      | '\t' ->
+          find (i + 1)
+      | c -> Some c
+  in
+  find 0
+
+(* The block that renders on the item's first (marker) line: peel [Blocks]
+   splicing down to its head. *)
+let rec leading_block (b : Block.t) : Block.t option =
+  match b with
+  | Block.Blocks (b0 :: _, _) -> leading_block b0
+  | Block.Blocks ([], _) -> None
+  | other -> Some other
+
+let no_marker_colliding_thematic_break : Property.t =
+  let name = "no marker-colliding thematic break in list item" in
+  let item_collides marker (item, _) =
+    match leading_block (Block.List_item.block item) with
+    | Some (Block.Thematic_break (tb, _)) ->
+        thematic_break_char tb = Some marker
+    | _ -> false
+  in
+  let rec check : Block.t -> Property.result =
+   fun b ->
+    let here =
+      match b with
+      | Block.List (l, _) as list -> (
+          match Block.List'.type' l with
+          | `Unordered marker
+            when List.exists (item_collides marker) (Block.List'.items l) ->
+              Property.Fail (b, [ ("list", Block list) ])
+          | _ -> Pass)
+      | _ -> Pass
+    in
+    match here with
+    | Property.Fail _ -> here
+    | Property.Pass ->
+        List.fold_left
+          (fun acc child ->
+            match acc with
+            | Property.Fail _ -> acc
+            | Property.Pass -> check child)
+          Property.Pass (child_blocks b)
+  in
+  { name; check }
+
 (** {1 No HTML-block-starting paragraph}
 
     A paragraph whose rendered first line starts with CommonMark HTML block
@@ -159,6 +318,159 @@ let no_html_block_starting_paragraph : Property.t =
   in
   { name; check }
 
+(** {1 No HTML block absorbing its successor}
+
+    A type-6/7 HTML block (or any whose end condition its own lines never meet)
+    stays open at its last line, so on reparse it swallows whatever block
+    renders right after it — unless that successor is a [Blank_line] (which
+    closes it) or a container boundary intervenes. We check on the
+    {!Cmarkit_.Block.normalize}d tree so render-order adjacency is literal:
+    normalize splices every nested [Blocks] flat, so a trailing html block
+    buried in an inner [Blocks] sits directly before its real successor. Only
+    [Blocks] siblings can collide; a [Block_quote]/[List] boundary stops
+    absorption, so scanning each flat [Blocks] list is enough. *)
+let no_html_block_absorbing_successor : Property.t =
+  let name = "no html block absorbing successor" in
+  let absorbing = function
+    | Block.Html_block (lines, _) -> Common_.html_block_absorbs lines
+    | _ -> false
+  in
+  let blank = function
+    | Block.Blank_line _ -> true
+    | _ -> false
+  in
+  let rec has_bad_pair = function
+    | a :: (b :: _ as rest) ->
+        (absorbing a && not (blank b)) || has_bad_pair rest
+    | _ -> false
+  in
+  let rec check : Block.t -> Property.result =
+   fun b ->
+    let here =
+      match b with
+      | Block.Blocks (bs, _) as blocks when has_bad_pair bs ->
+          Property.Fail (b, [ ("blocks", Block blocks) ])
+      | _ -> Pass
+    in
+    match here with
+    | Property.Fail _ -> here
+    | Property.Pass ->
+        List.fold_left
+          (fun acc child ->
+            match acc with
+            | Property.Fail _ -> acc
+            | Property.Pass -> check child)
+          Property.Pass (child_blocks b)
+  in
+  let check b = check (Block.normalize b) in
+  { name; check }
+
+(** {1 No ambiguous indented code after a list}
+
+    An indented code block that renders after a list, with only blank lines
+    between them, is ambiguous when the final list item's continuation indent is
+    at most four columns. The code block's four-space prefix then continues the
+    item, so the parser keeps the line inside the list rather than opening a
+    top-level code block. Wider list markers can close the list and are valid. A
+    fenced code block preserves the same content and block structure in every
+    case.
+
+    We check the normalized tree so nested [Blocks] wrappers cannot hide the
+    render-order adjacency. Container boundaries still stop the interaction. *)
+let no_ambiguous_indented_code_after_list : Property.t =
+  let name = "no ambiguous indented code after list" in
+  let ambiguous_list = function
+    | Block.List (l, _) -> (
+        match Common_.list_last_item_continuation_indent l with
+        | Some indent -> indent <= 4
+        | None -> false)
+    | _ -> false
+  in
+  let indented_code = function
+    | Block.Code_block (cb, _) -> Block.Code_block.layout cb = `Indented
+    | _ -> false
+  in
+  let rec has_bad_sequence after_list = function
+    | [] -> false
+    | Block.Blank_line _ :: bs -> has_bad_sequence after_list bs
+    | (Block.List _ as list) :: bs -> has_bad_sequence (ambiguous_list list) bs
+    | b :: _ when after_list && indented_code b -> true
+    | _ :: bs -> has_bad_sequence false bs
+  in
+  let rec check : Block.t -> Property.result =
+   fun b ->
+    let here =
+      match b with
+      | Block.Blocks (bs, _) as blocks when has_bad_sequence false bs ->
+          Property.Fail (b, [ ("blocks", Block blocks) ])
+      | _ -> Pass
+    in
+    match here with
+    | Property.Fail _ -> here
+    | Property.Pass ->
+        List.fold_left
+          (fun acc child ->
+            match acc with
+            | Property.Fail _ -> acc
+            | Property.Pass -> check child)
+          Property.Pass (child_blocks b)
+  in
+  let check b = check (Block.normalize b) in
+  { name; check }
+
+(** {1 No adjacent block quotes}
+
+    Two adjacent [Block_quote] siblings render as one uninterrupted run of
+    quote-marker lines, so the parser produces one quote container rather than
+    recovering the sibling boundary. A top-level [Blank_line] between them is
+    sufficient to close the first quote and preserve both containers.
+
+    We considered canonicalizing
+
+    [Block_quote a; Block_quote b]
+
+    to
+
+    [Block_quote (Blocks [a; b])].
+
+    That is not valid in general because parsing the contiguous quoted lines is
+    not equivalent to structurally appending the inner blocks. For example, two
+    paragraph payloads may become one continued paragraph; lists and indented
+    code have their own merging rules; and HTML blocks may absorb following
+    content. A correct general canonicalization would have to reproduce block
+    parsing inside the quote. We therefore retain the intended two-container
+    structure and require an explicit outside separator instead.
+
+    The check runs on the normalized tree so nested [Blocks] wrappers cannot
+    hide render-order adjacency. It recurses independently into block quotes,
+    lists, and other containers. *)
+let no_adjacent_block_quotes : Property.t =
+  let rec has_adjacent_quotes = function
+    | Block.Block_quote _ :: Block.Block_quote _ :: _ -> true
+    | _ :: bs -> has_adjacent_quotes bs
+    | [] -> false
+  in
+  let rec check : Block.t -> Property.result =
+   fun b ->
+    let here =
+      match b with
+      | Block.Blocks (bs, _) as blocks when has_adjacent_quotes bs ->
+          Property.Fail (b, [ ("blocks", Block blocks) ])
+      | _ -> Pass
+    in
+    match here with
+    | Property.Fail _ -> here
+    | Property.Pass ->
+        List.fold_left
+          (fun acc child ->
+            match acc with
+            | Property.Fail _ -> acc
+            | Property.Pass -> check child)
+          Property.Pass (child_blocks b)
+  in
+  let check b = check (Block.normalize b) in
+  { name = "no adjacent block quotes"; check }
+
 (* All rules aggregated *)
 let typed : Property.t =
   let p =
@@ -166,7 +478,10 @@ let typed : Property.t =
       none
       (* & no_trailing_blank_line_in_blocks *)
       & no_empty_paragraph
-      & no_empty_blocks
+      & no_empty_blocks & no_empty_list & no_marker_colliding_thematic_break
+      & no_list_item_leading_blank_prefix
+      & no_html_block_absorbing_successor
+      & no_ambiguous_indented_code_after_list & no_adjacent_block_quotes
       & no_html_block_starting_paragraph)
   in
   let name' = "typed: " ^ p.name in

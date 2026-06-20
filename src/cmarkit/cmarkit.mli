@@ -261,6 +261,19 @@ module Meta : sig
   (** [find k m] the value of [k] in [m], if any. *)
 end
 
+module Attribute : sig
+  type t
+
+  val empty : t
+  val id : t -> string option
+  val classes : t -> string list
+  val key_values : t -> (string * string) list
+  val source : t -> string option
+  val merge : t -> t -> t
+  val of_string : string -> t option
+  val to_string : t -> string
+end
+
 type 'a node = 'a * Meta.t
 (** The type for abstract syntax tree nodes. The data of type ['a] and its
     metadata. *)
@@ -710,9 +723,14 @@ module Inline : sig
         {{:https://spec.commonmark.org/0.31.2/#emphasis-and-strong-emphasis}
         emphasis and strong emphasis}. *)
 
-    val make : ?delim:Layout.char -> inline -> t
+    val make :
+      ?delim:Layout.char -> ?open_marker:bool -> ?close_marker:bool ->
+      inline -> t
     (** [make i] is an emphasis on [i]. [delim] is the delimiter
-        used it should be either ['*'] or ['_']. *)
+        used it should be either ['*'] or ['_']. If [open_marker] is [true],
+        the CommonMark renderer emits an opening marker before the opening
+        delimiter. If [close_marker] is [true], it emits a closing marker after
+        the closing delimiter. Both default to [false]. *)
 
     val inline : t -> inline
     (** [inline e] is the emphasised inline. *)
@@ -720,6 +738,12 @@ module Inline : sig
     val delim : t -> Layout.char
     (** [delim e] is the delimiter used for emphasis, should be
         either ['*'] or ['_']. *)
+
+    val open_marker : t -> bool
+    (** [open_marker e] is [true] if [e] uses an opener marker. *)
+
+    val close_marker : t -> bool
+    (** [close_marker e] is [true] if [e] uses a closer marker. *)
   end
 
   (** Links. *)
@@ -849,6 +873,56 @@ module Inline : sig
     (** [inline s] is the inline with a strikethrough. *)
   end
 
+  (** Extra inline containers. *)
+  module Extra_inline_container : sig
+    type inline := t
+
+    type kind = Highlight | Superscript | Subscript | Inserted | Deleted
+    (** The kinds of oymarkit-owned extra inline containers. *)
+
+    module Config : sig
+      type syntax = Disabled | Curly_required | Curly_optional
+      (** The accepted syntax for an extra inline container kind. *)
+
+      type t
+      (** Parser configuration for extra inline containers. *)
+
+      val make :
+        ?highlight:syntax -> ?superscript:syntax -> ?subscript:syntax ->
+        ?inserted:syntax -> ?deleted:syntax -> unit -> t
+      (** [make ()] disables every extra inline container. *)
+
+      val disabled : t
+      (** [disabled] disables every extra inline container. *)
+
+      val explicit : t
+      (** [explicit] enables every extra inline container with compulsory
+          curly braces. *)
+    end
+
+    type t
+    (** The type for extra inline container extensions. *)
+
+    val make : kind -> inline -> t
+    (** [make kind i] is an extra inline container of kind [kind] around [i]. *)
+
+    val kind : t -> kind
+    (** [kind c] is [c]'s extra inline container kind. *)
+
+    val inline : t -> inline
+    (** [inline c] is [c]'s contained inline. *)
+  end
+
+  module Attributes : sig
+    type inline := t
+    type t
+
+    val make : specs:Attribute.t list -> inline -> t
+    val inline : t -> inline
+    val attributes : t -> Attribute.t
+    val specs : t -> Attribute.t list
+  end
+
   (** Math span. *)
   module Math_span : sig
     type t
@@ -874,6 +948,8 @@ module Inline : sig
 
   type t +=
   | Ext_strikethrough of Strikethrough.t node
+  | Ext_extra_inline_container of Extra_inline_container.t node
+  | Ext_attributes of Attributes.t node
   | Ext_math_span of Math_span.t node (** *)
   (** The supported inline extensions. These inlines are only parsed when
       {!Doc.of_string} is called with [strict:false]. *)
@@ -1151,6 +1227,22 @@ module Block : sig
     (** [items l] are the items of [l]. *)
   end
 
+  (** Obsidian-style block identifiers. *)
+  module Block_id : sig
+    type t
+    (** The type for a block identifier parsed from a terminal caret suffix
+        such as [^block-id]. *)
+
+    val id : t -> string
+    (** [id t] is the identifier without the caret marker. *)
+
+    val marker : t -> Meta.t
+    (** [marker t] is the metadata for the caret marker and identifier. *)
+
+    val find : Meta.t -> t option
+    (** [find meta] is the block identifier attached to [meta], if any. *)
+  end
+
   (** Paragraphs. *)
   module Paragraph : sig
 
@@ -1171,6 +1263,16 @@ module Block : sig
 
     val trailing_blanks : t -> Layout.blanks
     (** [trailing_blanks] are trailing blanks on the last line. *)
+  end
+
+  module Attributes : sig
+    type block := t
+    type t
+
+    val make : specs:Attribute.t list -> block -> t
+    val block : t -> block
+    val attributes : t -> Attribute.t
+    val specs : t -> Attribute.t list
   end
 
   (** Thematic breaks. *)
@@ -1203,6 +1305,7 @@ module Block : sig
         Link reference definitions}, kept for layout *)
   | List of List'.t node
   | Paragraph of Paragraph.t node
+  | Ext_attributes of Attributes.t node
   | Thematic_break of Thematic_break.t node
     (** {{:https://spec.commonmark.org/0.31.2/#paragraphs}Thematic break} *)
   (** The CommonMark {{:https://spec.commonmark.org/0.31.2/#leaf-blocks}leaf}
@@ -1291,11 +1394,45 @@ module Block : sig
     (** A label definition for footnotes. *)
   end
 
+  (** Djot divs. *)
+  module Div : sig
+
+    type block := t
+
+    type t
+    (** The type for {{:https://djot.net/}djot} divs: a fenced container of
+        block-level content with an optional class name. Only parsed when
+        {!Doc.of_string} is called with [div:true]. *)
+
+    val make :
+      ?indent:Layout.indent -> ?opening_fence:Layout.string node ->
+      ?class':string node -> ?closing_fence:Layout.string node option ->
+      block -> t
+    (** [make b] is a div with content [b]. *)
+
+    val indent : t -> Layout.indent
+    (** [indent d] is the indentation to the opening fence. *)
+
+    val opening_fence : t -> Layout.string node
+    (** [opening_fence d] is the opening colon fence (excluding the class). *)
+
+    val class' : t -> string node option
+    (** [class' d] is the div's class name, if any. *)
+
+    val closing_fence : t -> Layout.string node option
+    (** [closing_fence d] is the closing colon fence, or [None] if the div
+        was closed by the end of the document or its containing block. *)
+
+    val block : t -> block
+    (** [block d] is the div's content. *)
+  end
+
   type t +=
   | Ext_math_block of Code_block.t node
     (** {{!Cmarkit.ext_math_display}display math}*)
   | Ext_table of Table.t node (** *)
   | Ext_footnote_definition of Footnote.t node (** *)
+  | Ext_div of Div.t node (** djot {{!Block.Div}div} *)
   (** The supported block extensions. These blocks are only parsed when
       {!Doc.of_string} is called with [strict:false]. *)
 
@@ -1367,7 +1504,12 @@ module Doc : sig
     ?defs:Label.defs -> ?resolver:Label.resolver -> ?nested_links:bool ->
     ?heading_auto_ids:bool -> ?layout:bool -> ?locs:bool ->
     ?file:Textloc.fpath -> ?emphasis_delims:char list ->
-    ?strong_emphasis_delims:char list -> ?strict:bool -> string -> t
+    ?strong_emphasis_delims:char list -> ?intraword_emphasis:bool ->
+    ?marked_emphasis_delims:bool -> ?strong_emphasis_width:int ->
+    ?extra_inline_containers:Inline.Extra_inline_container.Config.t ->
+    ?block_id:bool -> ?djot_inline_attributes:bool ->
+    ?djot_block_attributes:bool -> ?div:bool ->
+    ?strict:bool -> string -> t
     (** [of_string md] is a document from the UTF-8 encoded CommonMark
         document [md].
 
@@ -1411,6 +1553,35 @@ module Doc : sig
        [emphasis_delims]. For example, with [emphasis_delims = ['_']] and
        [strong_emphasis_delims = ['*']], [__x__] parses as nested emphasis
        rather than strong emphasis.}
+   {- If [intraword_emphasis] is [false], emphasis delimiter runs between two
+       non-whitespace, non-punctuation characters cannot open or close
+       emphasis. The default is [true], which preserves CommonMark behavior.}
+   {- If [marked_emphasis_delims] is [true], [{*] and [{_] mark emphasis
+       delimiters as opener-only, and [*}] and [_}] mark them as closer-only.
+       A marker forces its role: the delimiter opens (resp. closes) regardless
+       of flanking and of [intraword_emphasis], since those rules only serve to
+       disambiguate bare runs and the marker has already resolved the role. For
+       example [a{_b_] emphasises [b] even though a bare [_] could not open
+       there. The default is [false], which preserves CommonMark behavior.}
+   {- [strong_emphasis_width] specifies how many delimiter characters are
+      consumed from each side to form strong emphasis. It must be [1] or [2].
+      The default is [2], which preserves CommonMark behavior.}
+   {- [extra_inline_containers] configures which oymarkit extra inline
+      containers are parsed and whether curly braces are compulsory for each
+      kind. The default is {!Inline.Extra_inline_container.Config.disabled},
+      which preserves CommonMark behavior.}
+   {- If [block_id] is [true], a terminal suffix of the form
+      [^id], where [id] starts with an ASCII alphanumeric character and
+      otherwise contains only ASCII alphanumeric characters or hyphens, is
+      attached to the paragraph metadata as a {!Block.Block_id.t}. The marker
+      remains part of the paragraph inline content. The default is [false],
+      which preserves CommonMark behavior.}
+   {- If [djot_inline_attributes] is [true], Djot [{...}] attribute
+      specifiers immediately following inline content are represented by
+      {!Inline.Ext_attributes}.}
+   {- If [djot_block_attributes] is [true], Djot attribute lines immediately
+      preceding a block are represented by {!Block.Ext_attributes}. Continued
+      lines inside a block attribute must be indented.}
    {- If [resolver] is provided this is used resolve label definitions
       and references. See {{!Label.resolvers}here} for details. Defaults to
       {!Label.default_resolver}.}

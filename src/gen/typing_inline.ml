@@ -53,4 +53,33 @@ let rec no_empty_emphasis : Inline.t -> bool = function
   | Inline.Inlines (is, _) -> List.for_all no_empty_emphasis is
   | _ -> true
 
-let inline_typing_rules = [ no_nested_link; no_empty_emphasis ]
+(** {1 No adjacent code spans}
+
+    Two code spans rendered flush against each other have no witness: their
+    backtick fences merge into one run, and the parser reads a single span (or
+    literal backticks) rather than two adjacent ones. Unlike emphasis there is
+    no marker escape, so an [Inlines] with two consecutive code spans is a
+    generator artifact that fails round-trip.
+
+    Checked on the normalized inline: normalization splices nested [Inlines] and
+    drops empty filler, so any surviving fusion shows up as two directly
+    consecutive [Code_span] cases in a flat list. *)
+let no_adjacent_code_spans (i : Inline.t) : bool =
+  let rec check = function
+    | Inline.Inlines (is, _) ->
+        let is = List.filter (fun e -> not (Inline.is_empty e)) is in
+        let rec no_consec = function
+          | Inline.Code_span _ :: (Inline.Code_span _ :: _) -> false
+          | _ :: tl -> no_consec tl
+          | [] -> true
+        in
+        no_consec is && List.for_all check is
+    | Inline.Emphasis (e, _) | Inline.Strong_emphasis (e, _) ->
+        check (Inline.Emphasis.inline e)
+    | Inline.Link (l, _) | Inline.Image (l, _) -> check (Inline.Link.text l)
+    | _ -> true
+  in
+  check (Inline.normalize i)
+
+let inline_typing_rules =
+  [ no_nested_link; no_empty_emphasis; no_adjacent_code_spans ]

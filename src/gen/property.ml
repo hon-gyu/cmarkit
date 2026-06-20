@@ -120,8 +120,93 @@ let normalize_block_inlines (b : Block.t) : Block.t =
   let mapper = Mapper.make ~inline () in
   Mapper.map_block mapper b |> Option.value ~default:Block.empty
 
+(** Canonicalize terminal blank-line ownership at container boundaries.
+
+    This is deliberately a property-comparison rule, not a typing rule. The
+    parser can emit both shapes involved here, so the generator should not
+    reject them as non-emittable ASTs.
+
+    The ambiguity is specifically about a [Blank_line] at the terminal edge of
+    nested block/list-item content. When such a blank is rendered, Markdown has
+    no marker that says whether it belongs to the inner [Blocks] payload or to
+    the enclosing container/document: the same physical blank line both closes
+    the inner content and separates the outer context. On reparse, the parser
+    may attach that blank one level higher.
+
+    For roundtrip equality we pick one canonical owner: terminal blanks float
+    outward from nested [Blocks] and from the last item of a [List], and the
+    root keeps them as document-level siblings. Interior blanks and non-final
+    list-item blanks are not moved; those can affect paragraph/list structure
+    and must remain observable. *)
+let canonicalize_terminal_blank_ownership (b : Block.t) : Block.t =
+  let blank = function
+    | Block.Blank_line _ -> true
+    | _ -> false
+  in
+  let split_trailing_blanks blocks =
+    let rec loop trailing = function
+      | b :: rev when blank b -> loop (b :: trailing) rev
+      | rev -> (List.rev rev, trailing)
+    in
+    loop [] (List.rev blocks)
+  in
+  let append_as_blocks block trailing =
+    match trailing with
+    | [] -> block
+    | _ -> (
+        match block with
+        | Block.Blocks (blocks, meta) -> Block.Blocks (blocks @ trailing, meta)
+        | _ -> Block.Blocks (block :: trailing, Meta.none))
+  in
+  let item_with_block item block =
+    Block.List_item.make
+      ~before_marker:(Block.List_item.before_marker item)
+      ~marker:(Block.List_item.marker item)
+      ~after_marker:(Block.List_item.after_marker item)
+      ?ext_task_marker:(Block.List_item.ext_task_marker item)
+      block
+  in
+  let rec canonicalize block =
+    match block with
+    | Block.Blocks (blocks, meta) ->
+        let blocks =
+          List.concat_map
+            (fun block ->
+              let block, trailing = canonicalize block in
+              block :: trailing)
+            blocks
+        in
+        let blocks, trailing = split_trailing_blanks blocks in
+        (Block.Blocks (blocks, meta), trailing)
+    | Block.List (list, meta) ->
+        let canonicalize_non_final_item (item, item_meta) =
+          let block, trailing = canonicalize (Block.List_item.block item) in
+          (item_with_block item (append_as_blocks block trailing), item_meta)
+        in
+        let canonicalize_final_item (item, item_meta) =
+          let block, trailing = canonicalize (Block.List_item.block item) in
+          ((item_with_block item block, item_meta), trailing)
+        in
+        begin match List.rev (Block.List'.items list) with
+        | [] -> (Block.List (list, meta), [])
+        | last :: rev_prefix ->
+            let prefix = List.rev_map canonicalize_non_final_item rev_prefix in
+            let last, trailing = canonicalize_final_item last in
+            let items = prefix @ [ last ] in
+            let list =
+              Block.List'.make ~tight:(Block.List'.tight list)
+                (Block.List'.type' list) items
+            in
+            (Block.List (list, meta), trailing)
+        end
+    | block -> (block, [])
+  in
+  let block, trailing = canonicalize b in
+  append_as_blocks block trailing
+
 let canonical b : string =
-  b |> Block.normalize |> normalize_block_inlines
+  b |> Block.normalize |> canonicalize_terminal_blank_ownership
+  |> normalize_block_inlines
   |> Format.asprintf "%a" pp_block
 
 let block_equal a b = String.equal (canonical a) (canonical b)
@@ -149,10 +234,16 @@ let normalize_idempotent =
     This is the most important property for generators as it ensures that the
     block structure is valid, i.e. can be emitted by the parser from a piece of
     CommonMark. *)
-let roundtrip_with ?emphasis_delims ?strong_emphasis_delims () =
+let roundtrip_with ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis
+    ?marked_emphasis_delims ?strong_emphasis_width ?extra_inline_containers
+    ?block_id ?djot_inline_attributes ?djot_block_attributes () =
   let check =
    fun b ->
-    let b' = reparse ?emphasis_delims ?strong_emphasis_delims b in
+    let b' =
+      reparse ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis
+        ?marked_emphasis_delims ?strong_emphasis_width ?extra_inline_containers
+        ?block_id ?djot_inline_attributes ?djot_block_attributes b
+    in
     if block_equal b b' then Pass
     else
       Fail (b, [ ("reparse", Block b'); ("reparse_cm", Md (to_commonmark b')) ])

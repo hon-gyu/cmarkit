@@ -1,5 +1,5 @@
 open Sexplib0
-open Common
+open Common_
 
 (** {1 Core compatible mocks} *)
 
@@ -89,6 +89,21 @@ let sexp_of_inline_core : inline_sexp =
     | Inline.Inlines (is, m) -> m, Sexp.List (Atom "Inlines" :: List.map is ~f:recurse)
     | Inline.Ext_strikethrough (s, m) ->
       m, Sexp.List [ Atom "Strikethrough"; recurse (Inline.Strikethrough.inline s) ]
+    | Inline.Ext_extra_inline_container (c, m) ->
+      let kind =
+        match Inline.Extra_inline_container.kind c with
+        | Inline.Extra_inline_container.Highlight -> "Highlight"
+        | Inline.Extra_inline_container.Superscript -> "Superscript"
+        | Inline.Extra_inline_container.Subscript -> "Subscript"
+        | Inline.Extra_inline_container.Inserted -> "Inserted"
+        | Inline.Extra_inline_container.Deleted -> "Deleted"
+      in
+      m, Sexp.List [ Atom "Extra_inline_container"; Atom kind;
+                     recurse (Inline.Extra_inline_container.inline c) ]
+    | Inline.Ext_attributes (a, m) ->
+      let attrs = Attribute.to_string (Inline.Attributes.attributes a) in
+      m, Sexp.List [ Atom "Attributes"; Atom attrs;
+                     recurse (Inline.Attributes.inline a) ]
     | Inline.Ext_math_span (ms, m) ->
       m, Sexp.List [ Atom "Math_span"; Atom (Inline.Math_span.tex ms) ]
     | _ -> Meta.none, Sexp.Atom "<unknown-inline>"
@@ -134,6 +149,13 @@ let sexp_of_block_core : block_sexp =
       with_meta
         meta
         (Sexp.List [ Atom "Block_quote"; recurse_block (Block.Block_quote.block bq) ])
+    | Block.Ext_div (d, meta) ->
+      let class' = match Block.Div.class' d with
+      | None -> [] | Some (cls, _) -> [ Sexp.Atom cls ]
+      in
+      with_meta meta
+        (Sexp.List
+           (Sexp.Atom "Div" :: class' @ [ recurse_block (Block.Div.block d) ]))
     | Block.List (l, meta) ->
       let items =
         List.map (Block.List'.items l) ~f:(fun (item, _item_meta) ->
@@ -142,6 +164,13 @@ let sexp_of_block_core : block_sexp =
       with_meta meta (Sexp.List (Atom "List" :: items))
     | Block.Blocks (bs, meta) ->
       with_meta meta (Sexp.List (Atom "Blocks" :: List.map bs ~f:recurse_block))
+    | Block.Ext_attributes (a, meta) ->
+      with_meta meta
+        (Sexp.List
+           [ Atom "Attributes"
+           ; Atom (Attribute.to_string (Block.Attributes.attributes a))
+           ; recurse_block (Block.Attributes.block a)
+           ])
     | Block.Link_reference_definition _ -> Sexp.Atom "Link_reference_definition"
     | Block.Thematic_break (_, meta) -> with_meta meta (Sexp.Atom "Thematic_break")
     | _ -> Sexp.Atom "<unknown-block>"

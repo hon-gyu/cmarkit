@@ -1,4 +1,4 @@
-(** Inline-level parsing.
+(** Inline-level parsing API.
 
     {@meta[
     ai-disclosure: "autonomous"
@@ -15,6 +15,8 @@
     block, skipping block-structure parsing entirely. It does not touch the
     original cmarkit modules. *)
 
+open Common_
+open Parser_common_
 open Parser
 
 (* Cut [s] into the line spans the inline parser expects: one span per line
@@ -24,12 +26,9 @@ let line_spans s =
   let len = String.length s in
   let rec loop lineno start k acc =
     if k >= len then
-      { Common.line_pos = (lineno, start); first = start; last = len - 1 }
-      :: acc
+      { line_pos = (lineno, start); first = start; last = len - 1 } :: acc
     else if s.[k] = '\n' then
-      let span =
-        { Common.line_pos = (lineno, start); first = start; last = k - 1 }
-      in
+      let span = { line_pos = (lineno, start); first = start; last = k - 1 } in
       loop (lineno + 1) (k + 1) (k + 1) (span :: acc)
     else loop lineno start (k + 1) acc
   in
@@ -37,10 +36,16 @@ let line_spans s =
 
 (* Inline-level analogue of {!Doc.of_string}. *)
 let of_string ?defs ?resolver ?nested_links ?heading_auto_ids ?layout ?locs
-    ?file ?emphasis_delims ?strong_emphasis_delims ?(strict = true) s =
+    ?file ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis
+    ?marked_emphasis_delims ?strong_emphasis_width ?extra_inline_containers
+    ?djot_inline_attributes
+    ?(strict = true) s =
   let p =
     parser ?defs ?resolver ?nested_links ?heading_auto_ids ?layout ?locs ?file
-      ?emphasis_delims ?strong_emphasis_delims ~strict s
+      ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis
+      ?marked_emphasis_delims ?strong_emphasis_width ?extra_inline_containers
+      ?djot_inline_attributes
+      ~strict s
   in
   let _layout, inline = Inline_struct.parse p (line_spans s) in
   inline

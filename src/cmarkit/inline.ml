@@ -1,11 +1,11 @@
+[@@@ocamlformat "disable"]
+
 (*---------------------------------------------------------------------------
    Copyright (c) 2021 The cmarkit programmers. All rights reserved.
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-[@@@ocamlformat "disable"]
-
-open Common
+open Common_
 
 type t = ..
 
@@ -100,10 +100,17 @@ end
 
 module Emphasis = struct
   type inline = t
-  type t = { delim : Layout.char; inline : inline }
-  let make ?(delim = '*') inline = { delim; inline }
+  type t =
+    { delim : Layout.char;
+      inline : inline;
+      open_marker : bool;
+      close_marker : bool }
+  let make ?(delim = '*') ?(open_marker = false) ?(close_marker = false) inline
+    = { delim; inline; open_marker; close_marker }
   let inline e = e.inline
   let delim e = e.delim
+  let open_marker e = e.open_marker
+  let close_marker e = e.close_marker
 end
 
 module Link = struct
@@ -177,6 +184,62 @@ module Strikethrough = struct
   let inline = Fun.id
 end
 
+module Extra_inline_container = struct
+  type inline = t
+  type kind = Highlight | Superscript | Subscript | Inserted | Deleted
+
+  module Config = struct
+    type syntax = Disabled | Curly_required | Curly_optional
+
+    type t =
+      { highlight : syntax;
+        superscript : syntax;
+        subscript : syntax;
+        inserted : syntax;
+        deleted : syntax }
+
+    let make
+        ?(highlight = Disabled) ?(superscript = Disabled)
+        ?(subscript = Disabled) ?(inserted = Disabled) ?(deleted = Disabled) ()
+      =
+      { highlight; superscript; subscript; inserted; deleted }
+
+    let disabled = make ()
+
+    let explicit =
+      make ~highlight:Curly_required ~superscript:Curly_required
+        ~subscript:Curly_required ~inserted:Curly_required
+        ~deleted:Curly_required ()
+
+    let syntax t = function
+    | Highlight -> t.highlight
+    | Superscript -> t.superscript
+    | Subscript -> t.subscript
+    | Inserted -> t.inserted
+    | Deleted -> t.deleted
+  end
+
+  type t = { kind : kind; inline : inline }
+  let make kind inline = { kind; inline }
+  let kind c = c.kind
+  let inline c = c.inline
+end
+
+module Attributes = struct
+  type inline = t
+  type t =
+    { inline : inline;
+      attributes : Attribute.t;
+      specs : Attribute.t list }
+
+  let make ~specs inline =
+    let attributes = List.fold_left Attribute.merge Attribute.empty specs in
+    { inline; attributes; specs }
+  let inline a = a.inline
+  let attributes a = a.attributes
+  let specs a = a.specs
+end
+
 module Math_span = struct
   type t = { display : bool; tex_layout : Block_line.tight list; }
   let make ~display tex_layout = { display; tex_layout }
@@ -189,6 +252,8 @@ end
 
 type t +=
 | Ext_strikethrough of Strikethrough.t node
+| Ext_extra_inline_container of Extra_inline_container.t node
+| Ext_attributes of Attributes.t node
 | Ext_math_span of Math_span.t node
 
 (* Functions on inlines *)
@@ -201,7 +266,9 @@ let meta ?(ext = ext_none) = function
 | Autolink (_, m) | Break (_, m) | Code_span (_, m) | Emphasis (_, m)
 | Image (_, m) | Inlines (_, m) | Link (_, m) | Raw_html (_, m)
 | Strong_emphasis (_, m)  | Text (_, m) -> m
-| Ext_strikethrough (_, m) -> m | Ext_math_span (_, m) -> m
+| Ext_strikethrough (_, m) | Ext_extra_inline_container (_, m) -> m
+| Ext_attributes (_, m) -> m
+| Ext_math_span (_, m) -> m
 | i -> ext i
 
 let rec normalize ?(ext = ext_none) = function
@@ -209,11 +276,19 @@ let rec normalize ?(ext = ext_none) = function
 | Inlines ([], _) | Ext_math_span _ as i -> i
 | Image (l, m) -> Image ({ l with text = normalize ~ext l.text }, m)
 | Link (l, m) -> Link ({ l with text = normalize ~ext l.text }, m)
-| Inlines ([i], _) -> i
 | Emphasis (e, m) ->
     Emphasis ({ e with inline = normalize ~ext e.inline}, m)
 | Strong_emphasis (e, m) ->
     Strong_emphasis ({ e with inline = normalize ~ext e.inline}, m)
+(* OYMARKIT CHANGE:
+   upstream returns the singleton element raw, [| Inlines ([i], _) -> i], which
+   does not recurse. If [i] is itself an [Inlines] the result keeps a nested
+   (and singleton) [Inlines], violating normalize's contract, and only one layer
+   is peeled per pass so normalize is not even idempotent on e.g.
+   [Inlines [Inlines [Inlines []]]]. Normalizing the unwrapped element fixes
+   both. Reachable via [Link]/[Image] text and [Emphasis] content (the loop path
+   splices sub-[Inlines] separately and is unaffected). *)
+| Inlines ([i], _) -> normalize ~ext i
 | Inlines (i :: is, m) ->
     let rec loop acc = function
     | Inlines (is', m) :: is -> loop acc (List.rev_append (List.rev is') is)
@@ -228,9 +303,25 @@ let rec normalize ?(ext = ext_none) = function
     | i :: is -> loop (normalize ~ext i :: acc) is
     | [] -> List.rev acc
     in
-    let is = loop [normalize ~ext i] is in
+    (* OYMARKIT CHANGE:
+       upstream seeds the accumulator with the pre-normalized head,
+       [let is = loop [normalize ~ext i] is in], which bypasses the splice arm
+       above. When the head normalizes to an [Inlines] it then survives as a
+       nested case, violating normalize's documented contract ("[is] has no
+       [Inlines _] case"). We instead push the head back into the work list so
+       it flows through the same splice/merge logic as every other element.
+       Behaviour is identical for all parser-produced ASTs, which never nest an
+       [Inlines] directly inside an [Inlines]; only hand-built ASTs hit the
+       difference. *)
+    let is = loop [] (i :: is) in
     (match is with [i] -> i | _ -> Inlines (is, m))
 | Ext_strikethrough (i, m) -> Ext_strikethrough (normalize ~ext i, m)
+| Ext_extra_inline_container (c, m) ->
+    let inline = normalize ~ext (Extra_inline_container.inline c) in
+    let c = Extra_inline_container.make (Extra_inline_container.kind c) inline in
+    Ext_extra_inline_container (c, m)
+| Ext_attributes (a, m) ->
+    Ext_attributes (Attributes.make ~specs:a.specs (normalize ~ext a.inline), m)
 | i -> ext i
 
 let ext_none ~break_on_soft = ext_none
@@ -260,6 +351,10 @@ let to_plain_text ?(ext = ext_none) ~break_on_soft i =
       loop ~break_on_soft (push t acc) is
   | Ext_strikethrough (i, _) :: is ->
       loop ~break_on_soft acc (i :: is)
+  | Ext_extra_inline_container (c, _) :: is ->
+      loop ~break_on_soft acc (Extra_inline_container.inline c :: is)
+  | Ext_attributes (a, _) :: is ->
+      loop ~break_on_soft acc (Attributes.inline a :: is)
   | Ext_math_span (m, _) :: is ->
       loop ~break_on_soft (push (Math_span.tex m) acc) is
   | i :: is ->

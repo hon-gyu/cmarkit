@@ -1,0 +1,216 @@
+basic inline parse
+==========
+((0 "") (Emphasis (Text hello)))
+
+block ID paragraph suffix
+==========
+terminal suffix
+----------
+((Paragraph (Text "text ^block-id")) (meta (block-id block-id)))
+
+last candidate wins
+----------
+((Paragraph (Text "a ^x ^final1")) (meta (block-id final1)))
+
+multiline final line
+----------
+((Paragraph (Inlines (Text first) (Break soft) (Text "second ^final")))
+ (meta (block-id final)))
+
+non-final candidate
+----------
+(Paragraph (Inlines (Text "first ^not-final") (Break soft) (Text second)))
+
+invalid underscore
+----------
+(Paragraph (Text "text ^block_id"))
+
+escaped caret
+----------
+(Paragraph (Text "text ^block-id"))
+
+list item paragraph
+----------
+(List ((Paragraph (Text "item ^item-id")) (meta (block-id item-id))))
+
+Djot attributes
+==========
+stacked text attributes
+----------
+(Attributes ".blue lang=fr" (Text avant))
+
+emphasis attributes
+----------
+(Attributes "#foo .bar" (Emphasis (Text text)))
+
+extra container attributes
+----------
+(Attributes .marked (Extra_inline_container Highlight (Text text)))
+
+multiline inline attributes
+----------
+(Attributes "#foo .bar key=\"a b\"" (Text text))
+
+stacked block attributes
+----------
+(Attributes "#water .important .large" (Paragraph (Text Flow.)))
+
+block quote attributes
+----------
+(Attributes source=Iliad (Block_quote (Paragraph (Text "Sing, muse"))))
+
+multiline block attributes
+----------
+(Attributes "#water .important key=\"two words\"" (Paragraph (Text Flow.)))
+
+intraword emphasis knob tokenization
+==========
+default
+----------
+((Emphasis_marks
+  ((start 1) (char *) (count 1) (may_open true) (may_close true)
+   (open_marker false) (close_marker false)))
+ (Emphasis_marks
+  ((start 3) (char *) (count 1) (may_open true) (may_close true)
+   (open_marker false) (close_marker false))))
+
+intraword_emphasis:false
+----------
+()
+
+boundary emphasis still tokenizes
+----------
+((Emphasis_marks
+  ((start 0) (char *) (count 1) (may_open true) (may_close false)
+   (open_marker false) (close_marker false)))
+ (Emphasis_marks
+  ((start 6) (char *) (count 1) (may_open false) (may_close true)
+   (open_marker false) (close_marker false))))
+
+marked emphasis delimiter tokenization
+==========
+default
+----------
+((Emphasis_marks
+  ((start 1) (char _) (count 1) (may_open true) (may_close false)
+   (open_marker false) (close_marker false)))
+ (Emphasis_marks
+  ((start 7) (char _) (count 1) (may_open false) (may_close true)
+   (open_marker false) (close_marker false))))
+
+marked_emphasis_delims:true
+----------
+((Emphasis_marks
+  ((start 1) (char _) (count 1) (may_open true) (may_close false)
+   (open_marker true) (close_marker false)))
+ (Emphasis_marks
+  ((start 7) (char _) (count 1) (may_open false) (may_close true)
+   (open_marker false) (close_marker true))))
+
+forced opener cannot close
+----------
+((Emphasis_marks
+  ((start 2) (char _) (count 1) (may_open true) (may_close false)
+   (open_marker true) (close_marker false)))
+ (Emphasis_marks
+  ((start 4) (char _) (count 1) (may_open false) (may_close true)
+   (open_marker false) (close_marker false))))
+
+forced closer cannot open
+----------
+((Emphasis_marks
+  ((start 0) (char _) (count 1) (may_open true) (may_close false)
+   (open_marker false) (close_marker false)))
+ (Emphasis_marks
+  ((start 2) (char _) (count 1) (may_open false) (may_close true)
+   (open_marker false) (close_marker true))))
+
+marked emphasis delimiter parse
+==========
+default
+----------
+(Inlines (Text {) (Emphasis (Text hello)) (Text }))
+
+marked_emphasis_delims:true
+----------
+(Emphasis (Text hello))
+
+strong emphasis width parse
+==========
+default
+----------
+(Emphasis (Text hello))
+
+strong_emphasis_width:1
+----------
+(Strong_emphasis (Text hello))
+
+extra inline container parse
+==========
+default
+----------
+(Text {=hello=})
+
+extra_inline_containers:explicit tokens
+----------
+((Extra_inline_container_marks
+  ((start 0) (char =) (kind Highlight) (curly true) (may_open true)
+   (may_close false)))
+ (Extra_inline_container_marks
+  ((start 7) (char =) (kind Highlight) (curly true) (may_open false)
+   (may_close true))))
+
+extra_inline_containers:explicit parse
+----------
+(Extra_inline_container Highlight (Text hello))
+(Extra_inline_container Superscript (Text hello))
+(Extra_inline_container Subscript (Text hello))
+(Extra_inline_container Inserted (Text hello))
+(Extra_inline_container Deleted (Text hello))
+
+nested inline payload
+----------
+(Extra_inline_container Highlight (Inlines (Text "a ") (Emphasis (Text b))))
+
+optional curly shorthand
+----------
+(Extra_inline_container Highlight (Text hello))
+
+extra inline container precedence
+==========
+first closed opener wins
+----------
+(Inlines (Extra_inline_container Highlight (Text "a ^b")) (Text " c^"))
+
+nested extra containers
+----------
+(Extra_inline_container Highlight
+ (Inlines (Text "a ") (Extra_inline_container Superscript (Text b))
+  (Text " c")))
+
+nested same-kind extra containers
+----------
+(Extra_inline_container Highlight
+ (Inlines (Text "a ") (Extra_inline_container Highlight (Text b))
+  (Text " c")))
+
+marked emphasis delimiter commonmark rendering
+==========
+without markers
+----------
+_hello_
+with markers
+----------
+{_hello_}
+parsed marked delimiters
+----------
+{_hello_}
+extra inline container AST support
+==========
+sexp
+----------
+(Extra_inline_container Highlight (Text hello))
+
+commonmark rendering
+----------
+{=hello=}{^hello^}{~hello~}{+hello+}{-hello-}

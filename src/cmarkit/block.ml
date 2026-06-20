@@ -5,7 +5,7 @@
 
 [@@@ocamlformat "disable"]
 
-open Common
+open Common_
 
 type t = ..
 
@@ -160,6 +160,16 @@ module List' = struct
   let items l = l.items
 end
 
+module Block_id = struct
+  type t = { id : string; marker : Meta.t }
+
+  let key : t Meta.key = Meta.key ()
+  let id t = t.id
+  let marker t = t.marker
+  let find meta = Meta.find key meta
+  let add t meta = Meta.add key t meta
+end
+
 module Paragraph = struct
   type t =
     { leading_indent : Layout.indent;
@@ -172,6 +182,21 @@ module Paragraph = struct
   let inline p = p.inline
   let leading_indent p = p.leading_indent
   let trailing_blanks p = p.trailing_blanks
+end
+
+module Attributes = struct
+  type block = t
+  type t =
+    { block : block;
+      attributes : Attribute.t;
+      specs : Attribute.t list }
+
+  let make ~specs block =
+    let attributes = List.fold_left Attribute.merge Attribute.empty specs in
+    { block; attributes; specs }
+  let block a = a.block
+  let attributes a = a.attributes
+  let specs a = a.specs
 end
 
 module Thematic_break = struct
@@ -191,6 +216,7 @@ type t +=
 | Link_reference_definition of Link_definition.t node
 | List of List'.t node
 | Paragraph of Paragraph.t node
+| Ext_attributes of Attributes.t node
 | Thematic_break of Thematic_break.t node
 
 let empty = Blocks ([], Meta.none)
@@ -276,10 +302,32 @@ module Footnote = struct
     Def ({ indent = 0; label; defined_label; block = empty}, Meta.none)
 end
 
+module Div = struct
+  type nonrec t =
+    { indent : Layout.indent;
+      opening_fence : Layout.string node;
+      class' : string node option;
+      closing_fence : Layout.string node option;
+      block : t; }
+
+  let make
+      ?(indent = 0) ?(opening_fence = Layout.empty) ?class'
+      ?(closing_fence = Some Layout.empty) block
+    =
+    { indent; opening_fence; class'; closing_fence; block }
+
+  let indent d = d.indent
+  let opening_fence d = d.opening_fence
+  let class' d = d.class'
+  let closing_fence d = d.closing_fence
+  let block d = d.block
+end
+
 type t +=
 | Ext_math_block of Code_block.t node
 | Ext_table of Table.t node
 | Ext_footnote_definition of Footnote.t node
+| Ext_div of Div.t node
 
 (* Functions on blocks *)
 
@@ -291,8 +339,135 @@ let meta ?(ext = ext_none) = function
 | Heading (_, m) | Html_block (_, m) | Link_reference_definition (_, m)
 | List (_, m) | Paragraph (_, m) | Thematic_break (_, m)
 | Ext_math_block (_, m) | Ext_table (_, m)
+| Ext_attributes (_, m)
+| Ext_div (_, m)
 | Ext_footnote_definition (_, m) -> m
 | b -> ext b
+[@@@ocamlformat "enable"]
+(* Oymarkit: merging adjacent same-kind lists in [normalize].
+
+   Two sibling [List]s of the same "kind" (same bullet character, or same
+   ordered delimiter -- the ordered start number is irrelevant) separated by
+   nothing but [Blank_line]s have no syntactic witness as two lists: the parser
+   always fuses them into one (the blank lines only make the result loose). A
+   [List] is a pure grouping container for its items -- the syntax lives in the
+   item markers, not the list -- exactly as [Blocks] is for blocks, so this is
+   the same representational freedom [normalize] already removes for nested and
+   singleton [Blocks]. See doc/same-content-principle.md.
+
+   Gated behind the [OYMARKIT_DISABLE_MERGE_ADJACENT_LISTS] environment variable
+   (set to [1]/[true]/[yes]/[on], case-insensitive) so it can be toggled without
+   recompiling. When unset this is the identity and [normalize] keeps cmarkit's
+   original behaviour. *)
+
+let merge_adjacent_lists_env = "OYMARKIT_DISABLE_MERGE_ADJACENT_LISTS"
+
+let merge_adjacent_lists_enabled () =
+  match
+    Option.map String.lowercase_ascii (Sys.getenv_opt merge_adjacent_lists_env)
+  with
+  | Some ("1" | "true" | "yes" | "on") -> false
+  | _ -> true
+
+(* The merge "kind": ordered lists merge on their delimiter, unordered on their
+   bullet; the ordered start number does not affect merging. *)
+let list_kind : List'.type' -> [ `U of char | `O of char ] = function
+  | `Unordered c -> `U c
+  | `Ordered (_, c) -> `O c
+
+(* Append [blanks] (the [Blank_line]s that sat between two fused lists) into the
+   last item's content, reproducing the loose-list shape the parser emits for
+   blank-separated items. No-op when [blanks] is empty (a gap-free fuse stays
+   tight). *)
+let push_blanks_into_last_item items blanks =
+  match blanks with
+  | [] -> items
+  | _ -> (
+      match List.rev items with
+      | [] -> items
+      | (last, m) :: rev_init ->
+          let block =
+            match last.List_item.block with
+            | Blocks (bs, bm) -> Blocks (bs @ blanks, bm)
+            | b -> Blocks (b :: blanks, Meta.none)
+          in
+          List.rev (({ last with List_item.block }, m) :: rev_init))
+
+(* Fuse every maximal run of same-kind [List]s separated only by [Blank_line]s.
+   Operates on an already-flattened, normalised block list. *)
+let rec merge_adjacent_lists = function
+  | List (l, m) :: rest ->
+      let l, rest = absorb_following_lists l rest in
+      List (l, m) :: merge_adjacent_lists rest
+  | b :: rest -> b :: merge_adjacent_lists rest
+  | [] -> []
+
+and absorb_following_lists l rest =
+  let kind = list_kind l.List'.type' in
+  let rec span_blanks acc = function
+    | (Blank_line _ as bl) :: bs -> span_blanks (bl :: acc) bs
+    | bs -> (List.rev acc, bs)
+  in
+  match span_blanks [] rest with
+  | blanks, List (l2, _) :: rest when list_kind l2.List'.type' = kind ->
+      let items =
+        push_blanks_into_last_item l.List'.items blanks @ l2.List'.items
+      in
+      let tight = l.List'.tight && l2.List'.tight && blanks = [] in
+      absorb_following_lists { l with List'.items; tight } rest
+  | _ -> (l, rest)
+
+[@@@ocamlformat "disable"]
+[@@@ocamlformat "enable"]
+(* Oymarkit: Indented code blocks are the only [Code_block]s the parser coalesces: two
+   adjacent ones (separated only by blank lines) are a single block whose content
+   includes those blanks as empty lines. Fenced blocks are self-delimiting and
+   never fuse, so the merge only touches [`Indented] ones. Same
+   representational-freedom family as adjacent-list merging (see
+   doc/same-content-principle.md), gated by the parallel
+   [OYMARKIT_DISABLE_MERGE_ADJACENT_CODE] environment variable. *)
+
+let merge_adjacent_code_env = "OYMARKIT_DISABLE_MERGE_ADJACENT_CODE"
+
+let merge_adjacent_indented_cb_enabled () =
+  match
+    Option.map String.lowercase_ascii (Sys.getenv_opt merge_adjacent_code_env)
+  with
+  | Some ("1" | "true" | "yes" | "on") -> false
+  | _ -> true
+
+let cb_is_indented cb =
+  match cb.Code_block.layout with
+  | `Indented -> true
+  | `Fenced _ -> false
+
+(* Each blank line between two fused indented code blocks becomes one empty
+   content line, reproducing the parser's [[a; ""; b]] shape for [    a\n\n    b]. *)
+let blank_code_lines blanks = List.map (fun _ -> ("", Meta.none)) blanks
+
+(* Fuse every maximal run of indented [Code_block]s separated only by
+   [Blank_line]s. Operates on an already-flattened, normalised block list. *)
+let rec merge_adjacent_indented_cb = function
+  | Code_block (cb, m) :: rest when cb_is_indented cb ->
+      let cb, rest = absorb_following_code cb rest in
+      Code_block (cb, m) :: merge_adjacent_indented_cb rest
+  | b :: rest -> b :: merge_adjacent_indented_cb rest
+  | [] -> []
+
+and absorb_following_code cb rest =
+  let rec span_blanks acc = function
+    | (Blank_line _ as bl) :: bs -> span_blanks (bl :: acc) bs
+    | bs -> (List.rev acc, bs)
+  in
+  match span_blanks [] rest with
+  | blanks, Code_block (cb2, _) :: rest when cb_is_indented cb2 ->
+      let code =
+        cb.Code_block.code @ blank_code_lines blanks @ cb2.Code_block.code
+      in
+      absorb_following_code { cb with Code_block.code } rest
+  | _ -> (cb, rest)
+
+[@@@ocamlformat "disable"]
 
 let rec normalize ?(ext = ext_none) = function
 | Blank_line _ | Code_block _ | Heading _ | Html_block _
@@ -313,11 +488,21 @@ let rec normalize ?(ext = ext_none) = function
     | b :: bs -> loop (normalize ~ext b :: acc) bs
     | [] -> List.rev acc
     in
-    let bs = loop [normalize ~ext b] bs in
+    (* Route the head through [loop] too: pre-normalizing it and seeding it
+       whole leaves a multi-element nested [Blocks] at head position un-spliced,
+       violating the "no [Blocks _] case" contract (e.g.
+       [Blocks [Blocks [x; y]; z]] would keep its inner [Blocks]). *)
+    let bs = loop [] (b :: bs) in
+    let bs = if merge_adjacent_lists_enabled () then merge_adjacent_lists bs else bs in
+    let bs = if merge_adjacent_indented_cb_enabled () then merge_adjacent_indented_cb bs else bs in
     (match bs with [b] -> b | _ -> Blocks (bs, m))
 | Ext_footnote_definition (fn, m) ->
     let fn = { fn with block = normalize ~ext fn.block } in
     Ext_footnote_definition (fn, m)
+| Ext_div (d, m) ->
+    Ext_div ({ d with block = normalize ~ext d.block }, m)
+| Ext_attributes (a, m) ->
+    Ext_attributes (Attributes.make ~specs:a.specs (normalize ~ext a.block), m)
 | b -> ext b
 
 let rec defs
@@ -326,6 +511,7 @@ let rec defs
   | Blank_line _ | Code_block _ | Heading _ | Html_block _
   | Paragraph _ | Thematic_break _
   | Ext_math_block _ | Ext_table _ -> init
+  | Ext_attributes (a, _) -> defs ~ext ~init a.block
   | Block_quote (b, _) -> defs ~ext ~init (Block_quote.block b)
   | Blocks (bs, _) -> List.fold_left (fun init b -> defs ~ext ~init b) init bs
   | List (l, _) ->
@@ -343,4 +529,5 @@ let rec defs
       | Some def -> Label.Map.add (Label.key def) (Footnote.Def fn) init
       in
       defs ~ext ~init (Footnote.block (fst fn))
+  | Ext_div (d, _) -> defs ~ext ~init (Div.block d)
   | b -> ext init b

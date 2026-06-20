@@ -78,7 +78,78 @@ let pp_metadata fmt m =
   let pp_pair fmt (k, v) = Fmt.pf fmt "@[<v>\"%s\":@ %a@]" k (pp_value ()) v in
   Fmt.pf fmt "@[<v>{ %a@,}@]" (Fmt.list ~sep:(Fmt.any "@,; ") pp_pair) m
 
-let reparse ?emphasis_delims ?strong_emphasis_delims (b : Block.t) : Block.t =
+(* An [Html_block] whose end condition is never met by its own lines stays
+   "open" at its last line, so on reparse it swallows whatever block renders
+   right after it (until a blank line closes it or its container ends). Types 6/7
+   ([`End_blank]/[`End_blank_7]) end only on a blank line, which never appears
+   among an html block's stored lines, so they always absorb; types 1-5 absorb
+   only when their terminator string is absent from every line (e.g. an unclosed
+   comment). The classification mirrors the parser via {!Cmarkit_.Match}. *)
+let html_block_absorbs (lines : (string * Cmarkit_.Meta.t) list) : bool =
+  let module Match = Cmarkit_.Match in
+  match lines with
+  | [] -> false
+  | (first, _) :: _ ->
+      let last = String.length first - 1 in
+      if last < 0 then false
+      else
+        let start = Match.first_non_blank first ~last ~start:0 in
+        begin
+          match Match.html_block_start first ~last ~start with
+          | Match.Html_block_line end_cond ->
+              not
+                (List.exists
+                   (fun (l, _) ->
+                     let last = String.length l - 1 in
+                     last >= 0 && Match.html_block_end ~end_cond l ~last ~start:0)
+                   lines)
+          | _ -> false
+        end
+
+let reparse ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis
+    ?marked_emphasis_delims ?strong_emphasis_width ?extra_inline_containers
+    ?block_id ?djot_inline_attributes ?djot_block_attributes (b : Block.t) :
+    Block.t =
   b |> to_commonmark
-  |> Doc.of_string ?emphasis_delims ?strong_emphasis_delims
+  |> Doc.of_string ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis
+       ?marked_emphasis_delims ?strong_emphasis_width ?extra_inline_containers
+       ?block_id ?djot_inline_attributes ?djot_block_attributes
   |> Doc.block
+
+(** Continuation indentation of the final list item as it will be emitted by
+    the CommonMark renderer.
+
+    This is the number of leading columns that a following line must have to
+    remain inside that item:
+
+    [before-marker + rendered-marker-width + after-marker]
+
+    The rendered marker width cannot be read uniformly from
+    {!Block.List_item.marker}: unordered lists always render the marker selected
+    by {!Block.List'.type'}, while ordered lists preserve a non-empty stored
+    marker but otherwise synthesize one from the item's ordinal and separator.
+    The final item's ordinal is [start + item-count - 1].
+
+    [None] means the list has no final item. In particular, callers should not
+    treat an empty list as having the usual two-column ["- "] continuation
+    indent. *)
+let list_last_item_continuation_indent (l : Block.List'.t) : int option =
+  match List.rev (Block.List'.items l) with
+  | [] -> None
+  | (item, _) :: _ ->
+      let marker_length =
+        match Block.List'.type' l with
+        | `Unordered _ -> 1
+        | `Ordered (start, sep) ->
+            let marker = fst (Block.List_item.marker item) in
+            if marker <> "" then String.length marker
+            else
+              let number = start + List.length (Block.List'.items l) - 1 in
+              let sep = if sep = '.' || sep = ')' then sep else '.' in
+              String.length (Int.to_string number)
+              + String.length (String.make 1 sep)
+      in
+      Some
+        (Block.List_item.before_marker item
+        + marker_length
+        + Block.List_item.after_marker item)

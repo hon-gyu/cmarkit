@@ -311,6 +311,8 @@ type line_type =
 | Thematic_break_line of last
 | Ext_table_row of last
 | Ext_footnote_label of rev_spans * last * string
+| Ext_div_line of first * last * (first * last) option
+  (* Oymarkit djot div: colon fence span and optional class name span *)
 | Nomatch (* built-in [None] to avoid option allocs *)
 
 val thematic_break : string -> last:byte_pos -> start:byte_pos -> line_type
@@ -342,6 +344,21 @@ val fenced_code_block_continue :
     whether the fence code continues or closes in the the range
     \[[start];[last]\] given the opening [open] which indicates the
     indent, fence char and number of fence chars. *)
+
+val div_open :
+  string -> last:byte_pos -> start:byte_pos -> line_type
+(** [div_open s ~last ~start] matches the opening fence of an Oymarkit
+    djot div in the range \[[start];[last]\]: a run of at least three
+    colons optionally followed by whitespace and a single class name
+    (and nothing else). The first span is the colon fence, the second
+    one is the class name (if any). *)
+
+val div_close :
+  string -> last:byte_pos -> start:byte_pos -> int option
+(** [div_close s ~last ~start] is [Some n] if the range
+    \[[start];[last]\] is a div closing fence of [n] colons (only
+    trailing whitespace allowed), [None] otherwise. Whether [n] is long
+    enough to close a given div is decided by the parser. *)
 
 val html_block_start :
   string -> last:byte_pos -> start:byte_pos -> line_type

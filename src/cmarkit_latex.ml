@@ -1,3 +1,5 @@
+[@@@ocamlformat "disable"]
+
 (*---------------------------------------------------------------------------
    Copyright (c) 2021 The cmarkit programmers. All rights reserved.
    SPDX-License-Identifier: ISC
@@ -221,6 +223,35 @@ let math_span c ms =
   tight_block_lines c tex;
   C.string c (if Inline.Math_span.display ms then "\\]" else "\\)")
 
+(* LaTeX has no general attribute model, so we preserve each Djot attribute
+   specifier as a comment (using its original source when available) and render
+   the attributed content normally. The comment is emitted before the content:
+   a LaTeX comment swallows its trailing newline, so a comment placed after
+   inline content would eat the separating space to the next inline. *)
+let attribute_spec c a =
+  let src = match Attribute.source a with
+  | Some s -> s | None -> Attribute.to_string a
+  in
+  comment c ("attrs: " ^ src)
+
+let inline_attributes c a =
+  List.iter (attribute_spec c) (Inline.Attributes.specs a);
+  C.inline c (Inline.Attributes.inline a)
+
+let extra_inline_container c ic =
+  let inline = Inline.Extra_inline_container.inline ic in
+  match Inline.Extra_inline_container.kind ic with
+  | Inline.Extra_inline_container.Highlight ->
+      C.string c "\\emph{"; C.inline c inline; C.byte c '}'
+  | Inline.Extra_inline_container.Superscript ->
+      C.string c "\\textsuperscript{"; C.inline c inline; C.byte c '}'
+  | Inline.Extra_inline_container.Subscript ->
+      C.string c "\\textsubscript{"; C.inline c inline; C.byte c '}'
+  | Inline.Extra_inline_container.Inserted ->
+      C.string c "\\uline{"; C.inline c inline; C.byte c '}'
+  | Inline.Extra_inline_container.Deleted ->
+      C.string c "\\sout{"; C.inline c inline; C.byte c '}'
+
 let inline c = function
 | Inline.Autolink (a, _) -> autolink c a; true
 | Inline.Break (b, _) -> break c b; true
@@ -233,6 +264,8 @@ let inline c = function
 | Inline.Strong_emphasis (e, _) -> strong_emphasis c e; true
 | Inline.Text (t, _) -> text c t; true
 | Inline.Ext_strikethrough (s, _) -> strikethrough c s; true
+| Inline.Ext_extra_inline_container (ic, _) -> extra_inline_container c ic; true
+| Inline.Ext_attributes (a, _) -> inline_attributes c a; true
 | Inline.Ext_math_span (ms, _) -> math_span c ms; true
 | _ -> comment c "Unknown Cmarkit inline"; true
 
@@ -261,6 +294,13 @@ let block_quote c bq =
   newline c;
   C.string c "\\begin{quote}";
   C.block c (Block.Block_quote.block bq);
+  C.string c "\\end{quote}";
+  newline c
+
+let div c d =
+  newline c;
+  C.string c "\\begin{quote}";
+  C.block c (Block.Div.block d);
   C.string c "\\end{quote}";
   newline c
 
@@ -411,6 +451,10 @@ let table c t =
   C.string c "\\end{tabular}";
   newline c; C.string c "\\bigskip"; newline c
 
+let block_attributes c a =
+  List.iter (attribute_spec c) (Block.Attributes.specs a);
+  C.block c (Block.Attributes.block a)
+
 let block c = function
 | Block.Block_quote (bq, _) -> block_quote c bq; true
 | Block.Blocks (bs, _) -> List.iter (C.block c) bs; true
@@ -422,6 +466,8 @@ let block c = function
 | Block.Thematic_break _ -> thematic_break c; true
 | Block.Ext_math_block (cb, _)-> math_block c cb; true
 | Block.Ext_table (t, _)-> table c t; true
+| Block.Ext_div (d, _) -> div c d; true
+| Block.Ext_attributes (a, _) -> block_attributes c a; true
 | Block.Blank_line _ -> true
 | Block.Link_reference_definition _
 | Block.Ext_footnote_definition _ -> true;

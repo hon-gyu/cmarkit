@@ -15,3 +15,6 @@ There are two-level of PBT tests. One is test against the properties using ackno
 # Note - 260531
 - When there's an error it's also possible that there's a bug in parser and commonmark renderer?
 - To make sure that our typing rule does not introduce unrealistic restrictive behaviors, we should make sure that it does not forbid any valid input, i.e., we need PBT that generates raw string and parse it to AST, and our rule should not reject it. If it's rejected, either there's a bug in our rule or the parser is buggy.
+
+# Note - 260531
+- We are now starting to hack on the parser itself, adding new features. But we'd like to keep the original code as intact as possible. So we are using a global module-level mutatble flag to gate our features. Also we tend to centralize our code in a clear and distinct place (a dedicated module)
