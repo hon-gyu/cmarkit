@@ -81,6 +81,7 @@ type token =
 | Right_paren of { start : byte_pos } (* Only used for closer index *)
 | Strikethrough_marks of strikethrough_marks
 | Math_span_marks of math_span_marks
+| Wikilink_start of { start : byte_pos; embed : bool }
 
 let token_start = function
 | Attribute_spec { start } | Autolink_or_html_start { start } | Backticks { start }
@@ -90,6 +91,7 @@ let token_start = function
 | Right_paren { start } -> start
 | Strikethrough_marks { start } -> start
 | Math_span_marks { start } -> start
+| Wikilink_start { start } -> start
 
 let has_backticks ~count ~after cidx =
   Closer_index.closer_exists (Closer.Backticks count) ~after cidx
@@ -201,6 +203,29 @@ let try_add_image_link_start_token acc s line ~start =
   let next = start + 1 in
   if next > line.last || s.[next] <> '[' then acc, next else
   Link_start { start; image = true } :: acc, next + 1
+
+(* Obsidian wikilinks. [start] points at the opening '[' (link form) or '!'
+   (embed form). We require a "[[" opener and a "]]" closer on the same line
+   (Obsidian wikilinks never span lines). When found, we emit a single
+   [Wikilink_start] token and advance the tokenizer past the whole "]]" so the
+   opaque inner content is never tokenized: no stray brackets pollute link
+   matching or the closer index, and the inline itself is built later from the
+   raw string in [try_wikilink]. Returns [None] to fall back to ordinary link /
+   image-link handling. *)
+let try_add_wikilink_token oymarkit_mod acc s line ~embed ~start =
+  if not (Oymarkit_mod.wikilink oymarkit_mod) then None else
+  let bopen = if embed then start + 1 else start in
+  if bopen + 1 > line.last || s.[bopen] <> '[' || s.[bopen + 1] <> '[' then None
+  else
+  let content_start = bopen + 2 in
+  let rec find_close k =
+    if k + 1 > line.last then None
+    else if s.[k] = ']' && s.[k + 1] = ']' then Some k
+    else find_close (k + 1)
+  in
+  match find_close content_start with
+  | None -> None
+  | Some close -> Some (Wikilink_start { start; embed } :: acc, close + 2)
 
 let try_add_emphasis_token
     ?oymarkit_mod ?(open_marker = false) ?(close_marker = false) acc s line
@@ -491,8 +516,29 @@ let tokenize ?oymarkit_mod ~exts s lines =
         | _ -> try_add_emphasis_token acc s line ~start:k
         end
     | ']' -> Right_brack { start = k } :: acc, k + 1
-    | '[' -> Link_start { start = k; image = false } :: acc, k + 1
-    | '!' -> try_add_image_link_start_token acc s line ~start:k
+    | '[' ->
+        begin match oymarkit_mod with
+        | Some oymarkit_mod when is_oymarkit_enabled () ->
+            begin match
+              try_add_wikilink_token oymarkit_mod acc s line ~embed:false
+                ~start:k
+            with
+            | Some r -> r
+            | None -> Link_start { start = k; image = false } :: acc, k + 1
+            end
+        | _ -> Link_start { start = k; image = false } :: acc, k + 1
+        end
+    | '!' ->
+        begin match oymarkit_mod with
+        | Some oymarkit_mod when is_oymarkit_enabled () ->
+            begin match
+              try_add_wikilink_token oymarkit_mod acc s line ~embed:true ~start:k
+            with
+            | Some r -> r
+            | None -> try_add_image_link_start_token acc s line ~start:k
+            end
+        | _ -> try_add_image_link_start_token acc s line ~start:k
+        end
     | '<' -> Autolink_or_html_start { start = k } :: acc, k + 1
     | ')' -> Right_paren { start = k } :: acc, k + 1
     | '=' | '^' | '+' | '-' ->
@@ -641,6 +687,11 @@ let ext_math_span_token p ~count ~first ~last ~first_line ~last_line rspans =
   let inline = Inline.Ext_math_span (ms, meta) in
   Inline { start = first; inline; endline = last_line; next = last + 1 }
 
+let ext_wikilink_token p ~first ~last ~line wl =
+  let textloc = textloc_of_span p { line with first; last } in
+  let inline = Inline.Ext_wikilink (wl, meta p textloc) in
+  Inline { start = first; inline; endline = line; next = last + 1 }
+
 (* Parsers *)
 
 let try_code p toks start_line ~start:cstart ~count ~escaped =
@@ -715,6 +766,26 @@ let try_autolink_or_html p toks line ~start =
       let t = raw_html_token p ~first ~last ~first_line ~last_line spans in
       let toks = drop_until ~start:(last + 1) toks in
       Some (toks, last_line, t)
+
+let try_wikilink p toks line ~embed ~start =
+  (* [start] points at '[' (link) or '!' (embed). The opener and a "]]" closer
+     are guaranteed on [line] by [try_add_wikilink_token]; we re-scan the raw
+     string to delimit the content and build the inline with proper metadata. *)
+  let content_start = (if embed then start + 1 else start) + 2 in
+  let rec find_close k =
+    if k + 1 > line.last then None
+    else if p.i.[k] = ']' && p.i.[k + 1] = ']' then Some k
+    else find_close (k + 1)
+  in
+  match find_close content_start with
+  | None -> None
+  | Some close ->
+      let content = String.sub p.i content_start (close - content_start) in
+      let wl = Inline.Wikilink.make ~embed content in
+      let first = start and last = close + 1 (* second ']' *) in
+      let t = ext_wikilink_token p ~first ~last ~line wl in
+      let toks = drop_until ~start:(last + 1) toks in
+      Some (toks, line, t)
 
 let label_of_rev_spans p ~key rev_spans =
   let meta =
@@ -947,6 +1018,11 @@ and first_pass p toks line =
       | None -> loop p toks line ~had_link acc
       | Some (toks, line, t, had_link) ->
           loop p toks line ~had_link (t :: acc)
+      end
+  | Wikilink_start { start; embed } :: toks ->
+      begin match try_wikilink p toks line ~embed ~start with
+      | None -> loop p toks line ~had_link acc
+      | Some (toks, line, t) -> loop p toks line ~had_link (t :: acc)
       end
   | Right_brack start :: toks -> loop p toks line ~had_link acc
   | Newline { newline = l } as t :: toks -> loop p toks l ~had_link (t :: acc)
@@ -1240,6 +1316,13 @@ and last_pass p toks start_line =
       | i -> i :: acc
       in
       loop toks endline acc next
+  | Attribute_spec { start; attribute; endline; next } :: toks
+    when Attribute.is_empty attribute ->
+      (* Comment-only (or empty) specifier: Djot drops it from the output.
+         Flush any pending text up to the specifier, then skip it entirely
+         (it neither attaches to a target nor renders literally). *)
+      let acc = try_add_text_inline p line ~first:k ~last:(start - 1) acc in
+      loop toks endline acc next
   | Attribute_spec { start; attribute; endline; next } :: toks ->
       let wrap target specs =
         let attrs = Inline.Attributes.make ~specs target in
@@ -1283,7 +1366,8 @@ and last_pass p toks start_line =
       end
   | (Backticks _ | Autolink_or_html_start _ | Link_start _ | Right_brack _
     | Emphasis_marks _ | Right_paren _ | Strikethrough_marks _
-    | Extra_inline_container_marks _ | Math_span_marks _) :: _ ->
+    | Extra_inline_container_marks _ | Math_span_marks _
+    | Wikilink_start _) :: _ ->
       assert false
   in
   loop toks start_line [] start_line.first
@@ -1389,7 +1473,8 @@ let rec finish_col p line blanks_before is toks k = match toks with
     end
 | (Attribute_spec _ | Backticks _ | Autolink_or_html_start _ | Link_start _ | Right_brack _
   | Emphasis_marks _ | Right_paren _ | Strikethrough_marks _
-  | Extra_inline_container_marks _ | Math_span_marks _ | Newline _ ) :: _ ->
+  | Extra_inline_container_marks _ | Math_span_marks _ | Newline _
+  | Wikilink_start _ ) :: _ ->
     assert false
 
 let rec parse_cols p line acc toks k = match toks with
@@ -1409,7 +1494,8 @@ let rec parse_cols p line acc toks k = match toks with
     end
 | (Attribute_spec _ | Backticks _ | Autolink_or_html_start _ | Link_start _ | Right_brack _
   | Emphasis_marks _ | Right_paren _ | Strikethrough_marks _
-  | Extra_inline_container_marks _ | Math_span_marks _ | Newline _ ) :: _ ->
+  | Extra_inline_container_marks _ | Math_span_marks _ | Newline _
+  | Wikilink_start _ ) :: _ ->
     assert false
 
 let parse_table_row p line =

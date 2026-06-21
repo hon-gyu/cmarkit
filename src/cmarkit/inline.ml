@@ -250,11 +250,73 @@ module Math_span = struct
     String.concat " "s
 end
 
+module Wikilink = struct
+  (* Obsidian-style wikilinks: [ [[target#fragment|display]] ] and the embed
+     form [ ![[...]] ]. Wikilinks have no inline children: the content between
+     the brackets is opaque text, parsed into [target]/[fragment]/[display] for
+     consumers but kept verbatim in [content] so rendering roundtrips exactly. *)
+
+  type fragment =
+  | Heading of string list (* "#h1#h2" -> [ ["h1"; "h2"] ] *)
+  | Block_ref of string    (* "#^id"   -> "id" *)
+
+  type t =
+    { content : string;   (* raw text between the brackets, sans '!' *)
+      target : string option;
+      fragment : fragment option;
+      display : string option;
+      embed : bool }
+
+  let lsplit2 s ~on = match String.index_opt s on with
+  | None -> None
+  | Some i ->
+      Some (String.sub s 0 i, String.sub s (i + 1) (String.length s - i - 1))
+
+  let non_empty_hash_parts s =
+    List.filter (fun s -> s <> "") (String.split_on_char '#' s)
+
+  let parse_fragment frag = (* [frag] is the text after the first '#' *)
+    if frag = "" then None else
+    if frag.[0] = '^'
+    then Some (Block_ref (String.sub frag 1 (String.length frag - 1)))
+    else match non_empty_hash_parts frag with
+    | [] -> None | parts -> Some (Heading parts)
+
+  let parse_content content =
+    let ref_part, display = match lsplit2 content ~on:'|' with
+    | Some (r, d) -> String.trim r, Some (String.trim d)
+    | None -> String.trim content, None
+    in
+    let target, fragment = match lsplit2 ref_part ~on:'#' with
+    | None -> (if ref_part = "" then None else Some ref_part), None
+    | Some (t, frag) -> (if t = "" then None else Some t), parse_fragment frag
+    in
+    target, fragment, display
+
+  let make ~embed content =
+    let target, fragment, display = parse_content content in
+    { content; target; fragment; display; embed }
+
+  let content w = w.content
+  let target w = w.target
+  let fragment w = w.fragment
+  let display w = w.display
+  let embed w = w.embed
+
+  let to_commonmark w =
+    String.concat "" [(if w.embed then "![[" else "[["); w.content; "]]"]
+
+  let to_plain_text w = match w.display with
+  | Some d -> d
+  | None -> (match w.target with Some t -> t | None -> w.content)
+end
+
 type t +=
 | Ext_strikethrough of Strikethrough.t node
 | Ext_extra_inline_container of Extra_inline_container.t node
 | Ext_attributes of Attributes.t node
 | Ext_math_span of Math_span.t node
+| Ext_wikilink of Wikilink.t node
 
 (* Functions on inlines *)
 
@@ -269,11 +331,12 @@ let meta ?(ext = ext_none) = function
 | Ext_strikethrough (_, m) | Ext_extra_inline_container (_, m) -> m
 | Ext_attributes (_, m) -> m
 | Ext_math_span (_, m) -> m
+| Ext_wikilink (_, m) -> m
 | i -> ext i
 
 let rec normalize ?(ext = ext_none) = function
 | Autolink _ | Break _ | Code_span _ | Raw_html _ | Text _
-| Inlines ([], _) | Ext_math_span _ as i -> i
+| Inlines ([], _) | Ext_math_span _ | Ext_wikilink _ as i -> i
 | Image (l, m) -> Image ({ l with text = normalize ~ext l.text }, m)
 | Link (l, m) -> Link ({ l with text = normalize ~ext l.text }, m)
 | Emphasis (e, m) ->
@@ -357,6 +420,8 @@ let to_plain_text ?(ext = ext_none) ~break_on_soft i =
       loop ~break_on_soft acc (Attributes.inline a :: is)
   | Ext_math_span (m, _) :: is ->
       loop ~break_on_soft (push (Math_span.tex m) acc) is
+  | Ext_wikilink (wl, _) :: is ->
+      loop ~break_on_soft (push (Wikilink.to_plain_text wl) acc) is
   | i :: is ->
       loop ~break_on_soft acc (ext ~break_on_soft i :: is)
   | [] ->

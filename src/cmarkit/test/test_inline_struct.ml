@@ -123,6 +123,7 @@ module Inline_struct = struct
     | Right_paren of { start : byte_pos }
     | Strikethrough_marks of strikethrough_marks
     | Math_span_marks of math_span_marks
+    | Wikilink_start of { start : byte_pos; embed : bool }
   [@@deriving sexp_of]
 end
 
@@ -261,11 +262,24 @@ let () =
       |> print_sexp)
     ();
   parse_inline "multiline inline attributes" "text{#foo\n.bar key=\"a b\"}";
+  (* Djot comments: [%...%] inside a specifier is ignored. A comment kept
+     alongside real attributes is stripped but the attributes apply. A
+     specifier that is only a comment (or empty) is dropped entirely: it
+     neither attaches to a target nor renders literally. *)
+  parse_inline "comment within attributes" "word{#id % keep me %}";
+  parse_inline "comment-only specifier dropped" "word{% comment %} tail";
+  parse_inline "standalone comment dropped"
+    "Foo bar {% multi\nline comment %} baz.";
+  parse_inline "empty specifier dropped" "word{} tail";
   parse_block "stacked block attributes"
     "{#water}\n{.important .large}\nFlow.";
   parse_block "block quote attributes" "{source=Iliad}\n> Sing, muse";
   parse_block "multiline block attributes"
-    "{#water\n  .important key=\"two words\"}\nFlow."
+    "{#water\n  .important key=\"two words\"}\nFlow.";
+  parse_block "block comment-only specifier dropped"
+    "{% a block comment %}\nFlow.";
+  parse_block "block comment among specifiers dropped"
+    "{#water}\n{% note %}\nFlow."
 
 let () =
   show_sep ~title:"intraword emphasis knob tokenization" ();
@@ -377,6 +391,147 @@ let () =
       Doc.of_string ~marked_emphasis_delims:true "{_hello_}"
       |> Cmarkit_commonmark.of_doc |> print_string)
     ()
+
+let () =
+  show_sep ~title:"wikilink tokenization" ();
+  let tokens title f =
+    with_output ~h2:true ~title ~f:(fun () -> print_tokens (f ())) ()
+  in
+  let toks ?(wikilink = true) s =
+    let line_spans = Inline_parse_api.line_spans s in
+    let parser =
+      Cmarkit_.Parser_common.parser ~wikilink ~strict:false s
+    in
+    let p, lines = (parser, line_spans) in
+    let _layout, _meta, lines = strip_paragraph p lines in
+    let _cidx, toks, _first_line =
+      tokenize ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i lines
+    in
+    toks
+  in
+  tokens "disabled keeps link tokens" (fun () -> toks ~wikilink:false "[[a]]");
+  tokens "enabled emits wikilink start" (fun () -> toks "[[a]]");
+  tokens "embed form" (fun () -> toks "![[a]]");
+  tokens "unterminated falls back to links" (fun () -> toks "[[a")
+
+let () =
+  show_sep ~title:"wikilink parse" ();
+  let sexp_of = Sexp.make_sexp_of () in
+  let parse title markdown =
+    with_output ~h2:true ~title
+      ~f:(fun () ->
+        markdown
+        |> Inline_parse_api.of_string ~wikilink:true ~strict:false
+        |> sexp_of.inline
+        |> print_sexp)
+      ()
+  in
+  parse "target only" "[[Note]]";
+  parse "heading and display" "[[Note#H1#H2|Display]]";
+  parse "block reference" "[[Note#^block-1]]";
+  parse "embed" "![[Pic.png]]";
+  parse "display only" "[[|just text]]";
+  parse "among other inlines" "a [[w]] and *b* and [l](u)";
+  parse "not parsed in code span" "`[[w]]`"
+
+let () =
+  show_sep ~title:"wikilink commonmark roundtrip" ();
+  let roundtrip title markdown =
+    with_output ~h2:true ~title
+      ~f:(fun () ->
+        Doc.of_string ~wikilink:true ~strict:false markdown
+        |> Cmarkit_commonmark.of_doc |> print_string)
+      ()
+  in
+  roundtrip "link form" "[[Note#H|D]]";
+  roundtrip "embed form" "![[Pic.png]]";
+  roundtrip "verbatim spacing preserved" "[[ a # b | c ]]"
+
+let callout_meta meta =
+  match Block.Callout.find meta with
+  | None -> None
+  | Some c ->
+      let fold =
+        match Block.Callout.fold c with
+        | None -> "none"
+        | Some Block.Callout.Foldable_open -> "open"
+        | Some Block.Callout.Foldable_closed -> "closed"
+      in
+      Some
+        (Sexplib0.Sexp.List
+           [ Sexplib0.Sexp.Atom "callout"
+           ; Sexplib0.Sexp.Atom (Block.Callout.kind c)
+           ; Sexplib0.Sexp.List [ Atom "fold"; Atom fold ]
+           ])
+
+let () =
+  show_sep ~title:"callout parse" ();
+  let sexp_of = Sexp.make_sexp_of ~metas:[ callout_meta ] () in
+  let cfg = Block.Callout.Config.make () in
+  let parse title markdown =
+    with_output ~h2:true ~title
+      ~f:(fun () ->
+        markdown
+        |> Doc.of_string ~callout:cfg ~strict:false
+        |> sexp_of.doc
+        |> print_sexp)
+      ()
+  in
+  parse "title and body" "> [!info] Title\n> Body";
+  parse "title only (default title)" "> [!tip]";
+  parse "foldable collapsed" "> [!faq]- Question?\n> Answer";
+  parse "foldable expanded" "> [!note]+ Expanded\n> body";
+  parse "case insensitive kind" "> [!WARNING] Watch out";
+  parse "not a callout" "> just a quote";
+  parse "empty kind rejected" "> [!] nope";
+  parse "kind with space rejected" "> [!bad kind] x";
+  parse "nested callout" "> [!quote]\n> outer\n> > [!note] inner\n> > deep"
+
+let () =
+  show_sep ~title:"callout restricted kinds" ();
+  let sexp_of = Sexp.make_sexp_of ~metas:[ callout_meta ] () in
+  let cfg = Block.Callout.Config.make ~kinds:(Block.Callout.Config.Only [ "info" ]) () in
+  let parse title markdown =
+    with_output ~h2:true ~title
+      ~f:(fun () ->
+        markdown |> Doc.of_string ~callout:cfg ~strict:false |> sexp_of.doc |> print_sexp)
+      ()
+  in
+  parse "allowed kind" "> [!info] yes";
+  parse "disallowed kind stays blockquote" "> [!tip] no"
+
+let () =
+  show_sep ~title:"callout html rendering" ();
+  let cfg = Block.Callout.Config.make () in
+  let render title markdown =
+    with_output ~h2:true ~title
+      ~f:(fun () ->
+        Doc.of_string ~callout:cfg ~strict:false markdown
+        |> Cmarkit_html.of_doc ~safe:false
+        |> print_string)
+      ()
+  in
+  render "non-foldable" "> [!info] Title\n> Body";
+  render "foldable expanded" "> [!note]+ T\n> body";
+  render "foldable collapsed" "> [!faq]- T\n> body";
+  (* Title is a full inline container: emphasis and links survive. *)
+  render "formatted title" "> [!info] See **bold** and [text](u)\n> body";
+  render "title starts with formatting" "> [!tip]**right away**\n> body"
+
+let () =
+  show_sep ~title:"callout commonmark roundtrip is stable" ();
+  let cfg = Block.Callout.Config.make () in
+  let render s = Doc.of_string ~callout:cfg ~strict:false s |> Cmarkit_commonmark.of_doc in
+  let check title markdown =
+    with_output ~h2:true ~title
+      ~f:(fun () ->
+        let r1 = render markdown in
+        let r2 = render r1 in
+        Printf.printf "stable: %b\n%s" (String.equal r1 r2) r1)
+      ()
+  in
+  check "with body" "> [!info] T\n> body\n> more";
+  check "foldable" "> [!faq]- Q?\n> A"
 
 let () =
   show_sep ~title:"extra inline container AST support" ();

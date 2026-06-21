@@ -5,6 +5,13 @@ type t =
     source : string option }
 
 let empty = { id = None; classes = []; key_values = []; source = None }
+
+(* An attribute carrying no id, classes or key-values, regardless of its
+   [source]. A comment-only specifier (e.g. [{% a comment %}]) or a bare
+   [{}] parses to such a value: it conveys nothing and, per Djot, is dropped
+   from the output rather than attached or rendered literally. *)
+let is_empty a = a.id = None && a.classes = [] && a.key_values = []
+
 let id a = a.id
 let classes a = a.classes
 let key_values a = a.key_values

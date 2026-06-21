@@ -79,6 +79,8 @@ module Oymarkit_mod = struct
     djot_inline_attributes : bool;
     djot_block_attributes : bool;
     div : bool;
+    wikilink : bool;
+    callout : Block.Callout.Config.t;
   }
 
   type emphasis_role = Any | Opener_only | Closer_only
@@ -103,7 +105,8 @@ module Oymarkit_mod = struct
 
   let make ~emphasis_delims ~strong_emphasis_delims ~intraword_emphasis
       ~marked_emphasis_delims ~strong_emphasis_width ~extra_inline_containers
-      ~block_id ~djot_inline_attributes ~djot_block_attributes ~div =
+      ~block_id ~djot_inline_attributes ~djot_block_attributes ~div ~wikilink
+      ~callout =
     let emphasis_delims =
       match parse_emph_delims emphasis_delims with
       | Ok delims -> delims
@@ -127,6 +130,8 @@ module Oymarkit_mod = struct
       djot_inline_attributes;
       djot_block_attributes;
       div;
+      wikilink;
+      callout;
     }
 
   let delim_allowed delims = function
@@ -188,6 +193,8 @@ module Oymarkit_mod = struct
   let djot_inline_attributes t = t.djot_inline_attributes
   let djot_block_attributes t = t.djot_block_attributes
   let div t = t.div
+  let wikilink t = t.wikilink
+  let callout t = t.callout
 end
 
 [@@@ocamlformat "disable"]
@@ -235,6 +242,8 @@ let parser
     ?(djot_inline_attributes = false)
     ?(djot_block_attributes = false)
     ?(div = false)
+    ?(wikilink = false)
+    ?(callout = Block.Callout.Config.disabled)
     (* Oymarkit end *)
     ~strict i
   =
@@ -242,7 +251,7 @@ let parser
     Oymarkit_mod.make ~emphasis_delims ~strong_emphasis_delims
       ~intraword_emphasis ~marked_emphasis_delims ~strong_emphasis_width
       ~extra_inline_containers ~block_id ~djot_inline_attributes
-      ~djot_block_attributes ~div
+      ~djot_block_attributes ~div ~wikilink ~callout
   in
   let nolocs = not locs and nolayout = not layout and exts = not strict in
   { file; i; buf = Buffer.create 512; exts; nolocs; nolayout;

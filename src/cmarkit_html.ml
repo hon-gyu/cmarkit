@@ -327,6 +327,25 @@ let inline_attributes c a =
       C.string c "<span"; attributes c attrs; C.byte c '>';
       C.inline c inline; C.string c "</span>"
 
+let wikilink c wl =
+  (* Vault-level href resolution is out of scope here: we emit a self-link to
+     the raw target (plus fragment) and show the display text, escaping both. *)
+  let href =
+    let b = Buffer.create 32 in
+    (match Inline.Wikilink.target wl with Some t -> Buffer.add_string b t | None -> ());
+    (match Inline.Wikilink.fragment wl with
+     | None -> ()
+     | Some (Inline.Wikilink.Heading hs) ->
+         List.iter (fun h -> Buffer.add_char b '#'; Buffer.add_string b h) hs
+     | Some (Inline.Wikilink.Block_ref id) ->
+         Buffer.add_string b "#^"; Buffer.add_string b id);
+    Buffer.contents b
+  in
+  C.string c "<a class=\"wikilink\" href=\"";
+  pct_encoded_string c href; C.string c "\">";
+  html_escaped_string c (Inline.Wikilink.to_plain_text wl);
+  C.string c "</a>"
+
 let inline c = function
 | Inline.Autolink (a, _) -> autolink c a; true
 | Inline.Break (b, _) -> break c b; true
@@ -342,6 +361,7 @@ let inline c = function
 | Inline.Ext_extra_inline_container (ic, _) -> extra_inline_container c ic; true
 | Inline.Ext_attributes (a, _) -> inline_attributes c a; true
 | Inline.Ext_math_span (ms, _) -> math_span c ms; true
+| Inline.Ext_wikilink (wl, _) -> wikilink c wl; true
 | _ -> comment c "<!-- Unknown Cmarkit inline -->"; true
 
 (* Block rendering *)
@@ -350,6 +370,31 @@ let block_quote c bq =
   C.string c "<blockquote>\n";
   C.block c (Block.Block_quote.block bq);
   C.string c "</blockquote>\n"
+
+let callout c co bq =
+  let kind = Block.Callout.kind co in
+  let inner = Block.Block_quote.block bq in
+  let title = Block.Callout.title co inner in (* derived inline, may be None *)
+  let body = Block.Callout.strip_header inner in
+  (* Non-foldable callouts use <div>/<div class=callout-title>; foldable ones
+     use <details>/<summary> with [open] when expanded by default. *)
+  let outer, title_tag, openattr = match Block.Callout.fold co with
+  | None -> "div", "div", ""
+  | Some Block.Callout.Foldable_open -> "details", "summary", " open"
+  | Some Block.Callout.Foldable_closed -> "details", "summary", ""
+  in
+  C.byte c '<'; C.string c outer; C.string c " class=\"callout\" data-callout=\"";
+  html_escaped_string c kind; C.byte c '"'; C.string c openattr;
+  C.string c ">\n";
+  C.byte c '<'; C.string c title_tag; C.string c " class=\"callout-title\">";
+  (match title with
+   | Some t -> C.inline c t (* preserves emphasis, links, wikilinks, … *)
+   | None -> html_escaped_string c (String.capitalize_ascii kind));
+  C.string c "</"; C.string c title_tag; C.string c ">\n";
+  C.string c "<div class=\"callout-content\">\n";
+  C.block c body;
+  C.string c "</div>\n";
+  C.string c "</"; C.string c outer; C.string c ">\n"
 
 let code_block c cb =
   let i = Option.map fst (Block.Code_block.info_string cb) in
@@ -524,7 +569,11 @@ let block_attributes c a =
       C.block c block; C.string c "</div>\n"
 
 let block c = function
-| Block.Block_quote (bq, _) -> block_quote c bq; true
+| Block.Block_quote (bq, meta) ->
+    (match Block.Callout.find meta with
+     | Some co -> callout c co bq
+     | None -> block_quote c bq);
+    true
 | Block.Blocks (bs, _) -> List.iter (C.block c) bs; true
 | Block.Code_block (cb, _) -> code_block c cb; true
 | Block.Heading (h, _) -> heading c h; true

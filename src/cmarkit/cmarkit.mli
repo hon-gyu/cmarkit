@@ -946,13 +946,59 @@ module Inline : sig
         separated by space. The {!tex} function does that for you. *)
   end
 
+  (** Obsidian wikilinks. *)
+  module Wikilink : sig
+    type fragment =
+    | Heading of string list
+        (** The ['#']-separated heading path, e.g. [ ["H1"; "H2"] ] for
+            [ [[Note#H1#H2]] ]. *)
+    | Block_ref of string (** A block reference [id] for [ [[Note#^id]] ]. *)
+    (** The type for the part of a wikilink after the first ['#']. *)
+
+    type t
+    (** The type for {{!Cmarkit.ext_wikilink}wikilinks}. *)
+
+    val make : embed:bool -> string -> t
+    (** [make ~embed content] parses the text [content] found between the
+        wikilink brackets (without the brackets or leading ['!']) into a
+        wikilink. [embed] is [true] for the [ ![[...]] ] embed form. *)
+
+    val content : t -> string
+    (** [content w] is the raw text between the brackets, kept verbatim so
+        that rendering roundtrips. *)
+
+    val target : t -> string option
+    (** [target w] is the link target (before any ['#'] or ['|']), if any. *)
+
+    val fragment : t -> fragment option
+    (** [fragment w] is the heading or block reference, if any. *)
+
+    val display : t -> string option
+    (** [display w] is the display text (after ['|']), if any. *)
+
+    val embed : t -> bool
+    (** [embed w] is [true] if [w] is an [ ![[...]] ] embed. *)
+
+    val to_commonmark : t -> string
+    (** [to_commonmark w] renders [w] back to its [ [[...]] ] (or
+        [ ![[...]] ]) source. *)
+
+    val to_plain_text : t -> string
+    (** [to_plain_text w] is the display text, or the target, or the raw
+        content, in that order of preference. *)
+  end
+
   type t +=
   | Ext_strikethrough of Strikethrough.t node
   | Ext_extra_inline_container of Extra_inline_container.t node
   | Ext_attributes of Attributes.t node
-  | Ext_math_span of Math_span.t node (** *)
+  | Ext_math_span of Math_span.t node
+  | Ext_wikilink of Wikilink.t node (** *)
   (** The supported inline extensions. These inlines are only parsed when
-      {!Doc.of_string} is called with [strict:false]. *)
+      {!Doc.of_string} is called with [strict:false].
+
+      {!Ext_wikilink} is gated separately behind the [wikilink] argument of
+      {!Doc.of_string}. *)
 
   (** {1:funs Functions} *)
 
@@ -1243,6 +1289,74 @@ module Block : sig
     (** [find meta] is the block identifier attached to [meta], if any. *)
   end
 
+  (** Obsidian callouts.
+
+      A callout is a {!Block_quote} whose first line is a
+      [ [!kind](+|-)? title] header. Callouts are not a distinct block: the
+      node stays a {!Block_quote} and the parsed metadata is attached to its
+      {!Meta.t}, found with {!Callout.find}. The header line is kept in the
+      block-quote body (so CommonMark rendering roundtrips it verbatim);
+      renderers drop it with {!Callout.strip_header}. Enabled by the [callout]
+      argument of {!Doc.of_string}. *)
+  module Callout : sig
+    type block := t
+
+    type fold = Foldable_open | Foldable_closed
+    (** The initial state of a foldable callout: expanded ([+]) or
+        collapsed ([-]). *)
+
+    (** Parser configuration for callouts. *)
+    module Config : sig
+      type kinds = Any | Only of string list
+      (** Which [ [!kind]] identifiers are recognised as callouts: [Any]
+          identifier, or [Only] a given list of lowercased kinds (others stay
+          plain blockquotes). *)
+
+      type t
+      (** The type for callout parser configuration. *)
+
+      val make : ?kinds:kinds -> unit -> t
+      (** [make ()] enables callouts, recognising [Any] kind by default. *)
+
+      val disabled : t
+      (** [disabled] disables callout parsing. *)
+    end
+
+    type t
+    (** The type for callout metadata attached to a {!Block_quote}'s
+        {!Meta.t}. It carries only the decoded {!kind} and {!fold}; the title
+        is not stored — it lives in the block-quote body and is recovered with
+        {!title}. *)
+
+    val make : ?fold:fold -> string -> t
+    (** [make ~fold kind] is a callout of the given lowercased [kind]. *)
+
+    val kind : t -> string
+    (** [kind c] is the lowercased type identifier, e.g. ["info"], ["tip"]. *)
+
+    val fold : t -> fold option
+    (** [fold c] is the fold state, or [None] if the callout is not
+        foldable. *)
+
+    val find : Meta.t -> t option
+    (** [find meta] is the callout attached to [meta], if any. *)
+
+    val add : t -> Meta.t -> Meta.t
+    (** [add c meta] attaches callout [c] to [meta]. *)
+
+    val title : t -> block -> Inline.t option
+    (** [title c inner] is the callout title as inline content: the header line
+        of the block-quote content [inner] with the [ [!kind](+|-)?] prefix and
+        following blanks removed. [None] selects the default (the capitalised
+        {!kind}). Inline formatting, links and wikilinks are preserved; the
+        title shares nodes with [inner], so mappers transform both at once. *)
+
+    val strip_header : block -> block
+    (** [strip_header inner] is the body of a callout: the block-quote content
+        [inner] with its first line (the [ [!kind]…] header) removed. A
+        structural rewrite that neither re-parses nor needs text locations. *)
+  end
+
   (** Paragraphs. *)
   module Paragraph : sig
 
@@ -1508,7 +1622,8 @@ module Doc : sig
     ?marked_emphasis_delims:bool -> ?strong_emphasis_width:int ->
     ?extra_inline_containers:Inline.Extra_inline_container.Config.t ->
     ?block_id:bool -> ?djot_inline_attributes:bool ->
-    ?djot_block_attributes:bool -> ?div:bool ->
+    ?djot_block_attributes:bool -> ?div:bool -> ?wikilink:bool ->
+    ?callout:Block.Callout.Config.t ->
     ?strict:bool -> string -> t
     (** [of_string md] is a document from the UTF-8 encoded CommonMark
         document [md].
@@ -1582,6 +1697,12 @@ module Doc : sig
    {- If [djot_block_attributes] is [true], Djot attribute lines immediately
       preceding a block are represented by {!Block.Ext_attributes}. Continued
       lines inside a block attribute must be indented.}
+   {- If [wikilink] is [true], Obsidian {{!ext_wikilink}wikilinks} [ [[...]] ]
+      and embeds [ ![[...]] ] are represented by {!Inline.Ext_wikilink}. The
+      default is [false]. This knob is independent of [strict].}
+   {- [callout] enables Obsidian {{!Block.Callout}callouts}: blockquotes whose
+      first line is a [ [!kind]] header gain {!Block.Callout.t} metadata.
+      Defaults to {!Block.Callout.Config.disabled}. Independent of [strict].}
    {- If [resolver] is provided this is used resolve label definitions
       and references. See {{!Label.resolvers}here} for details. Defaults to
       {!Label.default_resolver}.}
@@ -1900,6 +2021,20 @@ end
        of extensions. [Cmarkit] will support those.}
     {- In the short term, there is no plan to support more extensions than
        those that are listed here.}}
+
+    {2:ext_wikilink Wikilinks}
+
+    Obsidian-style wikilinks, enabled by the [wikilink] argument of
+    {!Doc.of_string} (independently of [strict]).
+
+    {v See [[Note#Heading|display]] and embed ![[Other Note]]. v}
+
+    Text delimited by [ [[ ]] ] on a single line gets into an
+    {!Inline.extension-Ext_wikilink} node; a leading [!] marks an embed. The
+    content between the brackets is opaque (no nested inline parsing) and is
+    split into an optional target, a [#]-fragment (a heading path, or a [^]
+    block reference) and an optional [|] display text. See
+    {!Inline.Wikilink}.
 
     {2:ext_strikethrough Strikethrough}
 
