@@ -6,6 +6,7 @@
 
 (library
  (name cmarkit_)
+ (public_name oymarkit.internal)
  (libraries cmarkit_data cmarkit_base)
  (modules
   cmarkit_
@@ -26,6 +27,7 @@
 
 (library
  (name cmarkit)
+ (public_name oymarkit.cmarkit)
  (libraries cmarkit_ cmarkit_data cmarkit_base)
  (modules cmarkit)
  (inline_tests)

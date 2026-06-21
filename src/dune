@@ -1,19 +1,23 @@
 (library
  (name cmarkit_data)
+ (public_name oymarkit.data)
  (modules cmarkit_data cmarkit_data_uchar cmarkit_data_html))
 
 (library
  (name cmarkit_renderer)
+ (public_name oymarkit.renderer)
  (modules cmarkit_renderer)
  (libraries cmarkit))
 
 (library
  (name cmarkit_html)
+ (public_name oymarkit.html)
  (modules cmarkit_html)
  (libraries cmarkit cmarkit_renderer))
 
 (library
  (name cmarkit_commonmark)
+ (public_name oymarkit.commonmark)
  (modules cmarkit_commonmark)
  (libraries cmarkit cmarkit_renderer))
 
