@@ -6,7 +6,7 @@
 
 (library
  (name cmarkit_)
- (libraries cmarkit_data cmarkit_base qcheck)
+ (libraries cmarkit_data cmarkit_base)
  (modules
   cmarkit_
   common_
@@ -22,12 +22,12 @@
   sexp)
  (inline_tests)
  (preprocess
-  (pps ppx_jane ppx_expect ppx_deriving_qcheck)))
+  (pps ppx_jane ppx_expect)))
 
 (library
  (name cmarkit)
- (libraries cmarkit_ cmarkit_data cmarkit_base qcheck)
+ (libraries cmarkit_ cmarkit_data cmarkit_base)
  (modules cmarkit)
  (inline_tests)
  (preprocess
-  (pps ppx_jane ppx_expect ppx_deriving_qcheck)))
+  (pps ppx_jane ppx_expect)))
