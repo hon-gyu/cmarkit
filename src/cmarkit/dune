@@ -20,7 +20,8 @@
   parser
   inline_parse_api
   pp
-  sexp)
+  sexp
+  struct_)
  (inline_tests)
  (preprocess
   (pps ppx_jane ppx_expect)))

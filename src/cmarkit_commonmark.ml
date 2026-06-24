@@ -533,6 +533,37 @@ let block_attributes c a =
     (Block.Attributes.specs a);
   C.block c (Block.Attributes.block a)
 
+(* Oymarkit: rendering of Struct's colon-keyed nodes.
+
+   A keyed node renders its label, a colon, then its body un-indented. A
+   [List] whose last item is keyed has that item lifted out and rendered at
+   the enclosing indent: cmarkit's indent stack would otherwise nest the
+   absorbed body under the list item, breaking the round-trip. *)
+let ensure_newline c =
+  let buf = C.buffer c in
+  let len = Buffer.length buf in
+  if len > 0 && Buffer.nth buf (len - 1) <> '\n' then C.byte c '\n'
+
+let keyed_block c label body =
+  ensure_newline c; C.inline c label; C.string c ":\n"; C.block c body
+
+let keyed_list_item c label body =
+  ensure_newline c; C.string c "- "; C.inline c label; C.string c ":\n"; C.block c body
+
+let list_or_keyed c l m =
+  let items = Block.List'.items l in
+  match List.rev items with
+  | (last_item, _) :: rev_prefix ->
+      (match Block.List_item.block last_item with
+       | Block.Ext_keyed_list_item _ ->
+           if rev_prefix <> [] then
+             C.block c
+               (Block.List
+                  (Block.List'.make ~tight:true (Block.List'.type' l) (List.rev rev_prefix), m));
+           C.block c (Block.List_item.block last_item)
+       | _ -> list c l)
+  | [] -> list c l
+
 let block c = function
 | Block.Blank_line (l, _) -> blank_line c l; true
 | Block.Block_quote (b, _) -> block_quote c b; true
@@ -542,7 +573,10 @@ let block c = function
 | Block.Html_block (h, _) -> html_block c h; true
 | Block.Link_reference_definition (ld, _) ->
     link_reference_definition c ld; true
-| Block.List (l, _) -> list c l; true
+(* | Block.List (l, _) -> list c l; true
+TODO: can we retain the above original code path?
+*)
+| Block.List (l, m) -> list_or_keyed c l m; true
 | Block.Paragraph (p, _) -> paragraph c p; true
 | Block.Thematic_break (t, _) -> thematic_break c t; true
 | Block.Ext_math_block (cb, _) -> code_block c cb; true
@@ -550,6 +584,8 @@ let block c = function
 | Block.Ext_footnote_definition (t, _) -> footnote c t; true
 | Block.Ext_div (d, _) -> div c d; true
 | Block.Ext_attributes (a, _) -> block_attributes c a; true
+| Block.Ext_keyed_block ((label, body), _) -> keyed_block c label body; true
+| Block.Ext_keyed_list_item ((label, body), _) -> keyed_list_item c label body; true
 | _ -> newline c; indent c; C.string c "<!-- Unknown Cmarkit block -->"; true
 
 (* Document rendering *)

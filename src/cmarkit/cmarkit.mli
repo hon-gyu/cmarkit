@@ -1547,8 +1547,16 @@ module Block : sig
   | Ext_table of Table.t node (** *)
   | Ext_footnote_definition of Footnote.t node (** *)
   | Ext_div of Div.t node (** djot {{!Block.Div}div} *)
+  | Ext_keyed_list_item of (Inline.t * t) node
+    (** a colon-keyed list item produced by the {!Cmarkit.Struct}
+        pass. The {!Inline.t} is the label, the [t] the keyed body. *)
+  | Ext_keyed_block of (Inline.t * t) node
+    (** a colon-keyed paragraph-level node produced by the
+        {!Cmarkit.Struct} pass. *)
   (** The supported block extensions. These blocks are only parsed when
-      {!Doc.of_string} is called with [strict:false]. *)
+      {!Doc.of_string} is called with [strict:false]. The [Ext_keyed_*]
+      nodes are produced by the {!Cmarkit.Struct} pass rather than the
+      parser. *)
 
   (** {1:funs Functions on blocks} *)
 
@@ -1999,6 +2007,33 @@ module Pp : sig
     ?ext_inline:(break_on_soft:bool -> Inline.t -> Inline.t) ->
     Format.formatter -> Inline.t -> unit
   (** Truncated, plain-text preview of an inline. *)
+end
+
+(** {1:struct Struct: colon-keyed tree restructuring} *)
+
+(** Colon-keyed tree restructuring.
+
+    A post-parse {!Doc.t} pass that turns list items and paragraphs carrying a
+    colon-delimited label/value relationship into {!Block.extension-Ext_keyed_list_item}
+    / {!Block.extension-Ext_keyed_block} nodes.
+
+    There are two forms. A {b trailing-colon} node ends with an unescaped [:]
+    (no space after) and absorbs its body from indented sub-blocks or
+    following content. An {b inline-value} node contains a [": "] split: the
+    last segment is a free-form value, the preceding ones are labels. Each
+    label must be a single inline unit (text, emphasis, strong emphasis, code
+    span or autolink); the value is unrestricted.
+
+    The pass is opt-in: nothing produces keyed nodes unless {!rewrite_doc} is
+    called. *)
+module Struct : sig
+  val rewrite_doc : ?paragraph_inline_value:bool -> Doc.t -> Doc.t
+  (** [rewrite_doc ?paragraph_inline_value doc] restructures [doc].
+
+      [paragraph_inline_value] (default [true]) controls whether the
+      inline-value form rewrites standalone paragraphs (outside list items)
+      into {!Block.extension-Ext_keyed_block} nodes. When [false], only
+      trailing-colon paragraphs and list-item keying apply. *)
 end
 
 (** {1:extensions Extensions}

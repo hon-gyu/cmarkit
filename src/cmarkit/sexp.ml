@@ -190,6 +190,12 @@ let sexp_of_block_core : block_sexp =
            ])
     | Block.Link_reference_definition _ -> Sexp.Atom "Link_reference_definition"
     | Block.Thematic_break (_, meta) -> with_meta meta (Sexp.Atom "Thematic_break")
+    | Block.Ext_keyed_list_item ((label, body), meta) ->
+      with_meta meta
+        (Sexp.List [ Atom "Keyed_list_item"; recurse_inline label; recurse_block body ])
+    | Block.Ext_keyed_block ((label, body), meta) ->
+      with_meta meta
+        (Sexp.List [ Atom "Keyed_block"; recurse_inline label; recurse_block body ])
     | _ -> Sexp.Atom "<unknown-block>"
   in
   Some s
