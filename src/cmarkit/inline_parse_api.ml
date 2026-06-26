@@ -49,3 +49,20 @@ let of_string ?defs ?resolver ?nested_links ?heading_auto_ids ?layout ?locs
   in
   let _layout, inline = Inline_struct.parse p (line_spans s) in
   inline
+
+(* Colon-keyed segmentation of [s] as a single paragraph's inline payload. See
+   {!Inline_struct.parse_keyed}. A single-segment result means [s] had no
+   structural colon. *)
+let keyed_segments_of_string ?defs ?resolver ?nested_links ?heading_auto_ids
+    ?layout ?locs ?file ?emphasis_delims ?strong_emphasis_delims
+    ?intraword_emphasis ?marked_emphasis_delims ?strong_emphasis_width
+    ?extra_inline_containers ?djot_inline_attributes ?wikilink
+    ?(strict = true) s =
+  let p =
+    parser ?defs ?resolver ?nested_links ?heading_auto_ids ?layout ?locs ?file
+      ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis
+      ?marked_emphasis_delims ?strong_emphasis_width ?extra_inline_containers
+      ?djot_inline_attributes ?wikilink
+      ~strict s
+  in
+  Inline_struct.parse_keyed p (line_spans s)

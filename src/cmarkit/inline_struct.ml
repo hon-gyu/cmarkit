@@ -1510,3 +1510,135 @@ let parse_table_row p line =
       in creating the toplevel text nodes further splited on (unescaped)
       [\]. *)
   parse_cols p line [] toks line.first
+
+(* Structural colon splitting for the Struct pass
+   =======================================================
+
+   The Struct pass ({!Struct_}) turns colon-keyed paragraphs and list items
+   into keyed nodes. Finding *where* the structural colon is belongs here,
+   during inline parsing, for the same reason table-cell splitting does (see
+   [parse_table_row] above):
+
+   {ul
+   {- Only at the token level is a colon known to be {e top-level}: colons
+      inside code spans, emphasis, links, etc. are buried inside [Inline]
+      tokens and never seen here.}
+   {- Only [Match.first_non_escaped_char] distinguishes an escaped [\:] from a
+      real one. The assembled [Text] nodes are already unescaped (see
+      [clean_unesc_unref_span]), so [\:] and [:] are indistinguishable there.}}
+
+   A {e structural} colon is an unescaped, top-level [:] that is either followed
+   by a blank (a [": "] separator) or ends the paragraph (a trailing [:]). We
+   split the top-level inline stream at every such colon — the exact analogue of
+   [parse_cols] splitting at every [|]. The resulting segments are the chain
+   labels followed, for the separator form, by a final value segment. *)
+
+let is_blank_byte = function ' ' | '\t' -> true | _ -> false
+
+(* First structural colon in [start .. last] of [p.i], or [last + 1] if none.
+   [plast] is the last byte of the whole paragraph, for trailing detection. *)
+let rec next_key_colon p ~start ~last ~plast =
+  let n = Match.first_non_escaped_char ':' p.i ~last ~start in
+  if n > last then last + 1
+  else if n = plast || is_blank_byte p.i.[n + 1] then n
+  else next_key_colon p ~start:(n + 1) ~last ~plast
+
+(* [seg_rev] is the current segment's inlines in reverse order. *)
+let segment_inline p seg_rev = match seg_rev with
+| [] -> Inline.Inlines ([], Meta.none)
+| [i] -> i
+| last_i :: _ ->
+    let is = List.rev seg_rev in
+    let first = Inline.meta (List.hd is) and last = Inline.meta last_i in
+    Inline.Inlines (is, meta_of_metas p ~first ~last)
+
+let add_text p line ~first ~last seg_rev =
+  if first > last then seg_rev else
+  Inline.Text (clean_unesc_unref_span p { line with first; last }) :: seg_rev
+
+(* Split the source text range [k .. tlast] at structural colons, threading the
+   current segment and the completed segments (both reversed). A colon closes
+   the current segment; its label text is right-trimmed and the next segment is
+   started past the colon and any following blanks (left-trim). *)
+let rec emit_text p line ~plast ~k ~tlast seg_rev segs_rev =
+  if k > tlast then seg_rev, segs_rev else
+  let n = next_key_colon p ~start:k ~last:tlast ~plast in
+  if n > tlast then add_text p line ~first:k ~last:tlast seg_rev, segs_rev else
+  let llast = Match.last_non_blank p.i ~first:k ~start:(n - 1) in
+  let seg_rev = add_text p line ~first:k ~last:llast seg_rev in
+  let segs_rev = segment_inline p seg_rev :: segs_rev in
+  let k' = Match.first_non_blank p.i ~last:tlast ~start:(n + 1) in
+  emit_text p line ~plast ~k:k' ~tlast [] segs_rev
+
+(* Like [last_pass], but splits the top-level stream into segments at structural
+   colons instead of assembling one flat inline list. Only [Inline] and
+   [Newline] tokens remain after the first two passes; djot inline attributes
+   (which would leave [Attribute_spec] tokens) are not supported here, matching
+   [parse_cols]. *)
+let keyed_last_pass p toks start_line ~plast =
+  let rec loop toks line seg_rev segs_rev k = match toks with
+  | [] ->
+      let last =
+        if start_line.line_pos = line.line_pos then start_line.last else line.last
+      in
+      let seg_rev, segs_rev = emit_text p line ~plast ~k ~tlast:last seg_rev segs_rev in
+      List.rev (segment_inline p seg_rev :: segs_rev)
+  | Newline { start; break_type; newline } :: toks ->
+      let seg_rev, segs_rev =
+        emit_text p line ~plast ~k ~tlast:(start - 1) seg_rev segs_rev
+      in
+      let break = break_inline p line ~start ~break_type ~newline in
+      loop toks newline (break :: seg_rev) segs_rev newline.first
+  | Inline { start; inline; endline; next } :: toks ->
+      let seg_rev, segs_rev =
+        emit_text p line ~plast ~k ~tlast:(start - 1) seg_rev segs_rev
+      in
+      let seg_rev = match inline with
+      | Inline.Inlines (is, _) -> List.rev_append (List.rev is) seg_rev
+      | i -> i :: seg_rev
+      in
+      loop toks endline seg_rev segs_rev next
+  | _ :: _ -> assert false
+  in
+  loop toks start_line [] [] start_line.first
+
+(* Front of the inline pipeline shared by the keyed variants: everything up to
+   (but not including) a final pass over the resolved token stream. *)
+let run_keyed_passes p lines =
+  let layout, meta, lines = strip_paragraph p lines in
+  (* [lines] is forward-ordered here, so the paragraph's last byte (for trailing
+     colon detection) is on the last line. *)
+  let plast = (List.hd (List.rev lines)).last in
+  let cidx, toks, first_line =
+    tokenize ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i lines
+  in
+  p.cidx <- cidx;
+  let toks, _had_link = first_pass p toks first_line in
+  let toks = second_pass p toks first_line in
+  layout, meta, toks, first_line, plast
+
+(* Split a paragraph's [lines] into colon-keyed segments. A result of a single
+   segment means there was no structural colon (not keyed). *)
+let parse_keyed p lines =
+  let _layout, _meta, toks, first_line, plast = run_keyed_passes p lines in
+  keyed_last_pass p toks first_line ~plast
+
+(* Meta channel carrying parse-time colon segments to the post-parse Struct pass
+   ({!Struct_}); the source needed to detect structural colons (escaping,
+   opacity) is only available here, so we ship the segments rather than the
+   pass re-deriving them. Mirrors {!Block.Block_id}'s use of a [Meta.key]. *)
+let keyed_segments : Inline.t list Meta.key = Meta.key ()
+
+(* Like {!parse} but additionally returns the colon segments ([None] when not
+   keyed). Both final passes fold the same resolved token stream. *)
+let parse_with_segments p lines =
+  let layout, meta, toks, first_line, plast = run_keyed_passes p lines in
+  let inline = match last_pass p toks first_line with
+  | [i] -> i
+  | is -> Inline.Inlines (is, meta)
+  in
+  let segments = match keyed_last_pass p toks first_line ~plast with
+  | [_] -> None
+  | segments -> Some segments
+  in
+  layout, inline, segments

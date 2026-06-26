@@ -1547,12 +1547,12 @@ module Block : sig
   | Ext_table of Table.t node (** *)
   | Ext_footnote_definition of Footnote.t node (** *)
   | Ext_div of Div.t node (** djot {{!Block.Div}div} *)
-  | Ext_keyed_list_item of (Inline.t * t) node
-    (** a colon-keyed list item produced by the {!Cmarkit.Struct}
-        pass. The {!Inline.t} is the label, the [t] the keyed body. *)
-  | Ext_keyed_block of (Inline.t * t) node
-    (** a colon-keyed paragraph-level node produced by the
-        {!Cmarkit.Struct} pass. *)
+  | Ext_keyed of (Inline.t * t) node
+    (** a colon-keyed node produced by the {!Cmarkit.Struct} pass: the
+        {!Inline.t} is the label, the [t] the keyed body. Whether it renders
+        with a list marker is decided by context -- a keyed node that is a
+        {!List_item} block renders as a list item, otherwise as a
+        paragraph-level block. *)
   (** The supported block extensions. These blocks are only parsed when
       {!Doc.of_string} is called with [strict:false]. The [Ext_keyed_*]
       nodes are produced by the {!Cmarkit.Struct} pass rather than the
@@ -2014,8 +2014,8 @@ end
 (** Colon-keyed tree restructuring.
 
     A post-parse {!Doc.t} pass that turns list items and paragraphs carrying a
-    colon-delimited label/value relationship into {!Block.extension-Ext_keyed_list_item}
-    / {!Block.extension-Ext_keyed_block} nodes.
+    colon-delimited label/value relationship into {!Block.extension-Ext_keyed}
+    nodes.
 
     There are two forms. A {b trailing-colon} node ends with an unescaped [:]
     (no space after) and absorbs its body from indented sub-blocks or
@@ -2032,7 +2032,7 @@ module Struct : sig
 
       [paragraph_inline_value] (default [true]) controls whether the
       inline-value form rewrites standalone paragraphs (outside list items)
-      into {!Block.extension-Ext_keyed_block} nodes. When [false], only
+      into {!Block.extension-Ext_keyed} nodes. When [false], only
       trailing-colon paragraphs and list-item keying apply. *)
 end
 

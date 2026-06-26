@@ -171,14 +171,10 @@ module Mapper = struct
       | Ext_attributes (a, meta) ->
           let* block = map_block m (Block.Attributes.block a) in
           Some (Ext_attributes (Block.Attributes.make ~specs:(Block.Attributes.specs a) block, meta))
-      | Ext_keyed_list_item ((l, b), meta) -> (* Oymarkit *)
+      | Ext_keyed ((l, b), meta) ->
           let l = Option.value ~default:Inline.empty (map_inline m l) in
           let b = match map_block m b with None -> Blocks ([], Meta.none) | Some b -> b in
-          Some (Ext_keyed_list_item ((l, b), meta))
-      | Ext_keyed_block ((l, b), meta) -> (* Oymarkit *)
-          let l = Option.value ~default:Inline.empty (map_inline m l) in
-          let b = match map_block m b with None -> Blocks ([], Meta.none) | Some b -> b in
-          Some (Ext_keyed_block ((l, b), meta))
+          Some (Ext_keyed ((l, b), meta))
       | ext -> m.block_ext_default m ext
 
   let map_doc m d =
@@ -267,7 +263,7 @@ module Folder = struct
       | Ext_footnote_definition (fn, _) -> fold_block f acc fn.block
       | Ext_div (d, _) -> fold_block f acc (Block.Div.block d)
       | Ext_attributes (a, _) -> fold_block f acc (Block.Attributes.block a)
-      | Ext_keyed_list_item ((l, b), _) | Ext_keyed_block ((l, b), _) ->
+      | Ext_keyed ((l, b), _) ->
           fold_block f (fold_inline f acc l) b
       | ext -> f.block_ext_default f acc ext
 

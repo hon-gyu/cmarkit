@@ -452,7 +452,33 @@ let list_item_continuation_extra after i =
   Int.max 0 (continuation_after - after)
 (* Oymarkit end *)
 
+(* Rendering of Struct's colon-keyed nodes.
+
+   A keyed node renders [label:] then its body, the body left un-indented: the
+   absorbed body was not indented under the marker, so re-indenting it would
+   break the round-trip. Whether a marker is emitted is decided by position. A
+   free [Ext_keyed] (the [block] arm) emits none. A keyed node that is a list
+   item's block is rendered here with the item's marker, the chain continuing
+   under the same marker -- so neither path pushes the list indent. *)
+let ensure_newline c =
+  let buf = C.buffer c in
+  let len = Buffer.length buf in
+  if len > 0 && Buffer.nth buf (len - 1) <> '\n' then C.byte c '\n'
+
+let keyed_block c label body =
+  ensure_newline c; C.inline c label; C.string c ":\n"; C.block c body
+
+let rec keyed_item_chain c marker label body =
+  ensure_newline c; C.string c marker; C.byte c ' ';
+  C.inline c label; C.string c ":\n";
+  match body with
+  | Block.Ext_keyed ((l, b), _) -> keyed_item_chain c marker l b
+  | _ -> C.block c body
+
 let unordered_item c marker (i, _) =
+  match Block.List_item.block i with
+  | Block.Ext_keyed ((label, body), _) -> keyed_item_chain c marker label body
+  | _ ->
   let before = Block.List_item.before_marker i in
   let after = Block.List_item.after_marker i in
   let continuation_extra = list_item_continuation_extra after i in (* Oymarkit diff *)
@@ -465,6 +491,9 @@ let ordered_item c sep num (i, _) =
   let before = Block.List_item.before_marker i in
   let marker = fst (Block.List_item.marker i) in
   let marker = if marker = "" then Int.to_string num ^ sep else marker in
+  match Block.List_item.block i with
+  | Block.Ext_keyed ((label, body), _) -> keyed_item_chain c marker label body; num + 1
+  | _ ->
   let after = Block.List_item.after_marker i in
   let continuation_extra = list_item_continuation_extra after i in (* Oymarkit diff *)
   let task = Option.map fst (Block.List_item.ext_task_marker i) in
@@ -533,37 +562,6 @@ let block_attributes c a =
     (Block.Attributes.specs a);
   C.block c (Block.Attributes.block a)
 
-(* Oymarkit: rendering of Struct's colon-keyed nodes.
-
-   A keyed node renders its label, a colon, then its body un-indented. A
-   [List] whose last item is keyed has that item lifted out and rendered at
-   the enclosing indent: cmarkit's indent stack would otherwise nest the
-   absorbed body under the list item, breaking the round-trip. *)
-let ensure_newline c =
-  let buf = C.buffer c in
-  let len = Buffer.length buf in
-  if len > 0 && Buffer.nth buf (len - 1) <> '\n' then C.byte c '\n'
-
-let keyed_block c label body =
-  ensure_newline c; C.inline c label; C.string c ":\n"; C.block c body
-
-let keyed_list_item c label body =
-  ensure_newline c; C.string c "- "; C.inline c label; C.string c ":\n"; C.block c body
-
-let list_or_keyed c l m =
-  let items = Block.List'.items l in
-  match List.rev items with
-  | (last_item, _) :: rev_prefix ->
-      (match Block.List_item.block last_item with
-       | Block.Ext_keyed_list_item _ ->
-           if rev_prefix <> [] then
-             C.block c
-               (Block.List
-                  (Block.List'.make ~tight:true (Block.List'.type' l) (List.rev rev_prefix), m));
-           C.block c (Block.List_item.block last_item)
-       | _ -> list c l)
-  | [] -> list c l
-
 let block c = function
 | Block.Blank_line (l, _) -> blank_line c l; true
 | Block.Block_quote (b, _) -> block_quote c b; true
@@ -573,10 +571,7 @@ let block c = function
 | Block.Html_block (h, _) -> html_block c h; true
 | Block.Link_reference_definition (ld, _) ->
     link_reference_definition c ld; true
-(* | Block.List (l, _) -> list c l; true
-TODO: can we retain the above original code path?
-*)
-| Block.List (l, m) -> list_or_keyed c l m; true
+| Block.List (l, _) -> list c l; true
 | Block.Paragraph (p, _) -> paragraph c p; true
 | Block.Thematic_break (t, _) -> thematic_break c t; true
 | Block.Ext_math_block (cb, _) -> code_block c cb; true
@@ -584,8 +579,7 @@ TODO: can we retain the above original code path?
 | Block.Ext_footnote_definition (t, _) -> footnote c t; true
 | Block.Ext_div (d, _) -> div c d; true
 | Block.Ext_attributes (a, _) -> block_attributes c a; true
-| Block.Ext_keyed_block ((label, body), _) -> keyed_block c label body; true
-| Block.Ext_keyed_list_item ((label, body), _) -> keyed_list_item c label body; true
+| Block.Ext_keyed ((label, body), _) -> keyed_block c label body; true
 | _ -> newline c; indent c; C.string c "<!-- Unknown Cmarkit block -->"; true
 
 (* Document rendering *)
