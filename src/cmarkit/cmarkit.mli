@@ -2043,6 +2043,15 @@ module Struct : sig
       normalisation, which is the precise sense in which the Struct pass is
       content-invisible. Renderers without keyed-node support can [unkey] a node
       and render the result as ordinary CommonMark. *)
+
+  val label_key : Inline.t -> Inline.t
+  (** [label_key label] is the bare key of a keyed node's [label], i.e. [label]
+      with its trailing [":"] separator removed. A {!Inline.Text} key keeps the
+      separator inline, so the trailing blanks and the single separator colon are
+      dropped; a non-[Text] key arrives as [Inlines \[unit; Text sep\]] whose key
+      is [unit]. This complements {!unkey} (which keeps the separator for
+      content-invisibility): it is the accessor a {e semantic} renderer -- e.g.
+      one emitting [<dl>]/[<dt>]/[<dd>] -- uses to recover the displayed key. *)
 end
 
 (** {1:extensions Extensions}

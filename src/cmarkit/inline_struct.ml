@@ -1576,10 +1576,12 @@ let rec emit_text p line ~plast ~k ~tlast seg_rev segs_rev =
   emit_text p line ~plast ~k:value_start ~tlast [] segs_rev
 
 (* Like [last_pass], but splits the top-level stream into segments at structural
-   colons instead of assembling one flat inline list. Only [Inline] and
-   [Newline] tokens remain after the first two passes; djot inline attributes
-   (which would leave [Attribute_spec] tokens) are not supported here, matching
-   [parse_cols]. *)
+   colons instead of assembling one flat inline list. After the first two passes
+   only [Inline], [Newline] and -- in extension mode -- [Attribute_spec] tokens
+   remain. [Inline]/[Newline] split into segments; an [Attribute_spec] is folded
+   into its target inline exactly as [last_pass] does (see the dedicated arm),
+   so the segment stream stays consistent with the normal inline and the rewrite
+   stays content-invisible. *)
 let keyed_last_pass p toks start_line ~plast =
   let rec loop toks line seg_rev segs_rev k = match toks with
   | [] ->
@@ -1603,6 +1605,62 @@ let keyed_last_pass p toks start_line ~plast =
       | i -> i :: seg_rev
       in
       loop toks endline seg_rev segs_rev next
+  | Attribute_spec { start; attribute; endline; next } :: toks
+    when Attribute.is_empty attribute ->
+      (* Comment-only (or empty) specifier: Djot drops it. Flush pending text up
+         to the specifier, then skip it (mirrors [last_pass]). *)
+      let seg_rev, segs_rev =
+        emit_text p line ~plast ~k ~tlast:(start - 1) seg_rev segs_rev
+      in
+      loop toks endline seg_rev segs_rev next
+  | Attribute_spec { start; attribute; endline; next } :: toks ->
+      (* A djot inline attribute wraps its target in [Ext_attributes]; we attach
+         it within the current segment, the same way [last_pass] attaches it to
+         its accumulator. The target -- the preceding inline or the last word of
+         the pending text -- is a run of non-blanks, so it never spans a
+         structural colon and stays in the current segment. *)
+      let wrap target =
+        Inline.Ext_attributes
+          (Inline.Attributes.make ~specs:[attribute] target, Inline.meta target)
+      in
+      if k = start then begin
+        (* No pending text: attach to the last inline of the current segment. *)
+        match seg_rev with
+        | Inline.Ext_attributes (a, meta) :: rest ->
+            let specs = Inline.Attributes.specs a @ [attribute] in
+            let merged =
+              Inline.Ext_attributes
+                (Inline.Attributes.make ~specs (Inline.Attributes.inline a), meta)
+            in
+            loop toks endline (merged :: rest) segs_rev next
+        | (Inline.Break _ | Inline.Inlines _) :: _ | [] ->
+            (* Nothing attachable (segment start, or after a break): literal. *)
+            let literal = "{" ^ Attribute.to_string attribute ^ "}" in
+            loop toks endline (Inline.Text (literal, Meta.none) :: seg_rev) segs_rev next
+        | target :: rest -> loop toks endline (wrap target :: rest) segs_rev next
+      end else begin
+        let last = start - 1 in
+        let rec target_first i =
+          if i < k then k else
+          match p.i.[i] with ' ' | '\t' -> i + 1 | _ -> target_first (i - 1)
+        in
+        let first = target_first last in
+        if first > last then begin
+          (* A blank precedes the '{': flush the text (incl. it), emit literal. *)
+          let seg_rev, segs_rev =
+            emit_text p line ~plast ~k ~tlast:last seg_rev segs_rev
+          in
+          let literal = "{" ^ Attribute.to_string attribute ^ "}" in
+          loop toks endline (Inline.Text (literal, Meta.none) :: seg_rev) segs_rev next
+        end else begin
+          (* Flush text before the target word, then attach the attr to the word. *)
+          let seg_rev, segs_rev =
+            emit_text p line ~plast ~k ~tlast:(first - 1) seg_rev segs_rev
+          in
+          let target = Inline.Text (clean_unesc_unref_span p { line with first; last }) in
+          loop toks endline (wrap target :: seg_rev) segs_rev next
+        end
+      end
   | _ :: _ -> assert false
   in
   loop toks start_line [] [] start_line.first

@@ -40,19 +40,29 @@ let is_separator_text (s : string) : bool =
   s <> "" && String.contains s ':'
   && String.for_all (fun c -> c = ':' || c = ' ' || c = '\t') s
 
-(** A label is valid iff its key is a single inline unit. The label carries its
-    trailing ":" separator as content: a [Text] key keeps it inline (still one
-    [Text] node); a non-[Text] key (emphasis, strong emphasis, code span,
-    autolink) arrives as the unit followed by a separator [Text]. Either way the
-    returned label is the colon-inclusive one, so re-joining it to the value
-    reproduces the source (see {!unkey}). *)
+(** A single inline that can stand as a key: text, emphasis, strong emphasis,
+    code span or autolink. *)
+let is_key_unit : Inline.t -> bool = function
+  | Inline.Text _ | Inline.Emphasis _ | Inline.Strong_emphasis _ | Inline.Code_span _
+  | Inline.Autolink _ -> true
+  | _ -> false
+
+(** A label is valid iff its key is a single inline unit, optionally carrying a
+    djot inline attribute ([key{.x}: ...]). The label carries its trailing ":"
+    separator as content: a bare [Text] key keeps it inline (still one [Text]
+    node); a non-[Text] key (emphasis, strong emphasis, code span, autolink) --
+    or any attributed key -- arrives as the unit followed by a separator [Text],
+    since the attribute / non-[Text] node cannot coalesce with the separator.
+    Either way the returned label is the colon-inclusive one, so re-joining it to
+    the value reproduces the source (see {!unkey}). *)
 let as_label : Inline.t -> Inline.t option = function
   | (Inline.Text _ | Inline.Emphasis _ | Inline.Strong_emphasis _ | Inline.Code_span _
     | Inline.Autolink _) as i -> Some i
   | Inline.Inlines ([ unit; Inline.Text (sep, _) ], _) as i when is_separator_text sep ->
     (match unit with
-     | Inline.Emphasis _ | Inline.Strong_emphasis _ | Inline.Code_span _ | Inline.Autolink _ ->
-       Some i
+     | Inline.Emphasis _ | Inline.Strong_emphasis _ | Inline.Code_span _
+     | Inline.Autolink _ -> Some i
+     | Inline.Ext_attributes (a, _) when is_key_unit (Inline.Attributes.inline a) -> Some i
      | _ -> None)
   | _ -> None
 
@@ -427,3 +437,27 @@ and unkeyed_blocks (label : Inline.t) (body : Block.t) : Block.t list =
     para (merge (Block.Paragraph.inline p)) :: rest
   | Block.Blocks (bs, _) -> para label :: bs
   | other -> [ para label; other ]
+
+(* Bare key of a keyed label
+   =========================
+
+   The inverse of the raw-separator slicing: drop the trailing ":" separator a
+   label carries (see {!Inline_struct} and {!unkey}). Unlike {!unkey} -- which
+   keeps the separator so the rewrite stays content-invisible -- this recovers
+   the displayed key for a *semantic* renderer (e.g. a <dl>/<dt>). *)
+
+(** Drop a [Text] label's trailing separator: the blanks the splitter put after
+    the colon, then the single separator colon itself. Blanks and colons that
+    belong to the key (e.g. the [:] in [http://x.com]) are preserved -- a label
+    segment never contains an internal structural [": "]. *)
+let strip_separator_text (s : string) : string =
+  let j = ref (String.length s) in
+  while !j > 0 && (s.[!j - 1] = ' ' || s.[!j - 1] = '\t') do decr j done;
+  if !j > 0 && s.[!j - 1] = ':' then decr j;
+  String.sub s 0 !j
+
+let label_key (label : Inline.t) : Inline.t =
+  match label with
+  | Inline.Inlines ([ unit; Inline.Text (sep, _) ], _) when is_separator_text sep -> unit
+  | Inline.Text (s, meta) -> Inline.Text (strip_separator_text s, meta)
+  | other -> other
