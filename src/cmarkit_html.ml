@@ -433,8 +433,38 @@ let heading c h =
 let paragraph c p =
   C.string c "<p>"; C.inline c (Block.Paragraph.inline p); C.string c "</p>\n"
 
-let item_block ~tight c = function
+(* Struct keyed nodes (Cmarkit.Struct) have no HTML of their own: we render
+   them as plain CommonMark would, i.e. as if the Struct pass had not run. The
+   label and its ":" are rejoined to the value. The leading value paragraph of
+   the inline-value form (["foo: bar"]) is merged back onto the label line; a
+   body that opens with a non-paragraph (trailing-colon form, e.g. ["- B:"]
+   absorbing a sub-list) keeps a bare ["label:"] line followed by the body.
+   The reconstructed blocks are then handed to the ordinary block / list-item
+   renderers, so tight/loose, [<li>] wrapping and xhtml inline dispatch are
+   handled for free. *)
+let keyed_label_colon label =
+  Inline.Inlines ([ label; Inline.Text (":", Meta.none) ], Meta.none)
+
+let rec keyed_to_blocks (label, body) =
+  let para inline = Block.Paragraph (Block.Paragraph.make inline, Meta.none) in
+  let merge value =
+    Inline.Inlines ([ label; Inline.Text (": ", Meta.none); value ], Meta.none)
+  in
+  match body with
+  | Block.Ext_keyed (kb, _) ->
+      (match keyed_to_blocks kb with
+       | Block.Paragraph (p, _) :: rest -> para (merge (Block.Paragraph.inline p)) :: rest
+       | blocks -> para (keyed_label_colon label) :: blocks)
+  | Block.Paragraph (p, _) -> [ para (merge (Block.Paragraph.inline p)) ]
+  | Block.Blocks (Block.Paragraph (p, _) :: rest, _) ->
+      para (merge (Block.Paragraph.inline p)) :: rest
+  | Block.Blocks (bs, _) -> para (keyed_label_colon label) :: bs
+  | other -> [ para (keyed_label_colon label); other ]
+
+let rec item_block ~tight c = function
 | Block.Blank_line _ -> ()
+| Block.Ext_keyed (kb, _) ->
+    item_block ~tight c (Block.Blocks (keyed_to_blocks kb, Meta.none))
 | Block.Paragraph (p, _) when tight -> C.inline c (Block.Paragraph.inline p)
 | Block.Blocks (bs, _) ->
     let rec loop c add_nl = function
@@ -585,6 +615,7 @@ let block c = function
 | Block.Ext_table (t, _) -> table c t; true
 | Block.Ext_div (d, _) -> div c d; true
 | Block.Ext_attributes (a, _) -> block_attributes c a; true
+| Block.Ext_keyed (kb, _) -> List.iter (C.block c) (keyed_to_blocks kb); true
 | Block.Blank_line _
 | Block.Link_reference_definition _
 | Block.Ext_footnote_definition _ -> true
