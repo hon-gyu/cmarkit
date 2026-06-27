@@ -1554,7 +1554,7 @@ module Block : sig
         {!List_item} block renders as a list item, otherwise as a
         paragraph-level block. *)
   (** The supported block extensions. These blocks are only parsed when
-      {!Doc.of_string} is called with [strict:false]. The [Ext_keyed_*]
+      {!Doc.of_string} is called with [strict:false]. The {!Ext_keyed}
       nodes are produced by the {!Cmarkit.Struct} pass rather than the
       parser. *)
 

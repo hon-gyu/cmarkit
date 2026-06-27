@@ -206,13 +206,14 @@ let rewrite_block ~(paragraph_inline_value : bool) (root : Block.t) : Block.t =
           | Some (Chain_trailing_colon labels) ->
             (match absorb_trailing_core ~labels rest with
              | None -> rewrap inner :: rewrite_block_list rest
-             | Some (keyed, after) -> rewrap keyed :: rewrite_block_list after)
+             | Some (keyed, after) ->
+               rewrap (set_outer_meta inner_meta keyed) :: rewrite_block_list after)
           | Some (Chain_with_value (labels, value)) ->
             if paragraph_inline_value
             then (
               let body = value_paragraph value in
               let keyed = build_nested_keyed labels body in
-              rewrap keyed :: rewrite_block_list rest)
+              rewrap (set_outer_meta inner_meta keyed) :: rewrite_block_list rest)
             else rewrap (rewrite_within_block inner) :: rewrite_block_list rest)
        | inner -> rewrap (rewrite_within_block inner) :: rewrite_block_list rest)
     | block :: rest -> rewrite_within_block block :: rewrite_block_list rest
