@@ -454,31 +454,12 @@ let list_item_continuation_extra after i =
 
 (* Rendering of Struct's colon-keyed nodes.
 
-   A keyed node renders [label:] then its body, the body left un-indented: the
-   absorbed body was not indented under the marker, so re-indenting it would
-   break the round-trip. Whether a marker is emitted is decided by position. A
-   free [Ext_keyed] (the [block] arm) emits none. A keyed node that is a list
-   item's block is rendered here with the item's marker, the chain continuing
-   under the same marker -- so neither path pushes the list indent. *)
-let ensure_newline c =
-  let buf = C.buffer c in
-  let len = Buffer.length buf in
-  if len > 0 && Buffer.nth buf (len - 1) <> '\n' then C.byte c '\n'
-
-let keyed_block c label body =
-  ensure_newline c; C.inline c label; C.string c ":\n"; C.block c body
-
-let rec keyed_item_chain c marker label body =
-  ensure_newline c; C.string c marker; C.byte c ' ';
-  C.inline c label; C.string c ":\n";
-  match body with
-  | Block.Ext_keyed ((l, b), _) -> keyed_item_chain c marker l b
-  | _ -> C.block c body
+   CommonMark has no notion of keying, so we flatten with {!Struct.unkey} and
+   render the plain blocks it stands for (see the [block] arm). Because each
+   label carries its ":" separator as content, this reproduces the source
+   exactly -- the list-item and free cases need no special handling here. *)
 
 let unordered_item c marker (i, _) =
-  match Block.List_item.block i with
-  | Block.Ext_keyed ((label, body), _) -> keyed_item_chain c marker label body
-  | _ ->
   let before = Block.List_item.before_marker i in
   let after = Block.List_item.after_marker i in
   let continuation_extra = list_item_continuation_extra after i in (* Oymarkit diff *)
@@ -491,9 +472,6 @@ let ordered_item c sep num (i, _) =
   let before = Block.List_item.before_marker i in
   let marker = fst (Block.List_item.marker i) in
   let marker = if marker = "" then Int.to_string num ^ sep else marker in
-  match Block.List_item.block i with
-  | Block.Ext_keyed ((label, body), _) -> keyed_item_chain c marker label body; num + 1
-  | _ ->
   let after = Block.List_item.after_marker i in
   let continuation_extra = list_item_continuation_extra after i in (* Oymarkit diff *)
   let task = Option.map fst (Block.List_item.ext_task_marker i) in
@@ -579,7 +557,7 @@ let block c = function
 | Block.Ext_footnote_definition (t, _) -> footnote c t; true
 | Block.Ext_div (d, _) -> div c d; true
 | Block.Ext_attributes (a, _) -> block_attributes c a; true
-| Block.Ext_keyed ((label, body), _) -> keyed_block c label body; true
+| Block.Ext_keyed _ as b -> C.block c (Struct.unkey b); true
 | _ -> newline c; indent c; C.string c "<!-- Unknown Cmarkit block -->"; true
 
 (* Document rendering *)

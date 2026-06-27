@@ -33,10 +33,27 @@ type decomposition =
   | Chain_trailing_colon of Inline.t list
   | Chain_with_value of Inline.t list * Inline.t
 
-(** A label is valid iff it is a single inline unit. *)
+(** Whether [s] is only a ":" separator (the colon plus optional blanks). Labels
+    keep their raw separator (see {!Inline_struct}), so a non-[Text] key such as
+    emphasis arrives as [Inlines [unit; Text sep]]. *)
+let is_separator_text (s : string) : bool =
+  s <> "" && String.contains s ':'
+  && String.for_all (fun c -> c = ':' || c = ' ' || c = '\t') s
+
+(** A label is valid iff its key is a single inline unit. The label carries its
+    trailing ":" separator as content: a [Text] key keeps it inline (still one
+    [Text] node); a non-[Text] key (emphasis, strong emphasis, code span,
+    autolink) arrives as the unit followed by a separator [Text]. Either way the
+    returned label is the colon-inclusive one, so re-joining it to the value
+    reproduces the source (see {!unkey}). *)
 let as_label : Inline.t -> Inline.t option = function
   | (Inline.Text _ | Inline.Emphasis _ | Inline.Strong_emphasis _ | Inline.Code_span _
     | Inline.Autolink _) as i -> Some i
+  | Inline.Inlines ([ unit; Inline.Text (sep, _) ], _) as i when is_separator_text sep ->
+    (match unit with
+     | Inline.Emphasis _ | Inline.Strong_emphasis _ | Inline.Code_span _ | Inline.Autolink _ ->
+       Some i
+     | _ -> None)
   | _ -> None
 
 let all_labels (segments : Inline.t list) : Inline.t list option =
@@ -361,3 +378,52 @@ let rewrite_doc ?(paragraph_inline_value = true) (doc : Doc.t) : Doc.t =
   if block == block'
   then doc
   else Doc.make ~nl:(Doc.nl doc) ~defs:(Doc.defs doc) block'
+
+(* Content-preserving inverse
+   ==========================
+
+   Flatten keyed nodes back to the plain blocks they stand for. Because each
+   label carries its ":" separator as real content (see {!Inline_struct}),
+   re-joining a label to its value reproduces the source modulo
+   {!Inline.normalize}; hence [unkey (rewrite_block ... b)] equals [b] under
+   normalisation -- the Struct rewrite is content-invisible. Renderers without
+   keyed-node support (e.g. HTML) can {!unkey} a node and render the result as
+   ordinary CommonMark. *)
+
+let rec unkey (block : Block.t) : Block.t =
+  match block with
+  | Block.Ext_keyed ((label, body), _) ->
+    (match unkeyed_blocks label body with
+     | [ single ] -> single
+     | blocks -> Block.Blocks (blocks, Meta.none))
+  | Block.Blocks (bs, m) -> Block.Blocks (List.map unkey bs, m)
+  | Block.Block_quote (bq, m) ->
+    Block.Block_quote (Block.Block_quote.make (unkey (Block.Block_quote.block bq)), m)
+  | Block.List (l, m) ->
+    let items =
+      List.map
+        (fun (item, im) -> rebuild_item item (unkey (Block.List_item.block item)), im)
+        (Block.List'.items l)
+    in
+    make_list l m items
+  | Block.Ext_div (d, m) -> Block.Ext_div (div_with_body d (unkey (Block.Div.block d)), m)
+  | Block.Ext_attributes (a, m) ->
+    let specs = Block.Attributes.specs a in
+    Block.Ext_attributes
+      (Block.Attributes.make ~specs (unkey (Block.Attributes.block a)), m)
+  | b -> b
+
+(* The plain blocks a single keyed node stands for. The leading value paragraph
+   (inline-value form) is re-joined to the label, which already carries the ":";
+   a body opening with a non-paragraph (trailing-colon form, e.g. an absorbed
+   sub-list) keeps a bare "label:" paragraph followed by the body. A nested
+   [Blocks] is left for [Block.normalize] to splice into the parent. *)
+and unkeyed_blocks (label : Inline.t) (body : Block.t) : Block.t list =
+  let para inline = Block.Paragraph (Block.Paragraph.make inline, Meta.none) in
+  let merge value = Inline.Inlines ([ label; value ], Meta.none) in
+  match unkey body with
+  | Block.Paragraph (p, _) -> [ para (merge (Block.Paragraph.inline p)) ]
+  | Block.Blocks (Block.Paragraph (p, _) :: rest, _) ->
+    para (merge (Block.Paragraph.inline p)) :: rest
+  | Block.Blocks (bs, _) -> para label :: bs
+  | other -> [ para label; other ]

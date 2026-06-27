@@ -2034,6 +2034,15 @@ module Struct : sig
       inline-value form rewrites standalone paragraphs (outside list items)
       into {!Block.extension-Ext_keyed} nodes. When [false], only
       trailing-colon paragraphs and list-item keying apply. *)
+
+  val unkey : Block.t -> Block.t
+  (** [unkey b] flattens every {!Block.extension-Ext_keyed} node in [b] back to
+      the plain blocks it stands for. Because a label keeps its [":"] separator
+      as content, re-joining it to the value reproduces the pre-rewrite source
+      modulo {!Inline.normalize}; hence [unkey] inverts {!rewrite_doc} up to
+      normalisation, which is the precise sense in which the Struct pass is
+      content-invisible. Renderers without keyed-node support can [unkey] a node
+      and render the result as ordinary CommonMark. *)
 end
 
 (** {1:extensions Extensions}

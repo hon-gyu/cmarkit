@@ -333,16 +333,17 @@ let (all : t list) =
 (* Struct properties
    -----------------
 
-   The {!Cmarkit_.Struct} pass is a post-parse [Doc.t] rewrite. Note that
+   The {!Cmarkit_.Struct} pass is a post-parse [Doc.t] rewrite. Its defining
+   property is content-invisibility: a keyed node keeps its label's ":" as real
+   content, so {!Cmarkit_.Struct.unkey} flattens it back to the original block
+   modulo normalisation (see [struct_content_invisible]). Enabling Struct thus
+   changes only the tree's grouping, never its content -- which is also why both
+   renderers can simply [unkey] keyed nodes and why CommonMark now round-trips
+   them exactly.
 
-   CommonMark round-trip is deliberately {e not} a struct property: a keyed
-   node like [K(B, P b)] serialises to ["- B:\nb"], where [b] re-parses as a
-   lazy continuation and the keying is lost.
-   ^ TODO: are we should about this?
-
-   We instead test idempotence and
-   that the rewrite commutes with the container blocks (the general form of
-   the struct x div / struct x attributes interaction tests). *)
+   We also test idempotence and that the rewrite commutes with the container
+   blocks (the general form of the struct x div / struct x attributes
+   interaction tests). *)
 
 let struct_rewrite ?paragraph_inline_value (b : Block.t) : Block.t =
   Doc.block (Struct.rewrite_doc ?paragraph_inline_value (Doc.make b))
@@ -373,6 +374,14 @@ let struct_idempotent =
   let check b = check_eq ~expect:(struct_rewrite b) (struct_rewrite (struct_rewrite b)) in
   { name = "struct/idempotent"; check }
 
+(** Content-invisibility: [unkey] inverts [rewrite] modulo normalisation. A
+    keyed node keeps its label's ":" as content, so flattening it reproduces the
+    original block -- enabling Struct changes only the tree's grouping
+    ("edges"), never its content. *)
+let struct_content_invisible =
+  let check b = check_eq ~expect:b (Struct.unkey (struct_rewrite b)) in
+  { name = "struct/content_invisible"; check }
+
 (* [rewrite] commutes with a single-block container: rewriting [wrap b] equals
    wrapping [rewrite b]. Generalizes the struct x other-syntax interaction
    tests -- the container survives and its content is rewritten consistently. *)
@@ -396,6 +405,7 @@ let struct_commutes_attributes =
 let (struct_props : t list) =
   [
     struct_idempotent;
+    struct_content_invisible;
     struct_commutes_block_quote;
     struct_commutes_div;
     struct_commutes_attributes;

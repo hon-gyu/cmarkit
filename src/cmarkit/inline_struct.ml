@@ -1558,17 +1558,22 @@ let add_text p line ~first ~last seg_rev =
 
 (* Split the source text range [k .. tlast] at structural colons, threading the
    current segment and the completed segments (both reversed). A colon closes
-   the current segment; its label text is right-trimmed and the next segment is
-   started past the colon and any following blanks (left-trim). *)
+   the current segment. The label keeps its {e raw} separator -- the colon and
+   the whitespace around it stay in the label's text -- and the value begins at
+   the first non-blank after the colon. Concatenating the segments thus
+   reproduces the source (modulo [Inline.normalize]), which is what lets the
+   Struct rewrite be content-preserving: the label's trailing ":" is real
+   content, not something the renderer has to synthesise (see {!Struct_.unkey}).
+   Because the next segment always starts on a non-blank, labels never carry a
+   leading blank, so a non-[Text] key arrives as [Inlines [unit; Text sep]]. *)
 let rec emit_text p line ~plast ~k ~tlast seg_rev segs_rev =
   if k > tlast then seg_rev, segs_rev else
   let n = next_key_colon p ~start:k ~last:tlast ~plast in
   if n > tlast then add_text p line ~first:k ~last:tlast seg_rev, segs_rev else
-  let llast = Match.last_non_blank p.i ~first:k ~start:(n - 1) in
-  let seg_rev = add_text p line ~first:k ~last:llast seg_rev in
+  let value_start = Match.first_non_blank p.i ~last:tlast ~start:(n + 1) in
+  let seg_rev = add_text p line ~first:k ~last:(value_start - 1) seg_rev in
   let segs_rev = segment_inline p seg_rev :: segs_rev in
-  let k' = Match.first_non_blank p.i ~last:tlast ~start:(n + 1) in
-  emit_text p line ~plast ~k:k' ~tlast [] segs_rev
+  emit_text p line ~plast ~k:value_start ~tlast [] segs_rev
 
 (* Like [last_pass], but splits the top-level stream into segments at structural
    colons instead of assembling one flat inline list. Only [Inline] and
