@@ -1,0 +1,10 @@
+; Umbrella library: depend on `oymarkit` to get Cmarkit, Cmarkit_renderer,
+; Cmarkit_html and Cmarkit_commonmark in scope through one dependency.
+(library
+ (name oymarkit_all)
+ (public_name oymarkit)
+ (libraries
+  (re_export cmarkit)
+  (re_export cmarkit_renderer)
+  (re_export cmarkit_html)
+  (re_export cmarkit_commonmark)))

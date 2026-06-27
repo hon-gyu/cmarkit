@@ -452,6 +452,13 @@ let list_item_continuation_extra after i =
   Int.max 0 (continuation_after - after)
 (* Oymarkit end *)
 
+(* Rendering of Struct's colon-keyed nodes.
+
+   CommonMark has no notion of keying, so we flatten with {!Struct.unkey} and
+   render the plain blocks it stands for (see the [block] arm). Because each
+   label carries its ":" separator as content, this reproduces the source
+   exactly -- the list-item and free cases need no special handling here. *)
+
 let unordered_item c marker (i, _) =
   let before = Block.List_item.before_marker i in
   let after = Block.List_item.after_marker i in
@@ -550,6 +557,7 @@ let block c = function
 | Block.Ext_footnote_definition (t, _) -> footnote c t; true
 | Block.Ext_div (d, _) -> div c d; true
 | Block.Ext_attributes (a, _) -> block_attributes c a; true
+| Block.Ext_keyed _ as b -> C.block c (Struct.unkey b); true
 | _ -> newline c; indent c; C.string c "<!-- Unknown Cmarkit block -->"; true
 
 (* Document rendering *)

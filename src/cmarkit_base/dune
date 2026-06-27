@@ -1,4 +1,5 @@
 (library
   (name cmarkit_base)
+  (public_name oymarkit.base)
   (libraries cmarkit_data)
 )

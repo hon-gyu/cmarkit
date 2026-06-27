@@ -1547,8 +1547,16 @@ module Block : sig
   | Ext_table of Table.t node (** *)
   | Ext_footnote_definition of Footnote.t node (** *)
   | Ext_div of Div.t node (** djot {{!Block.Div}div} *)
+  | Ext_keyed of (Inline.t * t) node
+    (** a colon-keyed node produced by the {!Cmarkit.Struct} pass: the
+        {!Inline.t} is the label, the [t] the keyed body. Whether it renders
+        with a list marker is decided by context -- a keyed node that is a
+        {!List_item} block renders as a list item, otherwise as a
+        paragraph-level block. *)
   (** The supported block extensions. These blocks are only parsed when
-      {!Doc.of_string} is called with [strict:false]. *)
+      {!Doc.of_string} is called with [strict:false]. The {!Ext_keyed}
+      nodes are produced by the {!Cmarkit.Struct} pass rather than the
+      parser. *)
 
   (** {1:funs Functions on blocks} *)
 
@@ -1999,6 +2007,51 @@ module Pp : sig
     ?ext_inline:(break_on_soft:bool -> Inline.t -> Inline.t) ->
     Format.formatter -> Inline.t -> unit
   (** Truncated, plain-text preview of an inline. *)
+end
+
+(** {1:struct Struct: colon-keyed tree restructuring} *)
+
+(** Colon-keyed tree restructuring.
+
+    A post-parse {!Doc.t} pass that turns list items and paragraphs carrying a
+    colon-delimited label/value relationship into {!Block.extension-Ext_keyed}
+    nodes.
+
+    There are two forms. A {b trailing-colon} node ends with an unescaped [:]
+    (no space after) and absorbs its body from indented sub-blocks or
+    following content. An {b inline-value} node contains a [": "] split: the
+    last segment is a free-form value, the preceding ones are labels. Each
+    label must be a single inline unit (text, emphasis, strong emphasis, code
+    span or autolink); the value is unrestricted.
+
+    The pass is opt-in: nothing produces keyed nodes unless {!rewrite_doc} is
+    called. *)
+module Struct : sig
+  val rewrite_doc : ?paragraph_inline_value:bool -> Doc.t -> Doc.t
+  (** [rewrite_doc ?paragraph_inline_value doc] restructures [doc].
+
+      [paragraph_inline_value] (default [true]) controls whether the
+      inline-value form rewrites standalone paragraphs (outside list items)
+      into {!Block.extension-Ext_keyed} nodes. When [false], only
+      trailing-colon paragraphs and list-item keying apply. *)
+
+  val unkey : Block.t -> Block.t
+  (** [unkey b] flattens every {!Block.extension-Ext_keyed} node in [b] back to
+      the plain blocks it stands for. Because a label keeps its [":"] separator
+      as content, re-joining it to the value reproduces the pre-rewrite source
+      modulo {!Inline.normalize}; hence [unkey] inverts {!rewrite_doc} up to
+      normalisation, which is the precise sense in which the Struct pass is
+      content-invisible. Renderers without keyed-node support can [unkey] a node
+      and render the result as ordinary CommonMark. *)
+
+  val label_key : Inline.t -> Inline.t
+  (** [label_key label] is the bare key of a keyed node's [label], i.e. [label]
+      with its trailing [":"] separator removed. A {!Inline.Text} key keeps the
+      separator inline, so the trailing blanks and the single separator colon are
+      dropped; a non-[Text] key arrives as [Inlines \[unit; Text sep\]] whose key
+      is [unit]. This complements {!unkey} (which keeps the separator for
+      content-invisibility): it is the accessor a {e semantic} renderer -- e.g.
+      one emitting [<dl>]/[<dt>]/[<dd>] -- uses to recover the displayed key. *)
 end
 
 (** {1:extensions Extensions}

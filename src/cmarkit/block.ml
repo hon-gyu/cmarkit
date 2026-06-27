@@ -500,6 +500,7 @@ type t +=
 | Ext_table of Table.t node
 | Ext_footnote_definition of Footnote.t node
 | Ext_div of Div.t node
+| Ext_keyed of (Inline.t * t) node
 
 (* Functions on blocks *)
 
@@ -513,6 +514,7 @@ let meta ?(ext = ext_none) = function
 | Ext_math_block (_, m) | Ext_table (_, m)
 | Ext_attributes (_, m)
 | Ext_div (_, m)
+| Ext_keyed (_, m)
 | Ext_footnote_definition (_, m) -> m
 | b -> ext b
 [@@@ocamlformat "enable"]
@@ -675,6 +677,8 @@ let rec normalize ?(ext = ext_none) = function
     Ext_div ({ d with block = normalize ~ext d.block }, m)
 | Ext_attributes (a, m) ->
     Ext_attributes (Attributes.make ~specs:a.specs (normalize ~ext a.block), m)
+| Ext_keyed ((l, b), m) ->
+    Ext_keyed ((l, normalize ~ext b), m)
 | b -> ext b
 
 let rec defs
@@ -702,4 +706,6 @@ let rec defs
       in
       defs ~ext ~init (Footnote.block (fst fn))
   | Ext_div (d, _) -> defs ~ext ~init (Div.block d)
+  | Ext_keyed ((_, b), _) ->
+      defs ~ext ~init b
   | b -> ext init b

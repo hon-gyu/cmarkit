@@ -10,6 +10,7 @@
  (libraries
   cmarkit_
   cmarkit_generator
+  qcheck-core.runner
   fmt)
  (preprocess
   (pps ppx_jane ppx_expect)))

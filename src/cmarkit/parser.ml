@@ -1011,13 +1011,27 @@ let paragraph_block_id p (par : Block_struct.paragraph) =
     { id = id_string; marker = meta p (textloc_of_span p span) }
 
 let block_struct_to_paragraph p par =
-  let layout, inline = Inline_struct.parse p par.Block_struct.lines in
+  (* Oymarkit begin *)
+  (* In extension mode also segment the paragraph on structural colons and ship
+     the segments to the Struct pass on the meta (see [Inline_struct]). *)
+  let layout, inline, segments =
+    if p.exts then Inline_struct.parse_with_segments p par.Block_struct.lines
+    else let layout, inline = Inline_struct.parse p par.Block_struct.lines in
+      layout, inline, None
+  in
+  (* Oymarkit end *)
   let leading_indent, trailing_blanks = layout in
   let meta =
     match paragraph_block_id p par with
     | None -> Inline.meta inline
     | Some block_id -> Block.Block_id.add block_id (Inline.meta inline)
   in
+  (* Oymarkit begin *)
+  let meta = match segments with
+  | None -> meta
+  | Some segments -> Meta.add Inline_struct.keyed_segments segments meta
+  in
+  (* Oymarkit end *)
   Block.Paragraph ({ leading_indent; inline; trailing_blanks }, meta)
 
 let split_attribute_paragraph p (par : Block_struct.paragraph) =

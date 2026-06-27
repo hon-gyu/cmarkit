@@ -6,7 +6,8 @@
 
 (library
  (name cmarkit_)
- (libraries cmarkit_data cmarkit_base qcheck)
+ (public_name oymarkit.internal)
+ (libraries cmarkit_data cmarkit_base)
  (modules
   cmarkit_
   common_
@@ -19,15 +20,17 @@
   parser
   inline_parse_api
   pp
-  sexp)
+  sexp
+  struct_)
  (inline_tests)
  (preprocess
-  (pps ppx_jane ppx_expect ppx_deriving_qcheck)))
+  (pps ppx_jane ppx_expect)))
 
 (library
  (name cmarkit)
- (libraries cmarkit_ cmarkit_data cmarkit_base qcheck)
+ (public_name oymarkit.cmarkit)
+ (libraries cmarkit_ cmarkit_data cmarkit_base)
  (modules cmarkit)
  (inline_tests)
  (preprocess
-  (pps ppx_jane ppx_expect ppx_deriving_qcheck)))
+  (pps ppx_jane ppx_expect)))

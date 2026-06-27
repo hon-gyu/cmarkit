@@ -433,8 +433,15 @@ let heading c h =
 let paragraph c p =
   C.string c "<p>"; C.inline c (Block.Paragraph.inline p); C.string c "</p>\n"
 
-let item_block ~tight c = function
+(* Struct keyed nodes (Cmarkit.Struct) have no HTML of their own: we render them
+   as plain CommonMark would, i.e. as if the Struct pass had not run. {!Struct.unkey}
+   flattens a keyed node back to the blocks it stands for (the label, ":"
+   included, rejoined to the value), which we then hand to the ordinary block /
+   list-item renderers -- so tight/loose, [<li>] wrapping and xhtml inline
+   dispatch are handled for free. *)
+let rec item_block ~tight c = function
 | Block.Blank_line _ -> ()
+| Block.Ext_keyed _ as b -> item_block ~tight c (Struct.unkey b)
 | Block.Paragraph (p, _) when tight -> C.inline c (Block.Paragraph.inline p)
 | Block.Blocks (bs, _) ->
     let rec loop c add_nl = function
@@ -585,6 +592,7 @@ let block c = function
 | Block.Ext_table (t, _) -> table c t; true
 | Block.Ext_div (d, _) -> div c d; true
 | Block.Ext_attributes (a, _) -> block_attributes c a; true
+| Block.Ext_keyed _ as b -> C.block c (Struct.unkey b); true
 | Block.Blank_line _
 | Block.Link_reference_definition _
 | Block.Ext_footnote_definition _ -> true
