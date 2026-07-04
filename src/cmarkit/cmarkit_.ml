@@ -87,7 +87,7 @@ module Mapper = struct
       let open Inline in
       match i with
       | Autolink _ | Break _ | Code_span _ | Raw_html _
-      | Text _ | Ext_math_span _ as i -> Some i
+      | Text _ | Ext_math_span _ | Ext_jsx_expr _ as i -> Some i
       | Image (l, meta) ->
           let text = Option.value ~default:Inline.empty (map_inline m l.text) in
           Some (Image ({ l with text }, meta))
@@ -225,7 +225,7 @@ module Folder = struct
       let open Inline in
       match i with
       | Autolink _ | Break _ | Code_span _ | Raw_html _ | Text _
-      | Ext_math_span _ -> acc
+      | Ext_math_span _ | Ext_jsx_expr _ -> acc
       | Image (l, _) | Link (l, _) -> fold_inline f acc l.text
       | Emphasis ({ inline }, _) -> fold_inline f acc inline
       | Strong_emphasis ({ inline }, _) -> fold_inline f acc inline

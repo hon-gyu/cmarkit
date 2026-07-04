@@ -82,6 +82,7 @@ type token =
 | Strikethrough_marks of strikethrough_marks
 | Math_span_marks of math_span_marks
 | Wikilink_start of { start : byte_pos; embed : bool }
+| Jsx_expr_start of { start : byte_pos }
 
 let token_start = function
 | Attribute_spec { start } | Autolink_or_html_start { start } | Backticks { start }
@@ -92,6 +93,7 @@ let token_start = function
 | Strikethrough_marks { start } -> start
 | Math_span_marks { start } -> start
 | Wikilink_start { start } -> start
+| Jsx_expr_start { start } -> start
 
 let has_backticks ~count ~after cidx =
   Closer_index.closer_exists (Closer.Backticks count) ~after cidx
@@ -461,6 +463,45 @@ let scan_attribute_spec s line lines ~start =
   in
   loop line lines (start + 1) false false false
 
+(* mlmdx JSX expression [ {expr} ]. Find the byte index of the '}' that closes
+   the '{' at [start], on the same line ([expr] does not span lines in v1).
+   Tracks brace nesting and skips OCaml string literals and [ (* *) ] comments
+   (which nest) so that a '}' inside them does not close the expression. Char
+   literals containing braces are not handled in v1; the downstream OCaml parser
+   validates the extracted span. Returns [None] if no matching close is on the
+   line, so the caller can fall back to other interpretations of '{'. *)
+let jsx_expr_close s ~line ~start =
+  let last = line.last in
+  let rec code k depth =
+    if k > last then None else
+    match s.[k] with
+    | '{' -> code (k + 1) (depth + 1)
+    | '}' -> if depth = 1 then Some k else code (k + 1) (depth - 1)
+    | '"' -> string (k + 1) depth
+    | '(' when k + 1 <= last && s.[k + 1] = '*' -> comment (k + 2) depth 1
+    | _ -> code (k + 1) depth
+  and string k depth =
+    if k > last then None else
+    match s.[k] with
+    | '\\' when k + 1 <= last -> string (k + 2) depth
+    | '"' -> code (k + 1) depth
+    | _ -> string (k + 1) depth
+  and comment k depth nest =
+    if k > last then None else
+    if k + 1 <= last && s.[k] = '*' && s.[k + 1] = ')'
+    then (if nest = 1 then code (k + 2) depth else comment (k + 2) depth (nest - 1))
+    else if k + 1 <= last && s.[k] = '(' && s.[k + 1] = '*'
+    then comment (k + 2) depth (nest + 1)
+    else comment (k + 1) depth nest
+  in
+  code (start + 1) 1
+
+let try_add_jsx_expr_token oymarkit_mod acc s line ~start =
+  if not (Oymarkit_mod.jsx_expr oymarkit_mod) then None else
+  match jsx_expr_close s ~line ~start with
+  | None -> None
+  | Some close -> Some (Jsx_expr_start { start } :: acc, close + 1)
+
 let tokenize ?oymarkit_mod ~exts s lines =
   (* For inlines this is where we conditionalize for extensions. All code
       paths after that no longer check for p.exts: there just won't be
@@ -487,6 +528,9 @@ let tokenize ?oymarkit_mod ~exts s lines =
     | '{' ->
         begin match oymarkit_mod with
         | Some oymarkit_mod when is_oymarkit_enabled () ->
+            begin match try_add_jsx_expr_token oymarkit_mod acc s line ~start:k with
+            | Some r -> r
+            | None ->
             begin match
               try_add_extra_inline_container_opener_token oymarkit_mod acc s line
                 ~start:k
@@ -505,6 +549,7 @@ let tokenize ?oymarkit_mod ~exts s lines =
                     try_add_marked_emphasis_opener_token oymarkit_mod acc s line
                       ~start:k
                 end
+            end
             end
         | _ -> acc, k + 1
         end
@@ -692,6 +737,14 @@ let ext_wikilink_token p ~first ~last ~line wl =
   let inline = Inline.Ext_wikilink (wl, meta p textloc) in
   Inline { start = first; inline; endline = line; next = last + 1 }
 
+let ext_jsx_expr_token p ~first ~last ~line j =
+  (* [first] is the '{', [last] is the '}'. The node's textloc spans the whole
+     [ {expr} ] so the mlmdx compiler can offset past the '{' to prime a lexbuf
+     at the expression's true source position. *)
+  let textloc = textloc_of_span p { line with first; last } in
+  let inline = Inline.Ext_jsx_expr (j, meta p textloc) in
+  Inline { start = first; inline; endline = line; next = last + 1 }
+
 (* Parsers *)
 
 let try_code p toks start_line ~start:cstart ~count ~escaped =
@@ -785,6 +838,19 @@ let try_wikilink p toks line ~embed ~start =
       let first = start and last = close + 1 (* second ']' *) in
       let t = ext_wikilink_token p ~first ~last ~line wl in
       let toks = drop_until ~start:(last + 1) toks in
+      Some (toks, line, t)
+
+let try_jsx_expr p toks line ~start =
+  (* [start] points at '{'. A matching '}' on [line] is guaranteed by
+     [try_add_jsx_expr_token]; re-scan to delimit the opaque expression and
+     build the inline with proper metadata. *)
+  match jsx_expr_close p.i ~line ~start with
+  | None -> None
+  | Some close ->
+      let expr = String.sub p.i (start + 1) (close - (start + 1)) in
+      let j = Inline.Jsx_expr.make expr in
+      let t = ext_jsx_expr_token p ~first:start ~last:close ~line j in
+      let toks = drop_until ~start:(close + 1) toks in
       Some (toks, line, t)
 
 let label_of_rev_spans p ~key rev_spans =
@@ -1021,6 +1087,11 @@ and first_pass p toks line =
       end
   | Wikilink_start { start; embed } :: toks ->
       begin match try_wikilink p toks line ~embed ~start with
+      | None -> loop p toks line ~had_link acc
+      | Some (toks, line, t) -> loop p toks line ~had_link (t :: acc)
+      end
+  | Jsx_expr_start { start } :: toks ->
+      begin match try_jsx_expr p toks line ~start with
       | None -> loop p toks line ~had_link acc
       | Some (toks, line, t) -> loop p toks line ~had_link (t :: acc)
       end
@@ -1367,7 +1438,7 @@ and last_pass p toks start_line =
   | (Backticks _ | Autolink_or_html_start _ | Link_start _ | Right_brack _
     | Emphasis_marks _ | Right_paren _ | Strikethrough_marks _
     | Extra_inline_container_marks _ | Math_span_marks _
-    | Wikilink_start _) :: _ ->
+    | Wikilink_start _ | Jsx_expr_start _) :: _ ->
       assert false
   in
   loop toks start_line [] start_line.first
@@ -1474,7 +1545,7 @@ let rec finish_col p line blanks_before is toks k = match toks with
 | (Attribute_spec _ | Backticks _ | Autolink_or_html_start _ | Link_start _ | Right_brack _
   | Emphasis_marks _ | Right_paren _ | Strikethrough_marks _
   | Extra_inline_container_marks _ | Math_span_marks _ | Newline _
-  | Wikilink_start _ ) :: _ ->
+  | Wikilink_start _ | Jsx_expr_start _ ) :: _ ->
     assert false
 
 let rec parse_cols p line acc toks k = match toks with
@@ -1495,7 +1566,7 @@ let rec parse_cols p line acc toks k = match toks with
 | (Attribute_spec _ | Backticks _ | Autolink_or_html_start _ | Link_start _ | Right_brack _
   | Emphasis_marks _ | Right_paren _ | Strikethrough_marks _
   | Extra_inline_container_marks _ | Math_span_marks _ | Newline _
-  | Wikilink_start _ ) :: _ ->
+  | Wikilink_start _ | Jsx_expr_start _ ) :: _ ->
     assert false
 
 let parse_table_row p line =

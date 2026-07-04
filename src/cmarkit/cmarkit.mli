@@ -988,17 +988,32 @@ module Inline : sig
         content, in that order of preference. *)
   end
 
+  (** mlmdx JSX expression containers [ {expr} ]. *)
+  module Jsx_expr : sig
+    type t
+    (** The type for {{!Cmarkit.ext_jsx_expr}JSX expression containers}. *)
+
+    val make : string -> t
+    (** [make expr] is a container holding the raw embedded code [expr] found
+        between the braces (without the braces). The code is kept verbatim and
+        interpreted downstream (by mlmdx), not parsed here. *)
+
+    val expr : t -> string
+    (** [expr j] is the raw embedded code between the braces. *)
+  end
+
   type t +=
   | Ext_strikethrough of Strikethrough.t node
   | Ext_extra_inline_container of Extra_inline_container.t node
   | Ext_attributes of Attributes.t node
   | Ext_math_span of Math_span.t node
-  | Ext_wikilink of Wikilink.t node (** *)
+  | Ext_wikilink of Wikilink.t node
+  | Ext_jsx_expr of Jsx_expr.t node
   (** The supported inline extensions. These inlines are only parsed when
       {!Doc.of_string} is called with [strict:false].
 
-      {!Ext_wikilink} is gated separately behind the [wikilink] argument of
-      {!Doc.of_string}. *)
+      {!Ext_wikilink} and {!Ext_jsx_expr} are gated separately behind the
+      [wikilink] and [jsx_expr] arguments of {!Doc.of_string}. *)
 
   (** {1:funs Functions} *)
 
@@ -1631,6 +1646,7 @@ module Doc : sig
     ?extra_inline_containers:Inline.Extra_inline_container.Config.t ->
     ?block_id:bool -> ?djot_inline_attributes:bool ->
     ?djot_block_attributes:bool -> ?div:bool -> ?wikilink:bool ->
+    ?jsx_expr:bool ->
     ?callout:Block.Callout.Config.t ->
     ?strict:bool -> string -> t
     (** [of_string md] is a document from the UTF-8 encoded CommonMark

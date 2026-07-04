@@ -250,6 +250,16 @@ module Math_span = struct
     String.concat " "s
 end
 
+module Jsx_expr = struct
+  (* An mlmdx JSX expression container [ {expr} ]. The braces delimit a span of
+     embedded code that is opaque to Markdown: [expr] is kept verbatim (like a
+     wikilink's content) and interpreted downstream by the mlmdx compiler, not
+     here. Single line, no inline children. *)
+  type t = { expr : string }
+  let make expr = { expr }
+  let expr j = j.expr
+end
+
 module Wikilink = struct
   (* Obsidian-style wikilinks: [ [[target#fragment|display]] ] and the embed
      form [ ![[...]] ]. Wikilinks have no inline children: the content between
@@ -317,6 +327,7 @@ type t +=
 | Ext_attributes of Attributes.t node
 | Ext_math_span of Math_span.t node
 | Ext_wikilink of Wikilink.t node
+| Ext_jsx_expr of Jsx_expr.t node
 
 (* Functions on inlines *)
 
@@ -332,11 +343,12 @@ let meta ?(ext = ext_none) = function
 | Ext_attributes (_, m) -> m
 | Ext_math_span (_, m) -> m
 | Ext_wikilink (_, m) -> m
+| Ext_jsx_expr (_, m) -> m
 | i -> ext i
 
 let rec normalize ?(ext = ext_none) = function
 | Autolink _ | Break _ | Code_span _ | Raw_html _ | Text _
-| Inlines ([], _) | Ext_math_span _ | Ext_wikilink _ as i -> i
+| Inlines ([], _) | Ext_math_span _ | Ext_wikilink _ | Ext_jsx_expr _ as i -> i
 | Image (l, m) -> Image ({ l with text = normalize ~ext l.text }, m)
 | Link (l, m) -> Link ({ l with text = normalize ~ext l.text }, m)
 | Emphasis (e, m) ->
@@ -422,6 +434,8 @@ let to_plain_text ?(ext = ext_none) ~break_on_soft i =
       loop ~break_on_soft (push (Math_span.tex m) acc) is
   | Ext_wikilink (wl, _) :: is ->
       loop ~break_on_soft (push (Wikilink.to_plain_text wl) acc) is
+  | Ext_jsx_expr (j, _) :: is ->
+      loop ~break_on_soft (push (Jsx_expr.expr j) acc) is
   | i :: is ->
       loop ~break_on_soft acc (ext ~break_on_soft i :: is)
   | [] ->

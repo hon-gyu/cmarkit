@@ -124,6 +124,7 @@ module Inline_struct = struct
     | Strikethrough_marks of strikethrough_marks
     | Math_span_marks of math_span_marks
     | Wikilink_start of { start : byte_pos; embed : bool }
+    | Jsx_expr_start of { start : byte_pos }
   [@@deriving sexp_of]
 end
 
