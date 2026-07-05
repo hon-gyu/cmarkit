@@ -1002,6 +1002,20 @@ module Inline : sig
     (** [expr j] is the raw embedded code between the braces. *)
   end
 
+  (** mlmdx JSX elements [ <Tag attrs... /> ]. *)
+  module Jsx_element : sig
+    type t
+    (** The type for {{!Cmarkit.ext_jsx_element}JSX elements}. *)
+
+    val make : string -> t
+    (** [make raw] is an element holding its full verbatim source [raw] (from
+        ['<'] to ['>'] inclusive). The tag and attributes are kept verbatim and
+        parsed downstream (by mlmdx), not here. *)
+
+    val raw : t -> string
+    (** [raw e] is the verbatim element source. *)
+  end
+
   type t +=
   | Ext_strikethrough of Strikethrough.t node
   | Ext_extra_inline_container of Extra_inline_container.t node
@@ -1009,11 +1023,13 @@ module Inline : sig
   | Ext_math_span of Math_span.t node
   | Ext_wikilink of Wikilink.t node
   | Ext_jsx_expr of Jsx_expr.t node
+  | Ext_jsx_element of Jsx_element.t node
   (** The supported inline extensions. These inlines are only parsed when
       {!Doc.of_string} is called with [strict:false].
 
-      {!Ext_wikilink} and {!Ext_jsx_expr} are gated separately behind the
-      [wikilink] and [jsx_expr] arguments of {!Doc.of_string}. *)
+      {!Ext_wikilink}, {!Ext_jsx_expr} and {!Ext_jsx_element} are gated
+      separately behind the [wikilink], [jsx_expr] and [jsx_element] arguments
+      of {!Doc.of_string}. *)
 
   (** {1:funs Functions} *)
 
@@ -1646,7 +1662,7 @@ module Doc : sig
     ?extra_inline_containers:Inline.Extra_inline_container.Config.t ->
     ?block_id:bool -> ?djot_inline_attributes:bool ->
     ?djot_block_attributes:bool -> ?div:bool -> ?wikilink:bool ->
-    ?jsx_expr:bool ->
+    ?jsx_expr:bool -> ?jsx_element:bool ->
     ?callout:Block.Callout.Config.t ->
     ?strict:bool -> string -> t
     (** [of_string md] is a document from the UTF-8 encoded CommonMark

@@ -483,6 +483,11 @@ module Block_struct = struct
           let r = Match.div_open p.i ~last ~start in
           if r <> Nomatch then r else
           Paragraph_line
+      | '<' when Oymarkit_mod.jsx_element p.oymarkit_mod && start + 1 <= last && (match p.i.[start + 1] with 'A' .. 'Z' -> true | _ -> false) ->
+          (* mlmdx: a line opening a capitalized tag is a JSX component, not a
+            HTML block, so keep it a paragraph and let inline parsing produce
+            the [Ext_jsx_element]. Frees standalone [ <Comp ... /> ] lines. *)
+          Paragraph_line
       | '<' ->
           let r = Match.html_block_start p.i ~last ~start in
           if r <> Nomatch then r else

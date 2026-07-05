@@ -38,13 +38,13 @@ let line_spans s =
 let of_string ?defs ?resolver ?nested_links ?heading_auto_ids ?layout ?locs
     ?file ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis
     ?marked_emphasis_delims ?strong_emphasis_width ?extra_inline_containers
-    ?djot_inline_attributes ?wikilink ?jsx_expr
+    ?djot_inline_attributes ?wikilink ?jsx_expr ?jsx_element
     ?(strict = true) s =
   let p =
     parser ?defs ?resolver ?nested_links ?heading_auto_ids ?layout ?locs ?file
       ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis
       ?marked_emphasis_delims ?strong_emphasis_width ?extra_inline_containers
-      ?djot_inline_attributes ?wikilink ?jsx_expr
+      ?djot_inline_attributes ?wikilink ?jsx_expr ?jsx_element
       ~strict s
   in
   let _layout, inline = Inline_struct.parse p (line_spans s) in

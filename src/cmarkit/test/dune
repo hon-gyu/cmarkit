@@ -6,9 +6,9 @@
 )
 
 (library
-  (name test_jsx_expr)
+  (name test_jsx)
   (libraries cmarkit_ cmarkit_commonmark)
-  (modules test_jsx_expr)
+  (modules test_jsx)
   (inline_tests)
   (preprocess (pps ppx_expect))
 )

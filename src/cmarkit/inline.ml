@@ -260,6 +260,16 @@ module Jsx_expr = struct
   let expr j = j.expr
 end
 
+module Jsx_element = struct
+  (* An mlmdx JSX element [ <Tag attrs... /> ]. Like a wikilink, the element is
+     opaque to Markdown: [raw] holds the full source (from '<' to '>' inclusive)
+     verbatim, and the tag/attribute structure is parsed downstream by the mlmdx
+     compiler, not here. Self-closing only in v1, single line, no children. *)
+  type t = { raw : string }
+  let make raw = { raw }
+  let raw e = e.raw
+end
+
 module Wikilink = struct
   (* Obsidian-style wikilinks: [ [[target#fragment|display]] ] and the embed
      form [ ![[...]] ]. Wikilinks have no inline children: the content between
@@ -328,6 +338,7 @@ type t +=
 | Ext_math_span of Math_span.t node
 | Ext_wikilink of Wikilink.t node
 | Ext_jsx_expr of Jsx_expr.t node
+| Ext_jsx_element of Jsx_element.t node
 
 (* Functions on inlines *)
 
@@ -344,11 +355,13 @@ let meta ?(ext = ext_none) = function
 | Ext_math_span (_, m) -> m
 | Ext_wikilink (_, m) -> m
 | Ext_jsx_expr (_, m) -> m
+| Ext_jsx_element (_, m) -> m
 | i -> ext i
 
 let rec normalize ?(ext = ext_none) = function
 | Autolink _ | Break _ | Code_span _ | Raw_html _ | Text _
-| Inlines ([], _) | Ext_math_span _ | Ext_wikilink _ | Ext_jsx_expr _ as i -> i
+| Inlines ([], _) | Ext_math_span _ | Ext_wikilink _ | Ext_jsx_expr _
+| Ext_jsx_element _ as i -> i
 | Image (l, m) -> Image ({ l with text = normalize ~ext l.text }, m)
 | Link (l, m) -> Link ({ l with text = normalize ~ext l.text }, m)
 | Emphasis (e, m) ->
@@ -436,6 +449,8 @@ let to_plain_text ?(ext = ext_none) ~break_on_soft i =
       loop ~break_on_soft (push (Wikilink.to_plain_text wl) acc) is
   | Ext_jsx_expr (j, _) :: is ->
       loop ~break_on_soft (push (Jsx_expr.expr j) acc) is
+  | Ext_jsx_element (e, _) :: is ->
+      loop ~break_on_soft (push (Jsx_element.raw e) acc) is
   | i :: is ->
       loop ~break_on_soft acc (ext ~break_on_soft i :: is)
   | [] ->

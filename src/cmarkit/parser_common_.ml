@@ -81,6 +81,7 @@ module Oymarkit_mod = struct
     div : bool;
     wikilink : bool;
     jsx_expr : bool;
+    jsx_element : bool;
     callout : Block.Callout.Config.t;
   }
 
@@ -107,7 +108,7 @@ module Oymarkit_mod = struct
   let make ~emphasis_delims ~strong_emphasis_delims ~intraword_emphasis
       ~marked_emphasis_delims ~strong_emphasis_width ~extra_inline_containers
       ~block_id ~djot_inline_attributes ~djot_block_attributes ~div ~wikilink
-      ~jsx_expr ~callout =
+      ~jsx_expr ~jsx_element ~callout =
     let emphasis_delims =
       match parse_emph_delims emphasis_delims with
       | Ok delims -> delims
@@ -133,6 +134,7 @@ module Oymarkit_mod = struct
       div;
       wikilink;
       jsx_expr;
+      jsx_element;
       callout;
     }
 
@@ -197,6 +199,7 @@ module Oymarkit_mod = struct
   let div t = t.div
   let wikilink t = t.wikilink
   let jsx_expr t = t.jsx_expr
+  let jsx_element t = t.jsx_element
   let callout t = t.callout
 end
 
@@ -247,6 +250,7 @@ let parser
     ?(div = false)
     ?(wikilink = false)
     ?(jsx_expr = false)
+    ?(jsx_element = false)
     ?(callout = Block.Callout.Config.disabled)
     (* Oymarkit end *)
     ~strict i
@@ -255,7 +259,7 @@ let parser
     Oymarkit_mod.make ~emphasis_delims ~strong_emphasis_delims
       ~intraword_emphasis ~marked_emphasis_delims ~strong_emphasis_width
       ~extra_inline_containers ~block_id ~djot_inline_attributes
-      ~djot_block_attributes ~div ~wikilink ~jsx_expr ~callout
+      ~djot_block_attributes ~div ~wikilink ~jsx_expr ~jsx_element ~callout
   in
   let nolocs = not locs and nolayout = not layout and exts = not strict in
   { file; i; buf = Buffer.create 512; exts; nolocs; nolayout;

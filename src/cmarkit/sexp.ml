@@ -108,6 +108,8 @@ let sexp_of_inline_core : inline_sexp =
       m, Sexp.List [ Atom "Math_span"; Atom (Inline.Math_span.tex ms) ]
     | Inline.Ext_jsx_expr (j, m) ->
       m, Sexp.List [ Atom "Jsx_expr"; Atom (Inline.Jsx_expr.expr j) ]
+    | Inline.Ext_jsx_element (e, m) ->
+      m, Sexp.List [ Atom "Jsx_element"; Atom (Inline.Jsx_element.raw e) ]
     | Inline.Ext_wikilink (wl, m) ->
       let opt = function None -> Sexp.Atom "" | Some s -> Sexp.Atom s in
       let frag =
