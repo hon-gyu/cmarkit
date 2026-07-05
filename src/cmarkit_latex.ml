@@ -268,6 +268,13 @@ let inline c = function
 | Inline.Ext_attributes (a, _) -> inline_attributes c a; true
 | Inline.Ext_math_span (ms, _) -> math_span c ms; true
 | Inline.Ext_wikilink (wl, _) -> text c (Inline.Wikilink.to_plain_text wl); true
+| Inline.Ext_jsx_expr _ -> comment c "JSX expression omitted"; true
+| Inline.Ext_jsx_element (e, _) ->
+    (* No native LaTeX meaning: drop the tag wrapper, render the children. *)
+    (match Inline.Jsx_element.children e with
+    | None -> comment c "JSX element omitted"
+    | Some child -> C.inline c child);
+    true
 | _ -> comment c "Unknown Cmarkit inline"; true
 
 (* Block rendering *)
@@ -468,6 +475,9 @@ let block c = function
 | Block.Ext_math_block (cb, _)-> math_block c cb; true
 | Block.Ext_table (t, _)-> table c t; true
 | Block.Ext_div (d, _) -> div c d; true
+| Block.Ext_jsx_block (j, _) ->
+    (* No native LaTeX meaning: drop the tag wrapper, render the children. *)
+    C.block c (Block.Jsx_block.block j); true
 | Block.Ext_attributes (a, _) -> block_attributes c a; true
 | Block.Blank_line _ -> true
 | Block.Link_reference_definition _

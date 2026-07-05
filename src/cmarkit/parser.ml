@@ -134,9 +134,16 @@ module Block_struct = struct
       class' : line_span option;
       closing_fence : line_span option; (* [None] until closed *) }
 
+  type jsx_open =
+    { indent : Layout.indent;
+      name : string;             (* tag name; "" for a fragment "<>" *)
+      raw_open : line_span;      (* "<Tag ...>" (or "<>") verbatim *)
+      raw_close : line_span option (* "</Tag>" (or "</>"), [None] until closed *) }
+
   type t =
   | Block_quote of Layout.indent * line_span (* loc of initial marker *) * t list
   | Ext_div of div_fence * t list (* Oymarkit djot div, children reversed *)
+  | Ext_jsx_block of jsx_open * t list (* Oymarkit JSX block, children reversed *)
   | Blank_line of space_pad * line_span
   | Code_block of code_block
   | Heading of heading
@@ -224,6 +231,14 @@ module Block_struct = struct
     in
     let fence = { indent; fence_len; opening_fence; class'; closing_fence = None}in
     Ext_div (fence, [])
+
+  let jsx_block p ~indent ~name_first ~name_last ~tag_end =
+    let raw_open = current_line_span p ~first:p.current_char ~last:tag_end in
+    let name =
+      if name_last < name_first then "" (* fragment *)
+      else String.sub p.i name_first (name_last - name_first + 1)
+    in
+    Ext_jsx_block ({ indent; name; raw_open; raw_close = None }, [])
 
   let html_block p ~end_cond ~indent_start =
     let first = indent_start and last = p.current_line_last_char in
@@ -421,6 +436,9 @@ module Block_struct = struct
   | Ext_div (fence, children) :: bs ->
       (* closed by the end of document: [closing_fence] stays [None] *)
       Ext_div (fence, end_doc p children) :: bs
+  | Ext_jsx_block (o, children) :: bs ->
+      (* closed by the end of document: [raw_close] stays [None] *)
+      Ext_jsx_block (o, end_doc p children) :: bs
   | List list :: bs -> close_list p list bs
   | Paragraph par :: bs -> close_paragraph p par bs
   | Code_block (`Indented ls) :: bs -> close_indented_code_block p ls bs
@@ -483,14 +501,27 @@ module Block_struct = struct
           let r = Match.div_open p.i ~last ~start in
           if r <> Nomatch then r else
           Paragraph_line
-      | '<' when Oymarkit_mod.jsx_element p.oymarkit_mod
-                 && Inline_struct.jsx_element_close p.i ~last ~start <> None ->
-          (* A line whose start is a valid self-closing JSX element is treated as
-            inline content, not an HTML block: keep it a paragraph and let inline
-            parsing produce the [Ext_jsx_element]. A bare open tag like [ <div> ]
-            fails this check (only self-closing is recognized) and remains an
-            HTML block, so multi-line HTML blocks are untouched. *)
-          Paragraph_line
+      | '<' when Oymarkit_mod.jsx_element p.oymarkit_mod ->
+          (* Disambiguate a line that starts with '<'. Self-closing elements and
+             inline containers stay paragraphs (inline parsing builds the node);
+             an open tag alone on the line opens a JSX block. Anything that is
+             not valid JSX still falls through to the untouched HTML-block path
+             instead of raising. *)
+          begin match Inline_struct.jsx_tag p.i ~last ~start with
+          | Inline_struct.Jsx_self_closing _ -> Paragraph_line
+          | Inline_struct.Jsx_open_tag { name_first; name_last; tag_end } ->
+              (* Block only if the open tag is alone on the line (only trailing
+                 whitespace); otherwise inline parsing handles it (container on
+                 one line, or fallback to raw HTML). *)
+              let after = Match.first_non_blank p.i ~last ~start:(tag_end + 1) in
+              if after > last
+              then Ext_jsx_block_line (name_first, name_last, tag_end)
+              else Paragraph_line
+          | Inline_struct.Jsx_not_tag ->
+              let r = Match.html_block_start p.i ~last ~start in
+              if r <> Nomatch then r else
+              Paragraph_line
+          end
       | '<' ->
           let r = Match.html_block_start p.i ~last ~start in
           if r <> Nomatch then r else
@@ -534,6 +565,8 @@ module Block_struct = struct
       fenced_code_block p ~indent ~fence_first ~fence_last ~info :: bs
   | Ext_div_line (fence_first, fence_last, class_span) ->
       div_block p ~indent ~fence_first ~fence_last ~class_span :: bs
+  | Ext_jsx_block_line (name_first, name_last, tag_end) ->
+      jsx_block p ~indent ~name_first ~name_last ~tag_end :: bs
   | Html_block_line end_cond -> html_block p ~end_cond ~indent_start :: bs
   | Paragraph_line -> paragraph p ~start:indent_start :: bs
   | Ext_table_row last -> table p ~indent ~last :: bs
@@ -634,6 +667,9 @@ module Block_struct = struct
     | Ext_div_line (fence_first, fence_last, class_span) ->
         let bs = close_paragraph p par bs in
         div_block p ~indent ~fence_first ~fence_last ~class_span :: bs
+    | Ext_jsx_block_line (name_first, name_last, tag_end) ->
+        let bs = close_paragraph p par bs in
+        jsx_block p ~indent ~name_first ~name_last ~tag_end :: bs
     | Html_block_line end_cond ->
         html_block p ~end_cond ~indent_start :: (close_paragraph p par bs)
     | Nomatch -> assert false
@@ -831,6 +867,60 @@ module Block_struct = struct
             end
         | None -> Ext_div (fence, add_line p children) :: bs
 
+  (* Oymarkit JSX block containers.
+
+     Modeled on the djot div machinery: a JSX block has no per-line marker; its
+     content is block-level and runs until a matching close tag [ </name> ] on
+     its own line or a boundary. They nest, and a close tag closes the {e
+     innermost} open block of that name, so [try_close_inner_jsx] walks the open
+     spine inside-out before [try_add_to_jsx_block] considers closing the block
+     at hand. *)
+  and jsx_close_line p ~start ~last =
+    (* If the current line (from its first non-blank at [start]) is a valid JSX
+       close tag alone on the line, return its name and a thunk building the
+       closing-tag span; else [None]. *)
+    match Inline_struct.jsx_close_tag p.i ~last ~start with
+    | Some (name_first, name_last, tag_end) ->
+        let after = Match.first_non_blank p.i ~last ~start:(tag_end + 1) in
+        if after <= last then None else
+        let name =
+          if name_last < name_first then ""
+          else String.sub p.i name_first (name_last - name_first + 1)
+        in
+        let close () = current_line_span p ~first:start ~last:tag_end in
+        Some (name, close)
+    | None -> None
+
+  and try_close_inner_jsx p ~name ~close = function
+  | Ext_jsx_block (o, ch) :: bs when o.raw_close = None ->
+      begin match try_close_inner_jsx p ~name ~close ch with
+      | Some ch -> Some (Ext_jsx_block (o, ch) :: bs)
+      | None ->
+          if o.name = name
+          then Some (Ext_jsx_block ({ o with raw_close = Some (close ()) }, ch) :: bs)
+          else None
+      end
+  | _ -> None
+
+  and try_add_to_jsx_block p o children bs =
+    match o.raw_close with
+    | Some _ -> (* closed: this line starts a new sibling block *)
+        add_open_blocks p (Ext_jsx_block (o, children) :: bs)
+    | None ->
+        let start0 = p.current_char and last = p.current_line_last_char in
+        let start = Match.first_non_blank p.i ~last ~start:start0 in
+        match jsx_close_line p ~start ~last with
+        | Some (cname, close) ->
+            begin match try_close_inner_jsx p ~name:cname ~close children with
+            | Some children -> Ext_jsx_block (o, children) :: bs
+            | None ->
+                if o.name = cname
+                then Ext_jsx_block ({ o with raw_close = Some (close ()) },
+                                    children) :: bs
+                else Ext_jsx_block (o, add_line p children) :: bs
+            end
+        | None -> Ext_jsx_block (o, add_line p children) :: bs
+
   and add_line p = function
   | Paragraph par :: bs -> try_add_to_paragraph p par bs
   | ((Thematic_break _ | Heading _ | Blank_line _ | Linkref_def _
@@ -841,6 +931,7 @@ module Block_struct = struct
   | Code_block (`Fenced f) :: bs -> try_add_to_fenced_code_block p f bs
   | Block_quote (ind, marker, bq) :: bs -> try_add_to_block_quote p ind bq marker bs
   | Ext_div (fence, children) :: bs -> try_add_to_div p fence children bs
+  | Ext_jsx_block (o, children) :: bs -> try_add_to_jsx_block p o children bs
   | Html_block html :: bs -> try_add_to_html_block p html bs
   | Ext_table (ind, rows) :: bs -> try_add_to_table p ind rows bs
   | Ext_footnote (i, l, blocks) :: bs -> try_add_to_footnote p i l blocks bs
@@ -1122,6 +1213,8 @@ let rec prepare_block_struct p = function
     [Block_struct.Block_quote (indent, marker, prepare_block_structs p bs)]
 | Block_struct.Ext_div (fence, bs) ->
     [Block_struct.Ext_div (fence, prepare_block_structs p bs)]
+| Block_struct.Ext_jsx_block (o, bs) ->
+    [Block_struct.Ext_jsx_block (o, prepare_block_structs p bs)]
 | Block_struct.List l ->
     let item (i : Block_struct.list_item) =
       { i with blocks = prepare_block_structs p i.blocks }
@@ -1214,6 +1307,34 @@ and block_struct_to_div p (fence : Block_struct.div_fence) bs =
       block }
   in
   Block.Ext_div (div, meta)
+
+and block_struct_to_jsx_block p (o : Block_struct.jsx_open) bs =
+  let block = match bs with
+  | [] -> Block.empty
+  | last :: rest ->
+      let last = block_struct_to_block p last in
+      let blocks =
+        List.fold_left (fun acc b -> block_struct_to_block p b :: acc) [last] rest
+      in
+      begin match blocks with
+      | [b] -> b
+      | blocks ->
+          let first = Block.meta (List.hd blocks) and last = Block.meta last in
+          Block.Blocks (blocks, meta_of_metas p ~first ~last)
+      end
+  in
+  let raw_open = clean_raw_span p o.raw_open in
+  let raw_close = Option.map (clean_raw_span p) o.raw_close in
+  let meta =
+    let first = meta p (textloc_of_span p o.raw_open) in
+    let last = match o.raw_close with
+    | Some c -> meta p (textloc_of_span p c)
+    | None -> Block.meta block
+    in
+    meta_of_metas p ~first ~last
+  in
+  let jsx = Block.Jsx_block.make ~indent:o.indent ~raw_open ?raw_close block in
+  Block.Ext_jsx_block (jsx, meta)
 
 and block_struct_to_footnote_definition p indent (label, defined_label) bs =
   let add_block p acc b = block_struct_to_block p b :: acc in
@@ -1313,6 +1434,7 @@ and block_struct_to_block p = function
       (Block.Attributes.make ~specs Block.empty, Meta.none)
 | Block_struct.Ext_table (i, rows) -> block_struct_to_table p i rows
 | Block_struct.Ext_div (fence, bs) -> block_struct_to_div p fence bs
+| Block_struct.Ext_jsx_block (o, bs) -> block_struct_to_jsx_block p o bs
 | Block_struct.Ext_footnote (i, labels, bs) ->
     block_struct_to_footnote_definition p i labels bs
 
@@ -1330,6 +1452,9 @@ let block_struct_to_doc p (doc, meta) =
       Block.Ext_footnote_definition ({ fn with block = resolve_block fn.block }, meta)
   | Block.Ext_div (d, meta) ->
       Block.Ext_div ({ d with block = resolve_block (Block.Div.block d) }, meta)
+  | Block.Ext_jsx_block (j, meta) ->
+      Block.Ext_jsx_block
+        ({ j with block = resolve_block (Block.Jsx_block.block j) }, meta)
   | b -> b
   and resolve_blocks bs =
     let is_empty = function Block.Blocks ([], _) -> true | _ -> false in

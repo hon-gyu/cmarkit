@@ -84,6 +84,16 @@ type token =
 | Wikilink_start of { start : byte_pos; embed : bool }
 | Jsx_expr_start of { start : byte_pos }
 | Jsx_element_start of { start : byte_pos }
+| Jsx_open of
+    { start : byte_pos;      (* the '<' *)
+      name_first : byte_pos; (* tag name span; empty for a fragment *)
+      name_last : byte_pos;
+      tag_end : byte_pos }   (* the terminating '>' *)
+| Jsx_close of
+    { start : byte_pos;      (* the '<' of '</name>' *)
+      name_first : byte_pos;
+      name_last : byte_pos;
+      tag_end : byte_pos }
 
 let token_start = function
 | Attribute_spec { start } | Autolink_or_html_start { start } | Backticks { start }
@@ -96,6 +106,8 @@ let token_start = function
 | Wikilink_start { start } -> start
 | Jsx_expr_start { start } -> start
 | Jsx_element_start { start } -> start
+| Jsx_open { start } -> start
+| Jsx_close { start } -> start
 
 let has_backticks ~count ~after cidx =
   Closer_index.closer_exists (Closer.Backticks count) ~after cidx
@@ -503,25 +515,18 @@ let try_add_jsx_expr_token oymarkit_mod acc s line ~start =
   | None -> None
   | Some close -> Some (Jsx_expr_start { start } :: acc, close + 1)
 
-(* A faithful (single-line, self-closing) JSX element recognizer. [start] points
-   at '<'. Returns the byte index of the closing '>' of a well-formed
-   [ <name attrs.. /> ], or [None]. Only the self-closing form on a single line
-   is recognized for now; container tags with children (e.g. [ <a>b</a> ]) and
-   elements spanning lines are not yet handled.
+(* JSX tag recognition. These pure scanners classify a '<' at [start] purely by
+   JSX validity; they have nothing to do with autolinks or raw HTML and never
+   raise. An invalid tag yields the "not mine" answer ([Jsx_not_tag] / [None]),
+   which simply leaves the '<' for the autolink / raw-HTML branches. Case is
+   irrelevant for validity, exactly as in JSX. Host tags and component tags are
+   both JSX; downstream lowering can distinguish them if it needs to.
 
-   The decision is pure JSX validity and has nothing to do with autolinks or raw
-   HTML: an invalid tag name, a malformed attribute, or a bare '>' (a
-   non-self-closing open tag) all yield [None], which simply leaves the '<' for
-   the autolink / raw-HTML branches to interpret. Unlike MDX we never raise: an
-   invalid element is not an error, just "not a JSX element".
-
-   Case is irrelevant, exactly as in JSX: [ <img/> ] and [ <Foo/> ] are both
-   elements. Whether a tag lowers to a host element or a component identifier is
-   a downstream choice, not a parsing rule.
-
-   Grammar recognized (ws is ' ' or '\t'; single line):
+   Grammar (ws is ' ' or '\t'; single line):
    {v
-     element := '<' name (ws+ attr)* ws* '/' '>'
+     tag     := '<' name (ws+ attr)* ws* ('/' '>' | '>')  (* self-closing | open *)
+              | '<' '>'                                    (* fragment open       *)
+     close   := '<' '/' (name ws* )? '>'                   (* [</name>] | [</>]   *)
      name    := ident (('.' ident)+ | ':' ident)?      (* member OR namespaced *)
      attr    := '{' expr '}'                            (* opaque brace expr    *)
               | ident (':' ident)? (ws* '=' ws* value)? (* value optional       *)
@@ -534,38 +539,49 @@ let try_add_jsx_expr_token oymarkit_mod acc s line ~start =
    stands alone as an attribute is accepted as-is rather than required to be a
    JS-style spread [ {...expr} ]: validating and interpreting it is left to
    whatever consumes the [expr]. *)
-let jsx_element_close s ~last ~start =
-  let is_id_start c =
-    (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c = '_' || c = '$'
+
+type jsx_tag =
+| Jsx_self_closing of { tag_end : byte_pos }
+  (* self-closing '<Tag ... />'; [tag_end] indexes the terminating '>' *)
+| Jsx_open_tag of
+    { name_first : byte_pos; name_last : byte_pos; tag_end : byte_pos }
+  (* opening '<Tag ...>' or fragment '<>'; [name_first]..[name_last] is the tag
+     name (empty -- i.e. [name_last < name_first] -- for a fragment); [tag_end]
+     indexes the terminating '>' *)
+| Jsx_not_tag
+
+let jsx_is_id_start c =
+  (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c = '_' || c = '$'
+
+let jsx_is_id_part c =
+  jsx_is_id_start c || (c >= '0' && c <= '9') || c = '-'
+
+let jsx_ident s ~last k = (* one identifier at [k]; position just after it *)
+  if k > last || not (jsx_is_id_start s.[k]) then None else
+  let rec more k = if k <= last && jsx_is_id_part s.[k] then more (k + 1) else k in
+  Some (more (k + 1))
+
+let jsx_name s ~last k = (* JSXElementName; position just after the name *)
+  match jsx_ident s ~last k with
+  | None -> None
+  | Some k ->
+      if k <= last && s.[k] = '.' then
+        let rec members k = (* [k] at '.' *)
+          match jsx_ident s ~last (k + 1) with
+          | None -> None
+          | Some k -> if k <= last && s.[k] = '.' then members k else Some k
+        in
+        members k
+      else if k <= last && s.[k] = ':' then jsx_ident s ~last (k + 1)
+      else Some k
+
+let jsx_skip_ws s ~last k =
+  let rec loop k =
+    if k <= last && (s.[k] = ' ' || s.[k] = '\t') then loop (k + 1) else k
   in
-  let is_id_part c =
-    is_id_start c || (c >= '0' && c <= '9') || c = '-'
-  in
-  let ident k = (* one identifier at [k]; returns position just after it *)
-    if k > last || not (is_id_start s.[k]) then None else
-    let rec more k = if k <= last && is_id_part s.[k] then more (k + 1) else k in
-    Some (more (k + 1))
-  in
-  let name k = (* JSXElementName; returns position just after the name *)
-    match ident k with
-    | None -> None
-    | Some k ->
-        if k <= last && s.[k] = '.' then
-          let rec members k = (* [k] at '.' *)
-            match ident (k + 1) with
-            | None -> None
-            | Some k -> if k <= last && s.[k] = '.' then members k else Some k
-          in
-          members k
-        else if k <= last && s.[k] = ':' then ident (k + 1)
-        else Some k
-  in
-  let skip_ws k =
-    let rec loop k =
-      if k <= last && (s.[k] = ' ' || s.[k] = '\t') then loop (k + 1) else k
-    in
-    loop k
-  in
+  loop k
+
+let jsx_tag s ~last ~start =
   let value k = (* attribute value at [k]; returns position just after it *)
     if k > last then None else
     match s.[k] with
@@ -588,33 +604,85 @@ let jsx_element_close s ~last ~start =
        | None -> None
        | Some close -> Some (close + 1))
     else
-      match ident k with (* attribute name, optionally namespaced *)
+      match jsx_ident s ~last k with (* attribute name, optionally namespaced *)
       | None -> None
       | Some k ->
-          match (if k <= last && s.[k] = ':' then ident (k + 1) else Some k) with
+          match (if k <= last && s.[k] = ':' then jsx_ident s ~last (k + 1)
+                 else Some k)
+          with
           | None -> None
           | Some k ->
-              let j = skip_ws k in
-              if j <= last && s.[j] = '=' then value (skip_ws (j + 1))
+              let j = jsx_skip_ws s ~last k in
+              if j <= last && s.[j] = '=' then value (jsx_skip_ws s ~last (j + 1))
               else Some k (* boolean attribute; leave separating ws to caller *)
   in
-  let rec attrs k = (* [k] just after the name or the previous attribute *)
-    let j = skip_ws k in
-    if j + 1 <= last && s.[j] = '/' && s.[j + 1] = '>' then Some (j + 1)
-    else if j = k then None (* attributes must be whitespace-separated *)
-    else match attr j with None -> None | Some k -> attrs k
-  in
-  match name (start + 1) with
+  (* fragment open "<>" *)
+  if start + 1 <= last && s.[start + 1] = '>'
+  then Jsx_open_tag { name_first = start + 1; name_last = start;
+                      tag_end = start + 1 }
+  else
+  match jsx_name s ~last (start + 1) with
+  | None -> Jsx_not_tag
+  | Some name_end ->
+      let name_first = start + 1 and name_last = name_end - 1 in
+      let rec attrs k = (* [k] just after the name or the previous attribute *)
+        let j = jsx_skip_ws s ~last k in
+        if j + 1 <= last && s.[j] = '/' && s.[j + 1] = '>'
+        then Jsx_self_closing { tag_end = j + 1 }
+        else if j <= last && s.[j] = '>'
+        then Jsx_open_tag { name_first; name_last; tag_end = j }
+        else if j = k then Jsx_not_tag (* attributes must be ws-separated *)
+        else match attr j with None -> Jsx_not_tag | Some k -> attrs k
+      in
+      attrs name_end
+
+(* Backwards-compatible self-closing recognizer: [start] points at '<'; returns
+   the byte index of the closing '>' of a well-formed [ <name attrs.. /> ], any
+   tag name. Used where only the self-closing (childless) form is meaningful. *)
+let jsx_element_close s ~last ~start =
+  match jsx_tag s ~last ~start with
+  | Jsx_self_closing { tag_end } -> Some tag_end
+  | Jsx_open_tag _ | Jsx_not_tag -> None
+
+(* Closing-tag recognizer: [start] points at '<'. Matches [ </name> ] (optional
+   whitespace before '>') or the fragment [ </> ]; returns
+   [Some (name_first, name_last, tag_end)] with the name span (empty for a
+   fragment) and the '>' index, else [None]. *)
+let jsx_close_tag s ~last ~start =
+  if start + 1 > last || s.[start + 1] <> '/' then None else
+  let after = start + 2 in
+  if after <= last && s.[after] = '>'
+  then Some (after, after - 1, after) (* fragment '</>': empty name *)
+  else match jsx_name s ~last after with
   | None -> None
-  | Some k -> attrs k
+  | Some name_end ->
+      let j = jsx_skip_ws s ~last name_end in
+      if j <= last && s.[j] = '>' then Some (after, name_end - 1, j) else None
 
 let try_add_jsx_element_token oymarkit_mod acc s line ~start =
   if not (Oymarkit_mod.jsx_element oymarkit_mod) then None else
   (* Claim '<' purely by JSX validity; on failure return [None] and let the
-     autolink / raw-HTML branches interpret it. See [jsx_element_close]. *)
-  match jsx_element_close s ~last:line.last ~start with
-  | None -> None
-  | Some close -> Some (Jsx_element_start { start } :: acc, close + 1)
+     autolink / raw-HTML branches interpret it. Three shapes are claimed:
+     - self-closing [ <Tag/> ] (any name)  -> [Jsx_element_start];
+     - opening [ <Tag ...> ] or [ <> ] -> [Jsx_open], whose children are
+       tokenized normally in between;
+     - closing [ </Tag> ] or [ </> ] -> [Jsx_close].
+     This follows MDX: lowercase host tags and uppercase component tags are both
+     JSX in [jsx_element] mode. Invalid JSX still falls through rather than
+     raising. *)
+  let last = line.last in
+  match jsx_tag s ~last ~start with
+  | Jsx_self_closing { tag_end } ->
+      Some (Jsx_element_start { start } :: acc, tag_end + 1)
+  | Jsx_open_tag { name_first; name_last; tag_end } ->
+      Some (Jsx_open { start; name_first; name_last; tag_end } :: acc,
+            tag_end + 1)
+  | Jsx_not_tag ->
+      match jsx_close_tag s ~last ~start with
+      | Some (name_first, name_last, tag_end) ->
+          Some (Jsx_close { start; name_first; name_last; tag_end } :: acc,
+                tag_end + 1)
+      | _ -> None
 
 let tokenize ?oymarkit_mod ~exts s lines =
   (* For inlines this is where we conditionalize for extensions. All code
@@ -1243,6 +1311,24 @@ and first_pass p toks line =
       | None -> loop p toks line ~had_link acc
       | Some (toks, line, t) -> loop p toks line ~had_link (t :: acc)
       end
+  | Jsx_open { start; name_first; name_last; tag_end } :: toks ->
+      begin match
+        try_jsx_container p toks line ~start ~name_first ~name_last ~tag_end
+      with
+      | Some (toks, line, t) -> loop p toks line ~had_link (t :: acc)
+      | None ->
+          (* Unmatched open on this line: the tag is just raw HTML. *)
+          begin match try_autolink_or_html p toks line ~start with
+          | Some (toks, line, t) -> loop p toks line ~had_link (t :: acc)
+          | None -> loop p toks line ~had_link acc
+          end
+      end
+  | Jsx_close { start; _ } :: toks ->
+      (* A close tag with no matching open: raw HTML. *)
+      begin match try_autolink_or_html p toks line ~start with
+      | Some (toks, line, t) -> loop p toks line ~had_link (t :: acc)
+      | None -> loop p toks line ~had_link acc
+      end
   | Right_brack start :: toks -> loop p toks line ~had_link acc
   | Newline { newline = l } as t :: toks -> loop p toks l ~had_link (t :: acc)
   | t :: toks -> loop p toks line ~had_link (t :: acc)
@@ -1586,10 +1672,48 @@ and last_pass p toks start_line =
   | (Backticks _ | Autolink_or_html_start _ | Link_start _ | Right_brack _
     | Emphasis_marks _ | Right_paren _ | Strikethrough_marks _
     | Extra_inline_container_marks _ | Math_span_marks _
-    | Wikilink_start _ | Jsx_expr_start _ | Jsx_element_start _) :: _ ->
+    | Wikilink_start _ | Jsx_expr_start _ | Jsx_element_start _ | Jsx_open _ | Jsx_close _) :: _ ->
       assert false
   in
   loop toks start_line [] start_line.first
+
+and try_jsx_container p toks line ~start ~name_first ~name_last ~tag_end =
+  (* [start] points at the '<' of an opening JSX tag [ <Tag ...> ] whose
+     terminating '>' is at [tag_end]; [toks] are the tokens after it. Match the
+     tag against its closing [ </Tag> ] on the *same line* (a [Newline] before
+     the close -> fall back), honoring nesting of same-named tags via a depth
+     counter. The inlines between are parsed recursively (like link text) and
+     become the container's children. Returns [None] on no same-line match. *)
+  let name_eq nf nl = (* the open tag's name span equals [nf..nl] byte-for-byte *)
+    name_last - name_first = nl - nf &&
+    (let n = name_last - name_first in
+     let rec eq i = i > n || (p.i.[name_first + i] = p.i.[nf + i] && eq (i + 1)) in
+     eq 0)
+  in
+  let rec find depth inner = function
+  | [] | Newline _ :: _ -> None (* same-line only *)
+  | Jsx_open { name_first = nf; name_last = nl; _ } as t :: rest
+    when name_eq nf nl -> find (depth + 1) (t :: inner) rest
+  | Jsx_close { name_first = nf; name_last = nl; start = cstart;
+               tag_end = ctag_end; _ } as t :: rest when name_eq nf nl ->
+      if depth = 0 then Some (List.rev inner, cstart, ctag_end, rest)
+      else find (depth - 1) (t :: inner) rest
+  | t :: rest -> find depth (t :: inner) rest
+  in
+  match find 0 [] toks with
+  | None -> None
+  | Some (inner_toks, cstart, ctag_end, rest) ->
+      let child_first = tag_end + 1 and child_last = cstart - 1 in
+      let child_line = { line with first = child_first; last = child_last } in
+      let children, _had_link = parse_tokens p inner_toks child_line in
+      let child =
+        inlines_inline p children ~first:child_first ~last:child_last
+          ~first_line:child_line ~last_line:child_line
+      in
+      let raw = String.sub p.i start (tag_end - start + 1) in
+      let e = Inline.Jsx_element.make_container raw child in
+      let t = ext_jsx_element_token p ~first:start ~last:ctag_end ~line e in
+      Some (rest, line, t)
 
 and parse_tokens p toks first_line =
   let toks, had_link = first_pass p toks first_line in
@@ -1693,7 +1817,7 @@ let rec finish_col p line blanks_before is toks k = match toks with
 | (Attribute_spec _ | Backticks _ | Autolink_or_html_start _ | Link_start _ | Right_brack _
   | Emphasis_marks _ | Right_paren _ | Strikethrough_marks _
   | Extra_inline_container_marks _ | Math_span_marks _ | Newline _
-  | Wikilink_start _ | Jsx_expr_start _ | Jsx_element_start _ ) :: _ ->
+  | Wikilink_start _ | Jsx_expr_start _ | Jsx_element_start _ | Jsx_open _ | Jsx_close _ ) :: _ ->
     assert false
 
 let rec parse_cols p line acc toks k = match toks with
@@ -1714,7 +1838,7 @@ let rec parse_cols p line acc toks k = match toks with
 | (Attribute_spec _ | Backticks _ | Autolink_or_html_start _ | Link_start _ | Right_brack _
   | Emphasis_marks _ | Right_paren _ | Strikethrough_marks _
   | Extra_inline_container_marks _ | Math_span_marks _ | Newline _
-  | Wikilink_start _ | Jsx_expr_start _ | Jsx_element_start _ ) :: _ ->
+  | Wikilink_start _ | Jsx_expr_start _ | Jsx_element_start _ | Jsx_open _ | Jsx_close _ ) :: _ ->
     assert false
 
 let parse_table_row p line =

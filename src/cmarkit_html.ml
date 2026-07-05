@@ -362,6 +362,16 @@ let inline c = function
 | Inline.Ext_attributes (a, _) -> inline_attributes c a; true
 | Inline.Ext_math_span (ms, _) -> math_span c ms; true
 | Inline.Ext_wikilink (wl, _) -> wikilink c wl; true
+| Inline.Ext_jsx_expr _ -> true (* opaque JSX expression: no HTML rendering *)
+| Inline.Ext_jsx_element (e, _) ->
+    (* No native HTML meaning: pass the tag source through verbatim (like raw
+       HTML) and render the parsed children. *)
+    C.string c (Inline.Jsx_element.raw e);
+    (match Inline.Jsx_element.children e with
+    | None -> ()
+    | Some child ->
+        C.inline c child; C.string c (Inline.Jsx_element.close_tag e));
+    true
 | _ -> comment c "<!-- Unknown Cmarkit inline -->"; true
 
 (* Block rendering *)
@@ -561,6 +571,14 @@ let div c d =
   C.block c (Block.Div.block d);
   C.string c "</div>\n"
 
+let jsx_block c j =
+  (* No native HTML meaning: pass the opening/closing tags through verbatim and
+     render the parsed block children between them. *)
+  C.string c (fst (Block.Jsx_block.raw_open j)); C.byte c '\n';
+  C.block c (Block.Jsx_block.block j);
+  match Block.Jsx_block.raw_close j with
+  | None -> () | Some (close, _) -> C.string c close; C.byte c '\n'
+
 let block_attributes c a =
   let attrs = Block.Attributes.attributes a in
   match Block.Attributes.block a with
@@ -591,6 +609,7 @@ let block c = function
 | Block.Ext_math_block (cb, _) -> math_block c cb; true
 | Block.Ext_table (t, _) -> table c t; true
 | Block.Ext_div (d, _) -> div c d; true
+| Block.Ext_jsx_block (j, _) -> jsx_block c j; true
 | Block.Ext_attributes (a, _) -> block_attributes c a; true
 | Block.Ext_keyed _ as b -> C.block c (Struct.unkey b); true
 | Block.Blank_line _

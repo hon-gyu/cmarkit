@@ -109,7 +109,12 @@ let sexp_of_inline_core : inline_sexp =
     | Inline.Ext_jsx_expr (j, m) ->
       m, Sexp.List [ Atom "Jsx_expr"; Atom (Inline.Jsx_expr.expr j) ]
     | Inline.Ext_jsx_element (e, m) ->
-      m, Sexp.List [ Atom "Jsx_element"; Atom (Inline.Jsx_element.raw e) ]
+      let children = match Inline.Jsx_element.children e with
+        | None -> []
+        | Some child -> [ recurse child ]
+      in
+      m, Sexp.List
+           (Atom "Jsx_element" :: Atom (Inline.Jsx_element.raw e) :: children)
     | Inline.Ext_wikilink (wl, m) ->
       let opt = function None -> Sexp.Atom "" | Some s -> Sexp.Atom s in
       let frag =
@@ -177,6 +182,16 @@ let sexp_of_block_core : block_sexp =
       with_meta meta
         (Sexp.List
            (Sexp.Atom "Div" :: class' @ [ recurse_block (Block.Div.block d) ]))
+    | Block.Ext_jsx_block (j, meta) ->
+      let close = match Block.Jsx_block.raw_close j with
+        | None -> [] | Some (c, _) -> [ Sexp.Atom c ]
+      in
+      with_meta meta
+        (Sexp.List
+           (Sexp.Atom "Jsx_block"
+            :: Atom (fst (Block.Jsx_block.raw_open j))
+            :: recurse_block (Block.Jsx_block.block j)
+            :: close))
     | Block.List (l, meta) ->
       let items =
         List.map (Block.List'.items l) ~f:(fun (item, _item_meta) ->

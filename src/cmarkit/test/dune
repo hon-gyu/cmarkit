@@ -7,7 +7,7 @@
 
 (library
   (name test_jsx)
-  (libraries cmarkit_ cmarkit_commonmark)
+  (libraries cmarkit_ cmarkit_commonmark cmarkit_html cmarkit_latex)
   (modules test_jsx)
   (inline_tests)
   (preprocess (pps ppx_expect))

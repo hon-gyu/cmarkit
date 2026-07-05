@@ -329,6 +329,15 @@ let inline c = function
 | Inline.Ext_attributes (a, _) -> inline_attributes c a; true
 | Inline.Ext_math_span (m, _) -> math_span c m; true
 | Inline.Ext_wikilink (wl, _) -> C.string c (Inline.Wikilink.to_commonmark wl); true
+| Inline.Ext_jsx_expr (j, _) ->
+    C.byte c '{'; C.string c (Inline.Jsx_expr.expr j); C.byte c '}'; true
+| Inline.Ext_jsx_element (e, _) ->
+    C.string c (Inline.Jsx_element.raw e);
+    (match Inline.Jsx_element.children e with
+    | None -> () (* self-closing: [raw] already ends in "/>" *)
+    | Some child ->
+        C.inline c child; C.string c (Inline.Jsx_element.close_tag e));
+    true
 | _ -> C.string c "<!-- Unknown Cmarkit inline -->"; true
 
 (* Block rendering *)
@@ -356,6 +365,16 @@ let div c d =
   | None -> ()
   | Some (close, _) ->
       newline c; indent c; C.string c (if close = "" then ":::" else close)
+  end;
+  pop_indent c
+
+let jsx_block c j =
+  newline c; push_indent c (`I (Block.Jsx_block.indent j)); indent c;
+  C.string c (fst (Block.Jsx_block.raw_open j));
+  C.block c (Block.Jsx_block.block j);
+  begin match Block.Jsx_block.raw_close j with
+  | None -> ()
+  | Some (close, _) -> newline c; indent c; C.string c close
   end;
   pop_indent c
 
@@ -556,6 +575,7 @@ let block c = function
 | Block.Ext_table (t, _) -> table c t; true
 | Block.Ext_footnote_definition (t, _) -> footnote c t; true
 | Block.Ext_div (d, _) -> div c d; true
+| Block.Ext_jsx_block (j, _) -> jsx_block c j; true
 | Block.Ext_attributes (a, _) -> block_attributes c a; true
 | Block.Ext_keyed _ as b -> C.block c (Struct.unkey b); true
 | _ -> newline c; indent c; C.string c "<!-- Unknown Cmarkit block -->"; true

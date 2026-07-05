@@ -495,11 +495,36 @@ module Div = struct
   let block d = d.block
 end
 
+module Jsx_block = struct
+  (* A JSX container element at block level:
+     [ <Card ...> ] alone on a line, Markdown blocks, [ </Card> ] on a line.
+     [raw_open] is the opening tag ("<Card ...>" or the fragment "<>") verbatim;
+     [block] is the parsed Markdown block children; [raw_close] is the closing
+     tag ("</Card>" or "</>") when the container was properly closed, [None] for
+     an unterminated container closed by a document/parent boundary. Attributes
+     stay raw in [raw_open]; downstream re-parses them (positions recoverable by
+     offset into the node's span). *)
+  type nonrec t =
+    { indent : Layout.indent;
+      raw_open : string node;
+      block : t;
+      raw_close : string node option }
+
+  let make ?(indent = 0) ~raw_open ?raw_close block =
+    { indent; raw_open; block; raw_close }
+
+  let indent j = j.indent
+  let raw_open j = j.raw_open
+  let block j = j.block
+  let raw_close j = j.raw_close
+end
+
 type t +=
 | Ext_math_block of Code_block.t node
 | Ext_table of Table.t node
 | Ext_footnote_definition of Footnote.t node
 | Ext_div of Div.t node
+| Ext_jsx_block of Jsx_block.t node
 | Ext_keyed of (Inline.t * t) node
 
 (* Functions on blocks *)
@@ -514,6 +539,7 @@ let meta ?(ext = ext_none) = function
 | Ext_math_block (_, m) | Ext_table (_, m)
 | Ext_attributes (_, m)
 | Ext_div (_, m)
+| Ext_jsx_block (_, m)
 | Ext_keyed (_, m)
 | Ext_footnote_definition (_, m) -> m
 | b -> ext b
@@ -675,6 +701,8 @@ let rec normalize ?(ext = ext_none) = function
     Ext_footnote_definition (fn, m)
 | Ext_div (d, m) ->
     Ext_div ({ d with block = normalize ~ext d.block }, m)
+| Ext_jsx_block (j, m) ->
+    Ext_jsx_block ({ j with block = normalize ~ext j.block }, m)
 | Ext_attributes (a, m) ->
     Ext_attributes (Attributes.make ~specs:a.specs (normalize ~ext a.block), m)
 | Ext_keyed ((l, b), m) ->
@@ -706,6 +734,7 @@ let rec defs
       in
       defs ~ext ~init (Footnote.block (fst fn))
   | Ext_div (d, _) -> defs ~ext ~init (Div.block d)
+  | Ext_jsx_block (j, _) -> defs ~ext ~init (Jsx_block.block j)
   | Ext_keyed ((_, b), _) ->
       defs ~ext ~init b
   | b -> ext init b

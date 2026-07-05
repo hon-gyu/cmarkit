@@ -87,7 +87,19 @@ module Mapper = struct
       let open Inline in
       match i with
       | Autolink _ | Break _ | Code_span _ | Raw_html _
-      | Text _ | Ext_math_span _ | Ext_jsx_expr _ | Ext_jsx_element _ as i -> Some i
+      | Text _ | Ext_math_span _ | Ext_jsx_expr _ as i -> Some i
+      | Ext_jsx_element (e, meta) ->
+          (match Inline.Jsx_element.children e with
+          | None -> Some (Ext_jsx_element (e, meta))
+          | Some child ->
+              let children =
+                Option.value ~default:Inline.empty (map_inline m child)
+              in
+              let e =
+                Inline.Jsx_element.make_container
+                  (Inline.Jsx_element.raw e) children
+              in
+              Some (Ext_jsx_element (e, meta)))
       | Image (l, meta) ->
           let text = Option.value ~default:Inline.empty (map_inline m l.text) in
           Some (Image ({ l with text }, meta))
@@ -168,6 +180,11 @@ module Mapper = struct
           | None -> (* Can be empty *) Blocks ([], Meta.none) | Some b -> b
           in
           Some (Ext_div ({ d with block }, meta))
+      | Ext_jsx_block (j, meta) ->
+          let block = match map_block m (Block.Jsx_block.block j) with
+          | None -> (* Can be empty *) Blocks ([], Meta.none) | Some b -> b
+          in
+          Some (Ext_jsx_block ({ j with block }, meta))
       | Ext_attributes (a, meta) ->
           let* block = map_block m (Block.Attributes.block a) in
           Some (Ext_attributes (Block.Attributes.make ~specs:(Block.Attributes.specs a) block, meta))
@@ -225,7 +242,10 @@ module Folder = struct
       let open Inline in
       match i with
       | Autolink _ | Break _ | Code_span _ | Raw_html _ | Text _
-      | Ext_math_span _ | Ext_jsx_expr _ | Ext_jsx_element _ -> acc
+      | Ext_math_span _ | Ext_jsx_expr _ -> acc
+      | Ext_jsx_element (e, _) ->
+          (match Inline.Jsx_element.children e with
+          | None -> acc | Some child -> fold_inline f acc child)
       | Image (l, _) | Link (l, _) -> fold_inline f acc l.text
       | Emphasis ({ inline }, _) -> fold_inline f acc inline
       | Strong_emphasis ({ inline }, _) -> fold_inline f acc inline
@@ -262,6 +282,7 @@ module Folder = struct
           List.fold_left fold_row acc t.Table.rows
       | Ext_footnote_definition (fn, _) -> fold_block f acc fn.block
       | Ext_div (d, _) -> fold_block f acc (Block.Div.block d)
+      | Ext_jsx_block (j, _) -> fold_block f acc (Block.Jsx_block.block j)
       | Ext_attributes (a, _) -> fold_block f acc (Block.Attributes.block a)
       | Ext_keyed ((l, b), _) ->
           fold_block f (fold_inline f acc l) b
