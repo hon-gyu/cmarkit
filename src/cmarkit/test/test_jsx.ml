@@ -45,17 +45,42 @@ let%expect_test "jsx_element: self-closing components" =
     (Paragraph (Jsx_element "<Box a=\"x\" b={ {r = 1} } c=\"y>z\" />"))
     |}]
 
-let%expect_test "jsx_element: lowercase and autolink are left alone" =
+let%expect_test "jsx_element: case-independent, per JSX (host elements too)" =
   let p s =
     let doc = Doc.of_string ~strict:false ~jsx_expr:true ~jsx_element:true s in
     Format.printf "%a@." Sexp.pp_hum ((make_sexp_of ()).doc doc)
   in
+  (* Lowercase self-closing tags and member/namespaced names are elements, just
+     as in JSX; case only matters at downstream lowering, not here. *)
+  p {|an <img src="x" /> here|};
+  p {|use <motion.div a={fade} /> ok|};
+  p {|ns <a:b c='y' /> end|};
+  [%expect
+    {|
+    (Paragraph
+     (Inlines (Text "an ") (Jsx_element "<img src=\"x\" />") (Text " here")))
+    (Paragraph
+     (Inlines (Text "use ") (Jsx_element "<motion.div a={fade} />") (Text " ok")))
+    (Paragraph
+     (Inlines (Text "ns ") (Jsx_element "<a:b c='y' />") (Text " end")))
+    |}]
+
+let%expect_test "jsx_element: invalid elements fall through to autolink/raw HTML" =
+  let p s =
+    let doc = Doc.of_string ~strict:false ~jsx_expr:true ~jsx_element:true s in
+    Format.printf "%a@." Sexp.pp_hum ((make_sexp_of ()).doc doc)
+  in
+  (* Not valid JSX elements: an autolink (invalid tag name), a bare open/close
+     tag (not self-closing), and an unquoted attribute value. The JSX branch
+     returns nothing and the autolink / raw-HTML branches take over untouched. *)
   p {|see <https://ocaml.org> ok|};
   p {|a <div>x</div> b|};
+  p {|bad <Foo a=b /> tag|};
   [%expect
     {|
     (Paragraph (Inlines (Text "see ") (Autolink https://ocaml.org) (Text " ok")))
     (Paragraph
      (Inlines (Text "a ") (Raw_html <div>) (Text x) (Raw_html </div>)
       (Text " b")))
+    (Paragraph (Inlines (Text "bad ") (Raw_html "<Foo a=b />") (Text " tag")))
     |}]

@@ -251,20 +251,20 @@ module Math_span = struct
 end
 
 module Jsx_expr = struct
-  (* An mlmdx JSX expression container [ {expr} ]. The braces delimit a span of
+  (* A JSX expression container [ {expr} ]. The braces delimit a span of
      embedded code that is opaque to Markdown: [expr] is kept verbatim (like a
-     wikilink's content) and interpreted downstream by the mlmdx compiler, not
-     here. Single line, no inline children. *)
+     wikilink's content) and interpreted downstream by the consumer, not here.
+     Single line, no inline children. *)
   type t = { expr : string }
   let make expr = { expr }
   let expr j = j.expr
 end
 
 module Jsx_element = struct
-  (* An mlmdx JSX element [ <Tag attrs... /> ]. Like a wikilink, the element is
-     opaque to Markdown: [raw] holds the full source (from '<' to '>' inclusive)
-     verbatim, and the tag/attribute structure is parsed downstream by the mlmdx
-     compiler, not here. Self-closing only in v1, single line, no children. *)
+  (* A JSX element [ <Tag attrs... /> ]. Like a wikilink, the element is opaque
+     to Markdown: [raw] holds the full source (from '<' to '>' inclusive)
+     verbatim, and the tag/attribute structure is parsed downstream by the
+     consumer, not here. Self-closing only for now, single line, no children. *)
   type t = { raw : string }
   let make raw = { raw }
   let raw e = e.raw

@@ -988,7 +988,7 @@ module Inline : sig
         content, in that order of preference. *)
   end
 
-  (** mlmdx JSX expression containers [ {expr} ]. *)
+  (** JSX expression containers [ {expr} ]. *)
   module Jsx_expr : sig
     type t
     (** The type for {{!Cmarkit.ext_jsx_expr}JSX expression containers}. *)
@@ -996,13 +996,13 @@ module Inline : sig
     val make : string -> t
     (** [make expr] is a container holding the raw embedded code [expr] found
         between the braces (without the braces). The code is kept verbatim and
-        interpreted downstream (by mlmdx), not parsed here. *)
+        interpreted downstream by the consumer, not parsed here. *)
 
     val expr : t -> string
     (** [expr j] is the raw embedded code between the braces. *)
   end
 
-  (** mlmdx JSX elements [ <Tag attrs... /> ]. *)
+  (** JSX elements [ <Tag attrs... /> ]. *)
   module Jsx_element : sig
     type t
     (** The type for {{!Cmarkit.ext_jsx_element}JSX elements}. *)
@@ -1010,7 +1010,7 @@ module Inline : sig
     val make : string -> t
     (** [make raw] is an element holding its full verbatim source [raw] (from
         ['<'] to ['>'] inclusive). The tag and attributes are kept verbatim and
-        parsed downstream (by mlmdx), not here. *)
+        parsed downstream by the consumer, not here. *)
 
     val raw : t -> string
     (** [raw e] is the verbatim element source. *)

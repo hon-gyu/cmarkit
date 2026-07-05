@@ -465,15 +465,14 @@ let scan_attribute_spec s line lines ~start =
   in
   loop line lines (start + 1) false false false
 
-(* mlmdx JSX expression [ {expr} ]. Find the byte index of the '}' that closes
+(* JSX expression [ {expr} ]. Find the byte index of the '}' that closes
    the '{' at [start], on the same line ([expr] does not span lines in v1).
    Tracks brace nesting and skips OCaml string literals and [ (* *) ] comments
    (which nest) so that a '}' inside them does not close the expression. Char
    literals containing braces are not handled in v1; the downstream OCaml parser
    validates the extracted span. Returns [None] if no matching close is on the
    line, so the caller can fall back to other interpretations of '{'. *)
-let jsx_expr_close s ~line ~start =
-  let last = line.last in
+let jsx_expr_close s ~last ~start =
   let rec code k depth =
     if k > last then None else
     match s.[k] with
@@ -500,49 +499,122 @@ let jsx_expr_close s ~line ~start =
 
 let try_add_jsx_expr_token oymarkit_mod acc s line ~start =
   if not (Oymarkit_mod.jsx_expr oymarkit_mod) then None else
-  match jsx_expr_close s ~line ~start with
+  match jsx_expr_close s ~last:line.last ~start with
   | None -> None
   | Some close -> Some (Jsx_expr_start { start } :: acc, close + 1)
 
-(* mlmdx JSX element [ <Tag ... /> ]. [start] points at '<'. Find the byte index
-   of the '>' that closes a self-closing [ /> ], on the same line. Attribute
-   expression values [ {expr} ] are skipped via [jsx_expr_close] and string
-   attributes [ "..." ] are skipped, so '>' or '/' inside them do not end the
-   element. A bare '>' (container open tag) returns [None]: v1 is self-closing
-   only. *)
-let jsx_element_close s ~line ~start =
-  let last = line.last in
-  let rec scan k =
-    if k > last then None else
-    match s.[k] with
-    | '"' -> string (k + 1)
-    | '{' ->
-        (match jsx_expr_close s ~line ~start:k with
-         | None -> None
-         | Some close -> scan (close + 1))
-    | '/' when k + 1 <= last && s.[k + 1] = '>' -> Some (k + 1) (* the '>' *)
-    | '>' -> None
-    | _ -> scan (k + 1)
-  and string k =
-    if k > last then None else
-    match s.[k] with
-    | '\\' when k + 1 <= last -> string (k + 2)
-    | '"' -> scan (k + 1)
-    | _ -> string (k + 1)
+(* A faithful (single-line, self-closing) JSX element recognizer. [start] points
+   at '<'. Returns the byte index of the closing '>' of a well-formed
+   [ <name attrs.. /> ], or [None]. Only the self-closing form on a single line
+   is recognized for now; container tags with children (e.g. [ <a>b</a> ]) and
+   elements spanning lines are not yet handled.
+
+   The decision is pure JSX validity and has nothing to do with autolinks or raw
+   HTML: an invalid tag name, a malformed attribute, or a bare '>' (a
+   non-self-closing open tag) all yield [None], which simply leaves the '<' for
+   the autolink / raw-HTML branches to interpret. Unlike MDX we never raise: an
+   invalid element is not an error, just "not a JSX element".
+
+   Case is irrelevant, exactly as in JSX: [ <img/> ] and [ <Foo/> ] are both
+   elements. Whether a tag lowers to a host element or a component identifier is
+   a downstream choice, not a parsing rule.
+
+   Grammar recognized (ws is ' ' or '\t'; single line):
+   {v
+     element := '<' name (ws+ attr)* ws* '/' '>'
+     name    := ident (('.' ident)+ | ':' ident)?      (* member OR namespaced *)
+     attr    := '{' expr '}'                            (* opaque brace expr    *)
+              | ident (':' ident)? (ws* '=' ws* value)? (* value optional       *)
+     value   := '"' .. '"' | '\'' .. '\'' | '{' expr '}'
+     ident   := [A-Za-z_$] [A-Za-z0-9_$-]*
+   v}
+   Brace expressions [ {expr} ] reuse [jsx_expr_close] to find their matching
+   '}', so a '>' or '/' inside them does not end the element. Their contents are
+   kept opaque (delimited, not interpreted here). Consequently a brace that
+   stands alone as an attribute is accepted as-is rather than required to be a
+   JS-style spread [ {...expr} ]: validating and interpreting it is left to
+   whatever consumes the [expr]. *)
+let jsx_element_close s ~last ~start =
+  let is_id_start c =
+    (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c = '_' || c = '$'
   in
-  scan (start + 1)
+  let is_id_part c =
+    is_id_start c || (c >= '0' && c <= '9') || c = '-'
+  in
+  let ident k = (* one identifier at [k]; returns position just after it *)
+    if k > last || not (is_id_start s.[k]) then None else
+    let rec more k = if k <= last && is_id_part s.[k] then more (k + 1) else k in
+    Some (more (k + 1))
+  in
+  let name k = (* JSXElementName; returns position just after the name *)
+    match ident k with
+    | None -> None
+    | Some k ->
+        if k <= last && s.[k] = '.' then
+          let rec members k = (* [k] at '.' *)
+            match ident (k + 1) with
+            | None -> None
+            | Some k -> if k <= last && s.[k] = '.' then members k else Some k
+          in
+          members k
+        else if k <= last && s.[k] = ':' then ident (k + 1)
+        else Some k
+  in
+  let skip_ws k =
+    let rec loop k =
+      if k <= last && (s.[k] = ' ' || s.[k] = '\t') then loop (k + 1) else k
+    in
+    loop k
+  in
+  let value k = (* attribute value at [k]; returns position just after it *)
+    if k > last then None else
+    match s.[k] with
+    | ('"' | '\'') as q ->
+        let rec str k =
+          if k > last then None else
+          if s.[k] = q then Some (k + 1) else str (k + 1)
+        in
+        str (k + 1)
+    | '{' ->
+        (match jsx_expr_close s ~last ~start:k with
+         | None -> None
+         | Some close -> Some (close + 1))
+    | _ -> None (* unquoted values are not valid JSX *)
+  in
+  let attr k = (* one attribute at [k]; returns position just after it *)
+    if k > last then None else
+    if s.[k] = '{' then (* spread / opaque brace expression *)
+      (match jsx_expr_close s ~last ~start:k with
+       | None -> None
+       | Some close -> Some (close + 1))
+    else
+      match ident k with (* attribute name, optionally namespaced *)
+      | None -> None
+      | Some k ->
+          match (if k <= last && s.[k] = ':' then ident (k + 1) else Some k) with
+          | None -> None
+          | Some k ->
+              let j = skip_ws k in
+              if j <= last && s.[j] = '=' then value (skip_ws (j + 1))
+              else Some k (* boolean attribute; leave separating ws to caller *)
+  in
+  let rec attrs k = (* [k] just after the name or the previous attribute *)
+    let j = skip_ws k in
+    if j + 1 <= last && s.[j] = '/' && s.[j + 1] = '>' then Some (j + 1)
+    else if j = k then None (* attributes must be whitespace-separated *)
+    else match attr j with None -> None | Some k -> attrs k
+  in
+  match name (start + 1) with
+  | None -> None
+  | Some k -> attrs k
 
 let try_add_jsx_element_token oymarkit_mod acc s line ~start =
   if not (Oymarkit_mod.jsx_element oymarkit_mod) then None else
-  (* Only claim '<' when it opens a capitalized tag (a component). This keeps
-     autolinks and lowercase raw HTML untouched with no need to disable them. *)
-  if start + 1 > line.last then None else
-  match s.[start + 1] with
-  | 'A' .. 'Z' ->
-      (match jsx_element_close s ~line ~start with
-       | None -> None
-       | Some close -> Some (Jsx_element_start { start } :: acc, close + 1))
-  | _ -> None
+  (* Claim '<' purely by JSX validity; on failure return [None] and let the
+     autolink / raw-HTML branches interpret it. See [jsx_element_close]. *)
+  match jsx_element_close s ~last:line.last ~start with
+  | None -> None
+  | Some close -> Some (Jsx_element_start { start } :: acc, close + 1)
 
 let tokenize ?oymarkit_mod ~exts s lines =
   (* For inlines this is where we conditionalize for extensions. All code
@@ -789,16 +861,16 @@ let ext_wikilink_token p ~first ~last ~line wl =
 
 let ext_jsx_expr_token p ~first ~last ~line j =
   (* [first] is the '{', [last] is the '}'. The node's textloc spans the whole
-     [ {expr} ] so the mlmdx compiler can offset past the '{' to prime a lexbuf
-     at the expression's true source position. *)
+     [ {expr} ] so the consumer can offset past the '{' to prime a lexbuf at the
+     expression's true source position. *)
   let textloc = textloc_of_span p { line with first; last } in
   let inline = Inline.Ext_jsx_expr (j, meta p textloc) in
   Inline { start = first; inline; endline = line; next = last + 1 }
 
 let ext_jsx_element_token p ~first ~last ~line e =
   (* [first] is the '<', [last] is the closing '>'. The node's textloc spans the
-     whole element so the mlmdx compiler can recover attribute expressions'
-     absolute positions by offset into [raw]. *)
+     whole element so the consumer can recover attribute expressions' absolute
+     positions by offset into [raw]. *)
   let textloc = textloc_of_span p { line with first; last } in
   let inline = Inline.Ext_jsx_element (e, meta p textloc) in
   Inline { start = first; inline; endline = line; next = last + 1 }
@@ -902,7 +974,7 @@ let try_jsx_expr p toks line ~start =
   (* [start] points at '{'. A matching '}' on [line] is guaranteed by
      [try_add_jsx_expr_token]; re-scan to delimit the opaque expression and
      build the inline with proper metadata. *)
-  match jsx_expr_close p.i ~line ~start with
+  match jsx_expr_close p.i ~last:line.last ~start with
   | None -> None
   | Some close ->
       let expr = String.sub p.i (start + 1) (close - (start + 1)) in
@@ -915,7 +987,7 @@ let try_jsx_element p toks line ~start =
   (* [start] points at '<'. A self-closing element ending in [ /> ] on [line] is
      guaranteed by [try_add_jsx_element_token]; re-scan to delimit it and build
      the inline with the full verbatim source in [raw]. *)
-  match jsx_element_close p.i ~line ~start with
+  match jsx_element_close p.i ~last:line.last ~start with
   | None -> None
   | Some close ->
       let raw = String.sub p.i start (close - start + 1) in
