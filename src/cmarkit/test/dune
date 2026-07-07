@@ -12,3 +12,11 @@
   (inline_tests)
   (preprocess (pps ppx_expect))
 )
+
+(library
+  (name test_span)
+  (libraries cmarkit_ cmarkit_commonmark cmarkit_html)
+  (modules test_span)
+  (inline_tests)
+  (preprocess (pps ppx_expect))
+)

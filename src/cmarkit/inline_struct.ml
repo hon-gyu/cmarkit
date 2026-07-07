@@ -1233,6 +1233,43 @@ let try_link_def
       let had_link = not image && not p.nested_links in
       Some (toks, endline, t, had_link)
 
+(* Djot-style generic span. A bracketed run [ [text] ] that CommonMark could
+   not resolve as a link or image, immediately followed by an attribute
+   [ {...} ], becomes an [Ext_attributes] wrapping the parsed bracket contents
+   (the brackets are consumed).
+
+   This is a deliberate fallback, not djot-faithful span semantics: link and
+   image resolution -- including reference resolution -- keeps CommonMark
+   precedence, so a defined [ [foo] ] stays a link and the attribute attaches to
+   it rather than forming a span.
+
+   Consequence: whether [ [foo]{.c} ] is a span or a link can depend on a reference
+   definition elsewhere.
+
+   Only the square-bracket form yields a span (never the image form). The
+   following [Attribute_spec] must be adjacent to the closing ']' and carry a
+   non-empty attribute; an empty or comment-only specifier does not form a span,
+   leaving the brackets literal. Any further adjacent specifiers merge onto the
+   [Ext_attributes] in the final pass. *)
+let try_span p ~start ~start_line ~toks ~line ~text_last ~image text =
+  if image then None else
+  match toks with
+  | Attribute_spec { start = astart; attribute; endline; next } :: rest
+    when astart = text_last + 1 && not (Attribute.is_empty attribute) ->
+      let content =
+        let first = start + 1 (* after '[' *) and last = text_last - 1 in
+        inlines_inline p text ~first ~last ~first_line:start_line ~last_line:line
+      in
+      let textloc =
+        textloc_of_lines p ~first:start ~last:(next - 1)
+          ~first_line:start_line ~last_line:endline
+      in
+      let attrs = Inline.Attributes.make ~specs:[attribute] content in
+      let inline = Inline.Ext_attributes (attrs, meta p textloc) in
+      let t = Inline { start; inline; endline; next } in
+      Some (rest, endline, t, false)
+  | _ -> None
+
 (* The following sequence of mutually recursive functions define
     inline parsing. We have three passes over a paragraph's token
     list see the [parse_tokens] function below. *)
@@ -1264,8 +1301,13 @@ let rec try_link p start_toks start_line ~image ~start =
       in
       if had_link && not image
       then None (* Could try to keep render *) else
-      try_link_def
-        p ~start ~start_toks ~start_line ~toks ~line ~text_last ~image text
+      match
+        try_link_def
+          p ~start ~start_toks ~start_line ~toks ~line ~text_last ~image text
+      with
+      | Some _ as v -> v
+      | None ->
+          try_span p ~start ~start_line ~toks ~line ~text_last ~image text
 
 and first_pass p toks line =
   (* Parse inline atoms and links. Links are parsed here otherwise
