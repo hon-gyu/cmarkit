@@ -1038,6 +1038,9 @@ type line_type =
 | Ext_footnote_label of rev_spans * last * string
 | Ext_div_line of first * last * (first * last) option
   (* Oymarkit djot div: colon fence span and optional class name span *)
+| Ext_jsx_block_line of first * last * last
+  (* Oymarkit JSX block open: tag name span (first, last; an empty span with
+     [last < first] denotes a fragment) and the terminating '>' index (last) *)
 | Nomatch
 
 let thematic_break s ~last ~start =

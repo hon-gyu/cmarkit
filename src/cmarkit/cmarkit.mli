@@ -988,17 +988,72 @@ module Inline : sig
         content, in that order of preference. *)
   end
 
+  (** JSX expression containers [ {expr} ]. *)
+  module Jsx_expr : sig
+    type t
+    (** The type for {{!Cmarkit.ext_jsx_expr}JSX expression containers}. *)
+
+    val make : string -> t
+    (** [make expr] is a container holding the raw embedded code [expr] found
+        between the braces (without the braces). The code is kept verbatim and
+        interpreted downstream by the consumer, not parsed here. *)
+
+    val expr : t -> string
+    (** [expr j] is the raw embedded code between the braces. *)
+  end
+
+  (** JSX elements: self-closing [ <Tag attrs... /> ] and inline containers
+      [ <Tag attrs...>inlines</Tag> ] (including fragments [ <>...</> ]). *)
+  module Jsx_element : sig
+
+    type inline := t
+
+    type t
+    (** The type for {{!Cmarkit.ext_jsx_element}JSX elements}. *)
+
+    val make : string -> t
+    (** [make raw] is a self-closing element holding its full verbatim source
+        [raw] (from ['<'] to ['>'] inclusive, ending in ["/>"]). The tag and
+        attributes are kept verbatim and parsed downstream by the consumer, not
+        here. Its {!children} are [None]. *)
+
+    val make_container : string -> inline -> t
+    (** [make_container raw children] is an inline container element whose
+        opening tag source is [raw] (from ['<'] to its terminating ['>']
+        inclusive, e.g. ["<Card a=1>"] or the fragment ["<>"]) and whose parsed
+        Markdown inline content is [children]. *)
+
+    val raw : t -> string
+    (** [raw e] is the verbatim opening (or self-closing) tag source. *)
+
+    val children : t -> inline option
+    (** [children e] is [None] for a self-closing element and [Some i] for a
+        container, where [i] is the parsed Markdown inline content between the
+        opening and closing tags. *)
+
+    val name : t -> string
+    (** [name e] is the tag name in [raw] (e.g. ["Card"], ["Foo.Bar"]), or [""]
+        for a fragment. *)
+
+    val close_tag : t -> string
+    (** [close_tag e] is the matching closing tag reconstructed from [name],
+        e.g. ["</Card>"] or ["</>"]. Used to roundtrip a container. *)
+  end
+
   type t +=
   | Ext_strikethrough of Strikethrough.t node
   | Ext_extra_inline_container of Extra_inline_container.t node
   | Ext_attributes of Attributes.t node
   | Ext_math_span of Math_span.t node
-  | Ext_wikilink of Wikilink.t node (** *)
+  | Ext_wikilink of Wikilink.t node
+  | Ext_jsx_expr of Jsx_expr.t node
+  | Ext_jsx_element of Jsx_element.t node
   (** The supported inline extensions. These inlines are only parsed when
       {!Doc.of_string} is called with [strict:false].
 
-      {!Ext_wikilink} is gated separately behind the [wikilink] argument of
-      {!Doc.of_string}. *)
+      {!Ext_wikilink}, {!Ext_jsx_expr} and {!Ext_jsx_element} are gated
+      separately behind the [wikilink], [jsx_expr] and [jsx_element] arguments
+      of {!Doc.of_string}. *)
 
   (** {1:funs Functions} *)
 
@@ -1541,12 +1596,45 @@ module Block : sig
     (** [block d] is the div's content. *)
   end
 
+  (** JSX container elements at block level:
+      [ <Card ...> ] … Markdown blocks … [ </Card> ], including fragments. *)
+  module Jsx_block : sig
+
+    type block := t
+
+    type t
+    (** The type for {{!Cmarkit.ext_jsx_block}block-level JSX containers}. Only
+        parsed when {!Doc.of_string} is called with [jsx_element:true]. *)
+
+    val make :
+      ?indent:Layout.indent -> raw_open:string node ->
+      ?raw_close:string node -> block -> t
+    (** [make ~raw_open b] is a JSX container with opening tag source [raw_open]
+        (e.g. ["<Card a=1>"] or the fragment ["<>"]), block content [b] and
+        optional closing tag [raw_close] (e.g. ["</Card>"]). *)
+
+    val indent : t -> Layout.indent
+    (** [indent j] is the indentation to the opening tag. *)
+
+    val raw_open : t -> string node
+    (** [raw_open j] is the verbatim opening tag source. Attributes stay raw;
+        downstream re-parses them (positions recoverable by offset). *)
+
+    val block : t -> block
+    (** [block j] is the container's parsed block content. *)
+
+    val raw_close : t -> string node option
+    (** [raw_close j] is the verbatim closing tag, or [None] if the container
+        was closed by the end of the document or its containing block. *)
+  end
+
   type t +=
   | Ext_math_block of Code_block.t node
     (** {{!Cmarkit.ext_math_display}display math}*)
   | Ext_table of Table.t node (** *)
   | Ext_footnote_definition of Footnote.t node (** *)
   | Ext_div of Div.t node (** djot {{!Block.Div}div} *)
+  | Ext_jsx_block of Jsx_block.t node (** block-level {{!Block.Jsx_block}JSX container} *)
   | Ext_keyed of (Inline.t * t) node
     (** a colon-keyed node produced by the {!Cmarkit.Struct} pass: the
         {!Inline.t} is the label, the [t] the keyed body. Whether it renders
@@ -1631,6 +1719,7 @@ module Doc : sig
     ?extra_inline_containers:Inline.Extra_inline_container.Config.t ->
     ?block_id:bool -> ?djot_inline_attributes:bool ->
     ?djot_block_attributes:bool -> ?div:bool -> ?wikilink:bool ->
+    ?jsx_expr:bool -> ?jsx_element:bool ->
     ?callout:Block.Callout.Config.t ->
     ?strict:bool -> string -> t
     (** [of_string md] is a document from the UTF-8 encoded CommonMark

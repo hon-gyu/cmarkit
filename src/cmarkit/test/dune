@@ -1,5 +1,14 @@
 (tests
   (names test_parser_config test_inline_struct)
   (libraries cmarkit_ cmarkit_commonmark cmarkit_html fmt)
+  (modules test_parser_config test_inline_struct)
   (preprocess (pps ppx_sexp_conv))
+)
+
+(library
+  (name test_jsx)
+  (libraries cmarkit_ cmarkit_commonmark cmarkit_html cmarkit_latex)
+  (modules test_jsx)
+  (inline_tests)
+  (preprocess (pps ppx_expect))
 )
