@@ -1,0 +1,5 @@
+(executable
+ (name oyparse)
+ (modules oyparse)
+ (libraries cmarkit cmarkit_mdast js_of_ocaml)
+ (modes js))
