@@ -7,4 +7,5 @@
   (re_export cmarkit)
   (re_export cmarkit_renderer)
   (re_export cmarkit_html)
+  (re_export cmarkit_mdast)
   (re_export cmarkit_commonmark)))
