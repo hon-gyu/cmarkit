@@ -10,6 +10,14 @@
 
 open Cmarkit
 
+(* Config ===================================================================*)
+
+(* Whether to strip the [^id] block-id marker from a paragraph's rendered text.
+   When [false] the marker is kept but wrapped in a dim, styleable span. Set per
+   render by {!of_doc}; a module-level flag following the codebase convention,
+   which avoids threading config through every recursive map. *)
+let block_id_strip = ref true
+
 (* Minimal JSON =============================================================*)
 
 type json =
@@ -112,6 +120,15 @@ let element ~meta ?(properties = []) ~children tag =
 
 let class_name classes = ("className", Arr (List.map (fun c -> Str c) classes))
 
+(* mdast footnote identifiers must match between a reference and its definition.
+   We use the (normalized) label key with its leading [^] dropped, e.g. the
+   label [^1] yields the identifier ["1"]. *)
+let footnote_identifier label =
+  let k = Label.key label in
+  if String.length k > 0 && k.[0] = '^' then
+    String.sub k 1 (String.length k - 1)
+  else k
+
 let hproperties_of_attributes a =
   let id =
     match Attribute.id a with
@@ -201,13 +218,21 @@ let rec inline defs (i : Inline.t) : json list =
         node ~meta "strong"
           [ ("children", Arr (inline defs (Inline.Emphasis.inline e))) ];
       ]
-  | Inline.Link (l, meta) ->
-      let dest, title = link_dest_and_title defs l in
-      [
-        node ~meta "link"
-          ((("url", Str dest) :: title_field title)
-          @ [ ("children", Arr (inline defs (Inline.Link.text l))) ]);
-      ]
+  | Inline.Link (l, meta) -> (
+      match Inline.Link.reference_definition defs l with
+      | Some (Block.Footnote.Def (fn, _)) ->
+          let id = footnote_identifier (Block.Footnote.label fn) in
+          [
+            node ~meta "footnoteReference"
+              [ ("identifier", Str id); ("label", Str id) ];
+          ]
+      | _ ->
+          let dest, title = link_dest_and_title defs l in
+          [
+            node ~meta "link"
+              ((("url", Str dest) :: title_field title)
+              @ [ ("children", Arr (inline defs (Inline.Link.text l))) ]);
+          ])
   | Inline.Image (l, meta) ->
       let dest, title = link_dest_and_title defs l in
       [
@@ -315,7 +340,9 @@ let rec inline defs (i : Inline.t) : json list =
   | _ -> []
 
 (* Attach [props] as hProperties to the mdast node for [i]. When [i] maps to a
-   single node we merge onto it; otherwise we wrap the nodes in a <span>. *)
+   single *element-backed* node we merge onto it; otherwise (multiple nodes, or a
+   bare "text"/"html" node that renders as raw content and can't carry
+   attributes) we wrap in a <span> so the attributes land on a real element. *)
 and inline_with_attributes defs ~meta ~props i =
   let merge_data fields =
     let has_data = List.mem_assoc "data" fields in
@@ -324,7 +351,8 @@ and inline_with_attributes defs ~meta ~props i =
     else ("data", data) :: fields
   in
   match inline defs i with
-  | [ Obj (("type", ty) :: rest) ] -> [ Obj (("type", ty) :: merge_data rest) ]
+  | [ Obj (("type", Str ty) :: rest) ] when ty <> "text" && ty <> "html" ->
+      [ Obj (("type", Str ty) :: merge_data rest) ]
   | children -> [ element ~meta ~properties:props ~children "span" ]
 
 (* Blocks ===================================================================*)
@@ -340,13 +368,91 @@ let code_block_lang_meta cb =
 let code_block_value cb =
   String.concat "\n" (List.map fst (Block.Code_block.code cb))
 
+let rstrip_blanks s =
+  let n = ref (String.length s) in
+  while !n > 0 && (s.[!n - 1] = ' ' || s.[!n - 1] = '\t') do
+    decr n
+  done;
+  String.sub s 0 !n
+
+(* Replace the last text node of [children] with the nodes [f] returns for it.
+   Used to rewrite the trailing [^id] block-id marker. *)
+let map_last_text f children =
+  let rec go = function
+    | [] -> []
+    | [ Obj (("type", Str "text") :: rest) ] -> f rest
+    | [ last ] -> [ last ]
+    | x :: xs -> x :: go xs
+  in
+  go children
+
+(* The trailing [^id] marker in the last text node, split as [(prose, rest)]
+   with the marker removed, or [None] when it isn't there. *)
+let match_block_id_marker id rest =
+  let suffix = "^" ^ id in
+  let slen = String.length suffix in
+  match List.assoc_opt "value" rest with
+  | Some (Str v)
+    when String.length v >= slen
+         && String.sub v (String.length v - slen) slen = suffix ->
+      Some (String.sub v 0 (String.length v - slen))
+  | _ -> None
+
+let set_value rest v =
+  List.map (fun (k, x) -> if k = "value" then (k, Str v) else (k, x)) rest
+
+(* An Obsidian block id [^id] is parsed as a paragraph metadatum but its [^id]
+   marker is left in the paragraph's inline text. Drop that trailing marker (and
+   the blanks before it) so it doesn't render. *)
+let strip_block_id_marker id children =
+  map_last_text
+    (fun rest ->
+      match match_block_id_marker id rest with
+      | Some prose ->
+          [ Obj (("type", Str "text") :: set_value rest (rstrip_blanks prose)) ]
+      | None -> [ Obj (("type", Str "text") :: rest) ])
+    children
+
+(* Keep the [^id] marker but wrap it in a [span.block-id] so it can be styled
+   apart from the surrounding prose. The blanks before it stay in the prose. *)
+let keep_block_id_marker ~meta id children =
+  map_last_text
+    (fun rest ->
+      match match_block_id_marker id rest with
+      | Some prose ->
+          let marker =
+            element ~meta
+              ~properties:[ class_name [ "block-id" ] ]
+              ~children:[ node ~meta "text" [ ("value", Str ("^" ^ id)) ] ]
+              "span"
+          in
+          (if prose = "" then [] else [ Obj (("type", Str "text") :: set_value rest prose) ])
+          @ [ marker ]
+      | None -> [ Obj (("type", Str "text") :: rest) ])
+    children
+
 let rec block defs (b : Block.t) : json list =
   match b with
-  | Block.Paragraph (p, meta) ->
-      [
-        node ~meta "paragraph"
-          [ ("children", Arr (inline defs (Block.Paragraph.inline p))) ];
-      ]
+  | Block.Paragraph (p, meta) -> (
+      let children = inline defs (Block.Paragraph.inline p) in
+      match Block.Block_id.find meta with
+      | None -> [ node ~meta "paragraph" [ ("children", Arr children) ] ]
+      | Some bid ->
+          let id = Block.Block_id.id bid in
+          let children, props =
+            if !block_id_strip then
+              (strip_block_id_marker id children, [ ("id", Str id) ])
+            else
+              ( keep_block_id_marker ~meta id children,
+                [ ("id", Str id); class_name [ "has-block-id" ] ] )
+          in
+          [
+            node ~meta "paragraph"
+              [
+                ("data", Obj [ ("hProperties", Obj props) ]);
+                ("children", Arr children);
+              ];
+          ])
   | Block.Heading (h, meta) ->
       [
         node ~meta "heading"
@@ -422,10 +528,17 @@ let rec block defs (b : Block.t) : json list =
       in
       open' @ children @ close
   | Block.Ext_keyed _ as b -> block defs (Struct.unkey b)
-  | Block.Blank_line _
-  | Block.Link_reference_definition _
-  | Block.Ext_footnote_definition _ ->
-      []
+  | Block.Ext_footnote_definition (fn, meta) ->
+      let id = footnote_identifier (Block.Footnote.label fn) in
+      [
+        node ~meta "footnoteDefinition"
+          [
+            ("identifier", Str id);
+            ("label", Str id);
+            ("children", Arr (block defs (Block.Footnote.block fn)));
+          ];
+      ]
+  | Block.Blank_line _ | Block.Link_reference_definition _ -> []
   | _ -> []
 
 and block_with_attributes defs ~meta ~props b =
@@ -546,7 +659,8 @@ and callout defs ~meta co inner =
 
 (* Document =================================================================*)
 
-let of_doc d =
+let of_doc ?(strip_block_id = true) d =
+  block_id_strip := strip_block_id;
   let defs = Doc.defs d in
   let root =
     node ~meta:Meta.none "root" [ ("children", Arr (block defs (Doc.block d))) ]

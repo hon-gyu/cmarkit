@@ -24,7 +24,8 @@ let parse (md : string) : string =
       ~djot_inline_attributes:true ~djot_block_attributes:true ~block_id:true
       ~callout ~extra_inline_containers md
   in
-  Cmarkit_mdast.of_doc doc
+  (* Keep the [^id] block-id marker (dimmed via CSS) rather than stripping it. *)
+  Cmarkit_mdast.of_doc ~strip_block_id:false doc
 
 let () =
   Js.Unsafe.set Js.Unsafe.global

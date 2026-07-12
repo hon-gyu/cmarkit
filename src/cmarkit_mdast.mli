@@ -12,5 +12,11 @@
     (i.e. [remark-rehype]) renders them to the intended HTML with no custom
     handler. *)
 
-val of_doc : Cmarkit.Doc.t -> string
-(** [of_doc d] is the mdast [root] of [d] as a JSON string. *)
+val of_doc : ?strip_block_id:bool -> Cmarkit.Doc.t -> string
+(** [of_doc d] is the mdast [root] of [d] as a JSON string.
+
+    [strip_block_id] (defaults to [true]) controls the Obsidian block-id [^id]
+    marker on a paragraph. When [true] the marker is removed from the rendered
+    text (the id is still emitted on the paragraph). When [false] the marker is
+    kept and wrapped in a [span] with class [block-id], and the paragraph gains
+    the class [has-block-id], so both can be styled. *)
