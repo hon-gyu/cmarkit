@@ -647,7 +647,17 @@ and table defs ~meta t =
             None)
       (Block.Table.rows t)
   in
-  node ~meta "table" [ ("align", Arr !align); ("children", Arr rows) ]
+  (* mdast's [table] has no caption field. Dropping the caption would lose
+     content, so it rides along as an extra property rather than silently
+     disappearing; consumers that do not know it will ignore it. *)
+  let caption =
+    match Block.Table.caption t with
+    | None -> []
+    | Some (c, _) ->
+        [ ("caption", Arr (inline defs (Block.Table.caption_inline c))) ]
+  in
+  node ~meta "table"
+    ([ ("align", Arr !align); ("children", Arr rows) ] @ caption)
 
 (* Obsidian callout: a blockquote carrying [callout]/[callout-title]/
    [callout-content] structure, mirroring the HTML backend. Foldable callouts

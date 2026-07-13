@@ -595,6 +595,12 @@ let table c t =
   in
   push_indent c (`I (Block.Table.indent t));
   List.iter (row c) (Block.Table.rows t);
+  begin match Block.Table.caption t with
+  | None -> ()
+  | Some (caption, _) ->
+      newline c; indent c; C.string c "^ ";
+      C.inline c (Block.Table.caption_inline caption)
+  end;
   pop_indent c
 
 let footnote c fn =

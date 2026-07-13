@@ -609,6 +609,14 @@ let table c t =
   | [] -> ()
   in
   C.string c "<div role=\"region\"><table>\n";
+  begin match Block.Table.caption t with
+  | None -> ()
+  | Some (caption, _) ->
+      (* HTML wants [caption] to be the table's first child. *)
+      C.string c "<caption>";
+      C.inline c (Block.Table.caption_inline caption);
+      C.string c "</caption>\n"
+  end;
   rows c (Block.Table.col_count t) ~align:[] (Block.Table.rows t);
   C.string c "</table></div>"
 

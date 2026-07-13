@@ -1198,13 +1198,46 @@ let try_promote_raw_inline p toks t = match t with
     end
 | _ -> None
 
+(* Djot math: a verbatim span prefixed with [$] (inline) or [$$] (display), e.g.
+   [ $`e=mc^2` ]. Same shape as raw inline but on the other side of the span, so
+   it is promoted from the code-span token too. The pandoc [$...$] spelling is a
+   separate construct behind the math extension; the two coexist.
+
+   A backslash-escaped [ \$ ] is not a math prefix: the escape is what the
+   author writes to get a literal dollar before a verbatim span. *)
+let try_promote_djot_math p line t = match t with
+| Inline { start; inline = Inline.Code_span (cs, cs_meta); endline; next }
+  when Oymarkit_mod.djot_math p.oymarkit_mod ->
+    let first = line.first in
+    let is_dollar k = k >= first && p.i.[k] = '$' in
+    let escaped k = k - 1 >= first && p.i.[k - 1] = '\\' in
+    if not (is_dollar (start - 1)) then None else
+    let display = is_dollar (start - 2) in
+    let dollar_first = if display then start - 2 else start - 1 in
+    if escaped dollar_first then None else
+    let meta =
+      if p.nolocs then Meta.none else
+      let textloc = Meta.textloc cs_meta in
+      let first_byte = dollar_first and first_line = line.line_pos in
+      meta p (Textloc.set_first textloc ~first_byte ~first_line)
+    in
+    let ms =
+      Inline.Math_span.make ~display (Inline.Code_span.code_layout cs)
+    in
+    let inline = Inline.Ext_math_span (ms, meta) in
+    Some (Inline { start = dollar_first; inline; endline; next })
+| _ -> None
+
 let try_code p toks start_line ~start ~count ~escaped =
   match try_code_span p toks start_line ~start ~count ~escaped with
   | None -> None
   | Some (toks, line, t) ->
       match try_promote_raw_inline p toks t with
       | Some (toks, t) -> Some (toks, line, t)
-      | None -> Some (toks, line, t)
+      | None ->
+          match try_promote_djot_math p start_line t with
+          | Some t -> Some (toks, line, t)
+          | None -> Some (toks, line, t)
 
 let try_math_span p toks start_line ~start:cstart ~count =
   if not (has_math_span_closer ~count ~after:cstart p.cidx) then None else

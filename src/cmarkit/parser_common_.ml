@@ -84,6 +84,8 @@ module Oymarkit_mod = struct
     djot_raw : bool;
     djot_ordered_list_styles : bool;
     djot_definition_lists : bool;
+    djot_math : bool;
+    djot_table_captions : bool;
     smart_punctuation : bool;
     indented_code : bool;
     setext_headings : bool;
@@ -123,7 +125,8 @@ module Oymarkit_mod = struct
       ~marked_emphasis_delims ~strong_emphasis_width ~extra_inline_containers
       ~block_id ~djot_inline_attributes ~djot_block_attributes
       ~djot_thematic_break ~djot_symbols ~djot_escapes ~djot_raw
-      ~djot_ordered_list_styles ~djot_definition_lists ~smart_punctuation
+      ~djot_ordered_list_styles ~djot_definition_lists ~djot_math
+      ~djot_table_captions ~smart_punctuation
       ~indented_code ~setext_headings ~lazy_continuation ~raw_html ~entity_refs
       ~tilde_code_fences ~block_quote_marker_space ~div ~wikilink ~jsx_expr
       ~jsx_element ~callout =
@@ -155,6 +158,8 @@ module Oymarkit_mod = struct
       djot_raw;
       djot_ordered_list_styles;
       djot_definition_lists;
+      djot_math;
+      djot_table_captions;
       smart_punctuation;
       indented_code;
       setext_headings;
@@ -256,6 +261,15 @@ module Oymarkit_mod = struct
   (* Djot definition lists: a [: term] line followed by the indented blocks that
      define it. *)
   let djot_definition_lists t = t.djot_definition_lists
+
+  (* Djot spells math as a dollar-prefixed verbatim span, [ $`x` ] inline and
+     [ $$`x` ] display. It produces the same [Ext_math_span] as the pandoc
+     [$...$] spelling behind the math extension; the two can coexist. *)
+  let djot_math t = t.djot_math
+
+  (* Djot table caption: a [^ text] line after a table, continuation lines
+     indented. *)
+  let djot_table_captions t = t.djot_table_captions
   let smart_punctuation t = t.smart_punctuation
   let indented_code t = t.indented_code
   let setext_headings t = t.setext_headings
@@ -337,6 +351,8 @@ let parser
     ?djot_raw
     ?djot_ordered_list_styles
     ?djot_definition_lists
+    ?djot_math
+    ?djot_table_captions
     ?smart_punctuation
     ?indented_code
     ?setext_headings
@@ -394,6 +410,10 @@ let parser
   let djot_definition_lists =
     knob ~cmark:false ~djot:true djot_definition_lists
   in
+  let djot_math = knob ~cmark:false ~djot:true djot_math in
+  let djot_table_captions =
+    knob ~cmark:false ~djot:true djot_table_captions
+  in
   let smart_punctuation = knob ~cmark:false ~djot:true smart_punctuation in
   let indented_code = knob ~cmark:true ~djot:false indented_code in
   let setext_headings = knob ~cmark:true ~djot:false setext_headings in
@@ -410,8 +430,8 @@ let parser
       ~intraword_emphasis ~marked_emphasis_delims ~strong_emphasis_width
       ~extra_inline_containers ~block_id ~djot_inline_attributes
       ~djot_block_attributes ~djot_thematic_break ~djot_symbols ~djot_escapes
-      ~djot_raw ~djot_ordered_list_styles ~djot_definition_lists
-      ~smart_punctuation ~indented_code ~setext_headings ~lazy_continuation
+      ~djot_raw ~djot_ordered_list_styles ~djot_definition_lists ~djot_math
+      ~djot_table_captions ~smart_punctuation ~indented_code ~setext_headings ~lazy_continuation
       ~raw_html ~entity_refs ~tilde_code_fences ~block_quote_marker_space ~div
       ~wikilink ~jsx_expr ~jsx_element ~callout
   in

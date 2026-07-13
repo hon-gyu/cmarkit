@@ -467,10 +467,16 @@ module Table = struct
   | `Sep of sep node list
   | `Data of (Inline.t * cell_layout) list ]
 
+  (* Djot table caption: a [^ text] line after the table, its continuation lines
+     indented. It is inline content attached to the table rather than a row: it
+     is not part of the grid and has no cells. *)
+  type caption = { caption_indent : Layout.indent; inline : Inline.t }
+
   type t =
     { indent : Layout.indent;
       col_count : int;
-      rows : (row node * Layout.blanks) list }
+      rows : (row node * Layout.blanks) list;
+      caption : caption node option }
 
   let col_count rows =
     let rec loop c = function
@@ -482,10 +488,17 @@ module Table = struct
     in
     loop 0 rows
 
-  let make ?(indent = 0) rows = { indent; col_count = col_count rows; rows }
+  let make ?(indent = 0) ?caption rows =
+    { indent; col_count = col_count rows; rows; caption }
+
+  let make_caption ?(caption_indent = 0) inline = { caption_indent; inline }
+  let caption_indent c = c.caption_indent
+  let caption_inline c = c.inline
+
   let indent t = t.indent
   let col_count t = t.col_count
   let rows t = t.rows
+  let caption t = t.caption
 
   let parse_sep_row cs =
     let rec loop acc = function

@@ -159,9 +159,15 @@ module Block_struct = struct
   | Attribute_specs of Attribute.t list
   | Paragraph of paragraph
   | Thematic_break of Layout.indent * line_span (* including trailing blanks *)
-  | Ext_table of Layout.indent * (line_span * line_span (* trail blanks *)) list
+  | Ext_table of
+      Layout.indent * (line_span * line_span (* trail blanks *)) list *
+      table_caption option
   | Ext_footnote of Layout.indent * (Label.t * Label.t option) * t list
   | Ext_def_list of def_list (* Oymarkit djot definition list *)
+
+  and table_caption =
+    { caption_indent : Layout.indent (* indent of the '^' *);
+      caption_lines : line_span list (* reversed *) }
 
   and def_item =
    { before_marker : Layout.indent;
@@ -287,7 +293,23 @@ module Block_struct = struct
 
   let table p ~indent ~last =
     let row = table_row p ~first:p.current_char ~last in
-    Ext_table (indent, [row])
+    Ext_table (indent, [row], None)
+
+  (* Djot table caption: a [^] followed by a space or the end of the line, on
+     the line after a table. Its continuation lines are indented. *)
+  let match_table_caption p ~indent =
+    if not (Oymarkit_mod.djot_table_captions p.oymarkit_mod) then None else
+    if end_of_line p || p.i.[p.current_char] <> '^' then None else
+    let next = p.current_char + 1 in
+    if next <= p.current_line_last_char && not (Ascii.is_blank p.i.[next])
+    then None else
+    let first = Match.first_non_blank p.i ~last:p.current_line_last_char
+        ~start:next
+    in
+    let line =
+      current_line_span p ~first ~last:p.current_line_last_char
+    in
+    Some { caption_indent = indent; caption_lines = [line] }
 
   (* Link reference definition parsing
 
@@ -869,15 +891,36 @@ module Block_struct = struct
       end
   | _ -> None
 
-  let try_add_to_table p ind rows bs =
+  let try_add_to_table p ind rows caption bs =
     let indent_start = p.current_char and indent = current_indent p in
-    match match_line_type ~indent ~no_setext:true p with
-    | Ext_table_row last ->
-        let row = table_row p ~first:p.current_char ~last in
-        Ext_table (ind, row :: rows) :: bs
-    | ltype ->
-        let bs = Ext_table (ind, rows) :: bs in
-        add_open_blocks_with_line_class p ~indent ~indent_start bs ltype
+    match caption with
+    | Some c ->
+        (* Inside a caption: an indented line continues it, anything else ends
+           the table. *)
+        if only_blanks p || indent <= c.caption_indent then begin
+          let bs = Ext_table (ind, rows, caption) :: bs in
+          let ltype = match_line_type ~indent ~no_setext:true p in
+          add_open_blocks_with_line_class p ~indent ~indent_start bs ltype
+        end else begin
+          accept_cols ~count:indent p;
+          let line =
+            current_line_span p ~first:p.current_char
+              ~last:p.current_line_last_char
+          in
+          let c = { c with caption_lines = line :: c.caption_lines } in
+          Ext_table (ind, rows, Some c) :: bs
+        end
+    | None ->
+        match match_table_caption p ~indent with
+        | Some c -> Ext_table (ind, rows, Some c) :: bs
+        | None ->
+            match match_line_type ~indent ~no_setext:true p with
+            | Ext_table_row last ->
+                let row = table_row p ~first:p.current_char ~last in
+                Ext_table (ind, row :: rows, None) :: bs
+            | ltype ->
+                let bs = Ext_table (ind, rows, None) :: bs in
+                add_open_blocks_with_line_class p ~indent ~indent_start bs ltype
 
   let rec try_add_to_block_quote p indent_layout bq marker bs =
     let indent_start = p.current_char and indent = current_indent p in
@@ -1109,7 +1152,8 @@ module Block_struct = struct
   | Ext_div (fence, children) :: bs -> try_add_to_div p fence children bs
   | Ext_jsx_block (o, children) :: bs -> try_add_to_jsx_block p o children bs
   | Html_block html :: bs -> try_add_to_html_block p html bs
-  | Ext_table (ind, rows) :: bs -> try_add_to_table p ind rows bs
+  | Ext_table (ind, rows, caption) :: bs ->
+      try_add_to_table p ind rows caption bs
   | Ext_footnote (i, l, blocks) :: bs -> try_add_to_footnote p i l blocks bs
   | Ext_def_list dl :: bs -> try_add_to_def_list p dl bs
 
@@ -1417,7 +1461,7 @@ let block_struct_to_thematic_break p indent span =
   let layout, meta = (* not layout because of loc *) clean_raw_span p span in
   Block.Thematic_break ({ indent; layout }, meta)
 
-let block_struct_to_table p indent rows =
+let block_struct_to_table p indent rows caption =
   let rec loop p col_count last_was_sep acc = function
   | (row, blanks) :: rs ->
       let meta = meta p (textloc_of_span p row) in
@@ -1437,7 +1481,17 @@ let block_struct_to_table p indent rows =
   let last = fst (List.hd rows) in
   let first, col_count, rows = loop p 0 false [] rows in
   let meta = meta_of_spans p ~first ~last in
-  Block.Ext_table ({ indent; col_count; rows }, meta)
+  let caption = match caption with
+  | None -> None
+  | Some { Block_struct.caption_indent; caption_lines } ->
+      let cmeta =
+        let first = List.nth caption_lines (List.length caption_lines - 1) in
+        meta_of_spans p ~first ~last:(List.hd caption_lines)
+      in
+      let _layout, inline = Inline_struct.parse p caption_lines in
+      Some ({ Block.Table.caption_indent; inline }, cmeta)
+  in
+  Block.Ext_table ({ indent; col_count; rows; caption }, meta)
 
 let rec block_struct_to_block_quote p indent marker bs =
   let add_block p acc b = block_struct_to_block p b :: acc in
@@ -1673,7 +1727,8 @@ and block_struct_to_block p = function
 | Block_struct.Attribute_specs specs ->
     Block.Ext_attributes
       (Block.Attributes.make ~specs Block.empty, Meta.none)
-| Block_struct.Ext_table (i, rows) -> block_struct_to_table p i rows
+| Block_struct.Ext_table (i, rows, caption) ->
+    block_struct_to_table p i rows caption
 | Block_struct.Ext_div (fence, bs) -> block_struct_to_div p fence bs
 | Block_struct.Ext_jsx_block (o, bs) -> block_struct_to_jsx_block p o bs
 | Block_struct.Ext_footnote (i, labels, bs) ->

@@ -1704,11 +1704,30 @@ module Block : sig
         found in rows in the document. You need to pad them on the
         right with more columns to reach the table's {!col_count}. *)
 
+    type caption
+    (** The type for djot {{!Cmarkit.ext_djot_table_captions}table captions}. A
+        caption is inline content attached to the table, not a row: it is not
+        part of the grid and has no cells. *)
+
     type t
     (** The type for {{!Cmarkit.ext_tables}tables}. *)
 
-    val make : ?indent:Layout.indent -> (row node * Layout.blanks) list -> t
+    val make :
+      ?indent:Layout.indent -> ?caption:caption node ->
+      (row node * Layout.blanks) list -> t
     (** [make rows] is a table row [rows]. *)
+
+    val make_caption : ?caption_indent:Layout.indent -> Inline.t -> caption
+    (** [make_caption i] is a caption with content [i]. *)
+
+    val caption : t -> caption node option
+    (** [caption t] is the table's caption, if any. *)
+
+    val caption_inline : caption -> Inline.t
+    (** [caption_inline c] is the caption's inline content. *)
+
+    val caption_indent : caption -> Layout.indent
+    (** [caption_indent c] is the indent of the caption's [^] marker. *)
 
     val indent : t -> Layout.indent
     (** [indent t] is the indentation to the first pipe found on the
@@ -1919,6 +1938,7 @@ module Doc : sig
     ?djot_block_attributes:bool -> ?djot_thematic_break:bool ->
     ?djot_symbols:bool -> ?djot_escapes:bool -> ?djot_raw:bool ->
     ?djot_ordered_list_styles:bool -> ?djot_definition_lists:bool ->
+    ?djot_math:bool -> ?djot_table_captions:bool ->
     ?smart_punctuation:bool ->
     ?indented_code:bool -> ?setext_headings:bool ->
     ?lazy_continuation:bool -> ?raw_html:bool -> ?entity_refs:bool ->
@@ -2075,6 +2095,14 @@ module Doc : sig
       {!Inline.extension-Ext_raw_inline} node and a code fence whose info string
       is [=format] into an {!Block.extension-Ext_raw_block} block. The default is
       [false], which preserves CommonMark behavior.}
+   {- If [djot_math] is [true], a verbatim span prefixed with [$] or [$$] is
+      djot {{!ext_djot_math}math}, producing the same
+      {!Inline.extension-Ext_math_span} as the pandoc [$...$] spelling. The
+      default is [false], which preserves CommonMark behavior.}
+   {- If [djot_table_captions] is [true], a [^ text] line after a table is a
+      djot {{!ext_djot_table_captions}table caption}, available on
+      {!Block.Table.caption}. The default is [false], which preserves CommonMark
+      behavior.}
    {- If [djot_definition_lists] is [true], a [: term] line followed by the
       blocks indented under it is a djot
       {{!ext_djot_definition_lists}definition list}, represented by
@@ -2488,6 +2516,40 @@ end
     {{:https://spec.commonmark.org/0.31.2/#unicode-whitespace-character}
     Unicode whitespace}. When a closer can close multiple openers, the
     neareast opener is closed. Strikethrough inlines can be nested.
+
+    {2:ext_djot_math Djot math}
+
+    According to
+    {{:https://htmlpreview.github.io/?https://github.com/jgm/djot/blob/master/doc/syntax.html#math}djot},
+    behind the [djot_math] knob of {!Doc.of_string}.
+
+    {v Inline $`e=mc^2` and display $$`\int_0^1 x`. v}
+
+    A verbatim span prefixed with [$] is inline math and one prefixed with [$$]
+    is display math. Both get into the {!Inline.extension-Ext_math_span} node
+    the pandoc [$...$] {{!ext_math}spelling} produces, so the two are surface
+    syntax for one node and can be enabled together. A backslash-escaped [\$]
+    is not a prefix.
+
+    {2:ext_djot_table_captions Table captions}
+
+    According to
+    {{:https://htmlpreview.github.io/?https://github.com/jgm/djot/blob/master/doc/syntax.html#table}djot},
+    behind the [djot_table_captions] knob of {!Doc.of_string}.
+
+{v
+| a | b |
+|---|---|
+| 1 | 2 |
+^ The caption, whose continuation
+  lines are indented.
+v}
+
+    A [^] followed by a space or the end of the line, on the line after a
+    {{!ext_tables}table}, opens a caption; its continuation lines are indented.
+    The caption is inline content attached to the table ({!Block.Table.caption}),
+    not a row: it has no cells and is not part of the grid. In HTML it is the
+    table's [<caption>].
 
     {2:ext_djot_definition_lists Definition lists}
 
