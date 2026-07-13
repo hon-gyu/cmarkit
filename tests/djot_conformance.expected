@@ -1,0 +1,26 @@
+attributes.test           23/35   (2 skipped)
+block_quote.test           9/15 
+code_blocks.test           5/7  
+definition_lists.test      1/4  
+symb.test                  0/0    (2 skipped)
+emphasis.test             31/35 
+escapes.test               3/6  
+fenced_divs.test           3/8  
+footnotes.test             0/4  
+headings.test              1/17 
+insert_delete_mark.test    3/4  
+links_and_images.test     16/32 
+lists.test                 4/31 
+math.test                  1/8  
+para.test                  0/1  
+raw.test                   1/4  
+regression.test            1/5    (1 skipped)
+smart.test                14/18 
+spans.test                 2/3  
+sourcepos.test             0/0    (1 skipped)
+super_subscript.test       4/4  
+tables.test                1/9  
+task_lists.test            0/3  
+thematic_breaks.test       3/4  
+verbatim.test              6/8  
+TOTAL                    132/265  (6 skipped)

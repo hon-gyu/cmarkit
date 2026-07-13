@@ -375,7 +375,7 @@ let parser
     ?strong_emphasis_delims
     ?intraword_emphasis
     ?marked_emphasis_delims
-    ?(strong_emphasis_width = 2)
+    ?strong_emphasis_width
     ?extra_inline_containers
     ?(block_id = false)
     ?djot_inline_attributes
@@ -418,12 +418,14 @@ let parser
   | Some v -> v
   | None -> if djot then djot_value else cmark
   in
-  let emphasis_delims =
-    knob ~cmark:[ '*'; '_' ] ~djot:[ '*'; '_' ] emphasis_delims
-  in
+  (* Djot's delimiters are single characters with fixed roles: [_] is emphasis
+     and [*] is strong. There is no doubling: [**x**] is strong emphasis of
+     [*x*], which is what [strong_emphasis_width = 1] says. *)
+  let emphasis_delims = knob ~cmark:[ '*'; '_' ] ~djot:[ '_' ] emphasis_delims in
   let strong_emphasis_delims =
-    knob ~cmark:[ '*'; '_' ] ~djot:[ '*'; '_' ] strong_emphasis_delims
+    knob ~cmark:[ '*'; '_' ] ~djot:[ '*' ] strong_emphasis_delims
   in
+  let strong_emphasis_width = knob ~cmark:2 ~djot:1 strong_emphasis_width in
   let intraword_emphasis = knob ~cmark:true ~djot:true intraword_emphasis in
   let marked_emphasis_delims =
     knob ~cmark:false ~djot:true marked_emphasis_delims

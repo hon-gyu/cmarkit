@@ -12,3 +12,10 @@
   (libraries cmarkit_ cmarkit_html yojson)
   (deps ./spec.json)
 )
+
+(test
+  (name djot_conformance)
+  (modules djot_conformance)
+  (libraries cmarkit_ cmarkit_html)
+  (deps (source_tree ../vendor/djot.js/test))
+)
