@@ -708,11 +708,21 @@ let list ?attrs c l =
     | `Unordered _ ->
         C.string c "<ul"; C.string c task_class; attrs c; C.string c ">\n";
         "</ul>\n"
-    | `Ordered (start, _) | `Ext_ordered (_, _, start) ->
+    | `Ordered (start, _) | `Ext_ordered (_, _, start) as t ->
         C.string c "<ol"; C.string c task_class;
         if start <> 1
         then (C.string c " start=\""; C.string c (string_of_int start);
               C.string c "\"");
+        begin match t with
+        | `Ext_ordered (style, _, _) ->
+            let ty = match style with
+            | `Decimal -> "" | `Alpha_lower -> "a" | `Alpha_upper -> "A"
+            | `Roman_lower -> "i" | `Roman_upper -> "I"
+            in
+            if ty <> ""
+            then (C.string c " type=\""; C.string c ty; C.string c "\"")
+        | `Ordered _ -> ()
+        end;
         attrs c; C.string c ">\n"; "</ol>\n"
     in
     List.iter (djot_list_item ~tight c) items;

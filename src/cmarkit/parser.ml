@@ -206,6 +206,10 @@ module Block_struct = struct
       loose : bool; (* inter-item looseness, intra-item is computed later *)
       item_min_indent : int; (* last item minimal indent *)
       list_type : Block.List'.type';
+      (* The roman reading of an ambiguous opening marker ([i.] is alpha 9 or
+         roman 1). The list stays open to it until a later marker settles the
+         style: [i.] then [ii.] is a roman list, since [ii.] can only be roman. *)
+      roman_alt : (Block.List'.ordered_style * int) option;
       items : list_item list; }
 
   let block_is_blank_line = function Blank_line _ -> true | _ -> false
@@ -912,21 +916,41 @@ module Block_struct = struct
   and list ~indent p (marker, _ as m) bs =
     let item_min_indent, item = list_item ~indent p m in
     let list_type = block_list_type marker in
+    let roman_alt = match marker with
+    | `Ext_ordered (_, _, _, alt) -> alt
+    | `Ordered _ | `Unordered _ -> None
+    in
     List { last_blank = false; loose = false;
-           item_min_indent; list_type; items = [item] } :: bs
+           item_min_indent; list_type; roman_alt; items = [item] } :: bs
 
   let try_add_to_list ~indent p (marker, _ as m) l bs =
     let item_min_indent, item = list_item ~indent p m in
+    (* An ambiguous opening marker ([i.]) is settled by a marker that can only be
+       roman ([ii.]): the list, and its first item's number, become roman. *)
+    let l = match l.roman_alt, marker with
+    | Some (roman_style, roman_start), `Ext_ordered (style, delim, _, _)
+      when style = roman_style
+           && (match l.list_type with
+               | `Ext_ordered (_, d, _) -> d = delim
+               | _ -> false) ->
+        { l with list_type = `Ext_ordered (roman_style, delim, roman_start);
+                 roman_alt = None }
+    | _ -> l
+    in
     let lt = block_list_type ~open_type:l.list_type marker in
     if same_list_type lt l.list_type then
       let l = close_last_list_item p l and last_blank = false in
       let list_type = l.list_type in
       List { last_blank; loose = l.last_blank; item_min_indent; list_type;
-             items = item :: l.items } :: bs
+             roman_alt = l.roman_alt; items = item :: l.items } :: bs
     else
     let bs = close_list p l bs and last_blank = false in
+    let roman_alt = match marker with
+    | `Ext_ordered (_, _, _, alt) -> alt
+    | `Ordered _ | `Unordered _ -> None
+    in
     List { last_blank; loose = false; item_min_indent; list_type = lt;
-           items = [item] } :: bs
+           roman_alt; items = [item] } :: bs
 
   let try_add_to_paragraph p par bs =
     let indent_start = p.current_char and indent = current_indent p in
@@ -1892,19 +1916,6 @@ and block_struct_to_list_item p (i : Block_struct.list_item) =
       loop `Non_blank tight (block_struct_to_block p b :: acc) bs
   | [] -> tight, acc
   in
-  (* Djot judges tightness in document order: a blank line loosens the list only
-     if the block that *follows* it is not a list. [i.blocks] is reversed, which
-     is why this cannot ride along with the conversion walk above. *)
-  let djot_item_tight () =
-    let rec scan seen_blank = function
-    | [] -> true (* a trailing blank loosens nothing: nothing follows it *)
-    | Block_struct.Blank_line _ :: bs -> scan true bs
-    | b :: bs ->
-        let is_list = match b with Block_struct.List _ -> true | _ -> false in
-        if seen_blank && not is_list then false else scan false bs
-    in
-    scan false (List.rev i.blocks)
-  in
   let last_meta, (tight, blocks) = match i.blocks with
   | [Block_struct.Blank_line _ as blank] ->
       let bl = block_struct_to_block p blank in
@@ -1934,8 +1945,51 @@ and block_struct_to_list_item p (i : Block_struct.list_item) =
     { Block.List_item.before_marker; marker; after_marker; block;
       ext_task_marker }
   in
-  let tight = if djot_tight then djot_item_tight () else tight in
+  ignore djot_tight;
   (i, meta), tight
+
+(* Djot's list tightness.
+
+   Djot attaches a blank line to the innermost list open at that point, and the
+   blank only loosens that list if what comes next is not a list boundary. In AST
+   terms, for a list [l]: a blank line in one of its items loosens [l] unless the
+   next block — looking past the end of the item, into the following item —
+   is a nested list; and a blank that comes after a nested list within the same
+   item belongs to that nested list, not to [l].
+
+   So [- a\n\n- b] is loose (the blank is followed by a paragraph), while
+   [- a\n\n  - b\n\n- c] is tight (the first blank is followed by a nested list,
+   the second belongs to that nested list). *)
+and djot_list_is_tight (list : Block_struct.list') =
+  let is_blank = function Block_struct.Blank_line _ -> true | _ -> false in
+  let is_list = function Block_struct.List _ -> true | _ -> false in
+  let blocks (i : Block_struct.list_item) = List.rev i.blocks in
+  let rec first_block = function
+  | [] -> None
+  | i :: items ->
+      match List.find_opt (fun b -> not (is_blank b)) (blocks i) with
+      | Some _ as b -> b
+      | None -> first_block items
+  in
+  let rec item_ok seen_list next_items = function
+  | [] -> true
+  | b :: bs when is_blank b ->
+      if seen_list then item_ok seen_list next_items bs else
+      let next = match List.find_opt (fun b -> not (is_blank b)) bs with
+      | Some _ as b -> b
+      | None -> first_block next_items
+      in
+      begin match next with
+      | Some b when not (is_list b) -> false
+      | Some _ | None -> item_ok seen_list next_items bs
+      end
+  | b :: bs -> item_ok (seen_list || is_list b) next_items bs
+  in
+  let rec go = function
+  | [] -> true
+  | i :: items -> item_ok false items (blocks i) && go items
+  in
+  go (List.rev list.items)
 
 and block_struct_to_list p list =
   let rec loop p tight acc = function
@@ -1946,12 +2000,11 @@ and block_struct_to_list p list =
   in
   let items = list.Block_struct.items in
   let last, tight = block_struct_to_list_item p (List.hd items) in
-  (* [list.loose] records a blank line between two items, which djot does not
-     count: the blank is followed by a list boundary. *)
-  let inter_item_loose =
-    list.loose && not (Oymarkit_mod.djot_list_tightness p.oymarkit_mod)
+  let tight, items = loop p (not list.loose && tight) [last] (List.tl items) in
+  let tight =
+    if Oymarkit_mod.djot_list_tightness p.oymarkit_mod
+    then djot_list_is_tight list else tight
   in
-  let tight, items = loop p (not inter_item_loose && tight) [last] (List.tl items) in
   let meta = meta_of_metas p ~first:(snd (List.hd items)) ~last:(snd last) in
   Block.List ({ type' = list.Block_struct.list_type; tight; items }, meta)
 
