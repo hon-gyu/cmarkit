@@ -87,7 +87,8 @@ module Mapper = struct
       let open Inline in
       match i with
       | Autolink _ | Break _ | Code_span _ | Raw_html _
-      | Text _ | Ext_math_span _ | Ext_jsx_expr _ as i -> Some i
+      | Text _ | Ext_math_span _ | Ext_raw_inline _ | Ext_jsx_expr _ as i ->
+          Some i
       | Ext_jsx_element (e, meta) ->
           (match Inline.Jsx_element.children e with
           | None -> Some (Ext_jsx_element (e, meta))
@@ -134,7 +135,7 @@ module Mapper = struct
       match b with
       | Blank_line _ | Code_block _ | Html_block _
       | Link_reference_definition _ | Thematic_break _
-      | Ext_math_block _ as b -> Some b
+      | Ext_math_block _ | Ext_raw_block _ as b -> Some b
       | Heading (h, meta) ->
           let inline = match map_inline m (Block.Heading.inline h) with
           | None -> (* Can be empty *) Inline.Inlines ([], Meta.none)
@@ -170,6 +171,21 @@ module Mapper = struct
           in
           let rows = List.map map_row t.rows in
           Some (Ext_table ({ t with Table.rows }, meta))
+      | Ext_definition_list (d, meta) ->
+          let item (i, imeta) =
+            let term = match map_inline m (Block.Definition_list.item_term i) with
+            | None -> Inline.Inlines ([], Meta.none)
+            | Some term -> term
+            in
+            let definition =
+              match map_block m (Block.Definition_list.item_definition i) with
+              | None -> Block.empty
+              | Some b -> b
+            in
+            { i with Block.Definition_list.term; definition }, imeta
+          in
+          let items = List.map item (Block.Definition_list.items d) in
+          Some (Ext_definition_list ({ d with items }, meta))
       | Ext_footnote_definition (fn, meta) ->
           let block = match map_block m fn.block with
           | None -> (* Can be empty *) Blocks ([], Meta.none) | Some b -> b
@@ -242,7 +258,7 @@ module Folder = struct
       let open Inline in
       match i with
       | Autolink _ | Break _ | Code_span _ | Raw_html _ | Text _
-      | Ext_math_span _ | Ext_jsx_expr _ -> acc
+      | Ext_math_span _ | Ext_raw_inline _ | Ext_jsx_expr _ -> acc
       | Ext_jsx_element (e, _) ->
           (match Inline.Jsx_element.children e with
           | None -> acc | Some child -> fold_inline f acc child)
@@ -263,7 +279,8 @@ module Folder = struct
       let open Block in
       match b with
       | Blank_line _ | Code_block _ | Html_block _
-      | Link_reference_definition _ | Thematic_break _ | Ext_math_block _ -> acc
+      | Link_reference_definition _ | Thematic_break _ | Ext_math_block _
+      | Ext_raw_block _ -> acc
       | Heading (h, _) -> fold_inline f acc (Block.Heading.inline h)
       | Block_quote (bq, _) -> fold_block f acc bq.block
       | Blocks (bs, _) -> List.fold_left (fold_block f) acc bs
@@ -280,6 +297,12 @@ module Folder = struct
           | `Sep _ -> acc
           in
           List.fold_left fold_row acc t.Table.rows
+      | Ext_definition_list (d, _) ->
+          let item acc (i, _) =
+            let acc = fold_inline f acc (Block.Definition_list.item_term i) in
+            fold_block f acc (Block.Definition_list.item_definition i)
+          in
+          List.fold_left item acc (Block.Definition_list.items d)
       | Ext_footnote_definition (fn, _) -> fold_block f acc fn.block
       | Ext_div (d, _) -> fold_block f acc (Block.Div.block d)
       | Ext_jsx_block (j, _) -> fold_block f acc (Block.Jsx_block.block j)

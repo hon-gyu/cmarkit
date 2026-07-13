@@ -81,6 +81,9 @@ module Oymarkit_mod = struct
     djot_thematic_break : bool;
     djot_symbols : bool;
     djot_escapes : bool;
+    djot_raw : bool;
+    djot_ordered_list_styles : bool;
+    djot_definition_lists : bool;
     smart_punctuation : bool;
     indented_code : bool;
     setext_headings : bool;
@@ -119,7 +122,8 @@ module Oymarkit_mod = struct
   let make ~emphasis_delims ~strong_emphasis_delims ~intraword_emphasis
       ~marked_emphasis_delims ~strong_emphasis_width ~extra_inline_containers
       ~block_id ~djot_inline_attributes ~djot_block_attributes
-      ~djot_thematic_break ~djot_symbols ~djot_escapes ~smart_punctuation
+      ~djot_thematic_break ~djot_symbols ~djot_escapes ~djot_raw
+      ~djot_ordered_list_styles ~djot_definition_lists ~smart_punctuation
       ~indented_code ~setext_headings ~lazy_continuation ~raw_html ~entity_refs
       ~tilde_code_fences ~block_quote_marker_space ~div ~wikilink ~jsx_expr
       ~jsx_element ~callout =
@@ -148,6 +152,9 @@ module Oymarkit_mod = struct
       djot_thematic_break;
       djot_symbols;
       djot_escapes;
+      djot_raw;
+      djot_ordered_list_styles;
+      djot_definition_lists;
       smart_punctuation;
       indented_code;
       setext_headings;
@@ -235,6 +242,20 @@ module Oymarkit_mod = struct
      a backslash before a space produces a non-breaking space, which CommonMark
      has no syntax for. Backslash before ASCII punctuation is the same in both. *)
   let djot_escapes t = t.djot_escapes
+
+  (* Djot raw content: a verbatim span with a [ {=format} ] specifier, and a code
+     fence whose info string is [=format]. A renderer whose output format matches
+     passes the content through verbatim; every other one drops it. *)
+  let djot_raw t = t.djot_raw
+
+  (* Djot numbers ordered lists in decimal, lower/upper alpha and lower/upper
+     roman, and delimits with [1.], [1)] or [(1)]. A style change starts a new
+     list. *)
+  let djot_ordered_list_styles t = t.djot_ordered_list_styles
+
+  (* Djot definition lists: a [: term] line followed by the indented blocks that
+     define it. *)
+  let djot_definition_lists t = t.djot_definition_lists
   let smart_punctuation t = t.smart_punctuation
   let indented_code t = t.indented_code
   let setext_headings t = t.setext_headings
@@ -313,6 +334,9 @@ let parser
     ?djot_thematic_break
     ?djot_symbols
     ?djot_escapes
+    ?djot_raw
+    ?djot_ordered_list_styles
+    ?djot_definition_lists
     ?smart_punctuation
     ?indented_code
     ?setext_headings
@@ -363,6 +387,13 @@ let parser
   let djot_thematic_break = knob ~cmark:false ~djot:true djot_thematic_break in
   let djot_symbols = knob ~cmark:false ~djot:true djot_symbols in
   let djot_escapes = knob ~cmark:false ~djot:true djot_escapes in
+  let djot_raw = knob ~cmark:false ~djot:true djot_raw in
+  let djot_ordered_list_styles =
+    knob ~cmark:false ~djot:true djot_ordered_list_styles
+  in
+  let djot_definition_lists =
+    knob ~cmark:false ~djot:true djot_definition_lists
+  in
   let smart_punctuation = knob ~cmark:false ~djot:true smart_punctuation in
   let indented_code = knob ~cmark:true ~djot:false indented_code in
   let setext_headings = knob ~cmark:true ~djot:false setext_headings in
@@ -379,6 +410,7 @@ let parser
       ~intraword_emphasis ~marked_emphasis_delims ~strong_emphasis_width
       ~extra_inline_containers ~block_id ~djot_inline_attributes
       ~djot_block_attributes ~djot_thematic_break ~djot_symbols ~djot_escapes
+      ~djot_raw ~djot_ordered_list_styles ~djot_definition_lists
       ~smart_punctuation ~indented_code ~setext_headings ~lazy_continuation
       ~raw_html ~entity_refs ~tilde_code_fences ~block_quote_marker_space ~div
       ~wikilink ~jsx_expr ~jsx_element ~callout

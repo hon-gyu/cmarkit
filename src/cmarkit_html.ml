@@ -188,6 +188,21 @@ let code_span c cs =
   html_escaped_string c (Inline.Code_span.code cs);
   C.string c "</code>"
 
+(* Djot raw content. Only [html] is our output format, so that is the only one
+   we pass through; anything targeted at another backend is dropped, as djot
+   specifies. In [safe] mode passing it through would defeat the point of the
+   mode, so it becomes a comment like the other raw HTML paths. *)
+
+let raw_inline c r =
+  if Inline.Raw_inline.format r <> "html" then () else
+  if safe c then comment c "raw HTML omitted" else
+  C.string c (Inline.Raw_inline.code r)
+
+let raw_block c r =
+  if Block.Raw_block.format r <> "html" then () else
+  if safe c then (comment c "raw HTML block omitted"; C.byte c '\n') else
+  block_lines c (Block.Code_block.code (Block.Raw_block.code_block r))
+
 let emphasis c e =
   C.string c "<em>"; C.inline c (Inline.Emphasis.inline e); C.string c "</em>"
 
@@ -361,6 +376,7 @@ let inline c = function
 | Inline.Ext_extra_inline_container (ic, _) -> extra_inline_container c ic; true
 | Inline.Ext_attributes (a, _) -> inline_attributes c a; true
 | Inline.Ext_math_span (ms, _) -> math_span c ms; true
+| Inline.Ext_raw_inline (r, _) -> raw_inline c r; true
 | Inline.Ext_smart_punct (sp, _) ->
     C.string c (Inline.Smart_punct.to_utf_8 sp); true
 | Inline.Ext_symbol (s, _) ->
@@ -507,6 +523,37 @@ let list c l =
        C.string c "\">\n");
       List.iter (list_item ~tight c) (Block.List'.items l);
       C.string c "</ol>\n"
+  | `Ext_ordered (style, _, start) ->
+      (* The djot numbering style maps onto the [type] attribute; the delimiter
+         has no HTML rendering, browsers always write a period. *)
+      C.string c "<ol";
+      begin match style with
+      | `Decimal -> ()
+      | `Alpha_lower -> C.string c " type=\"a\""
+      | `Alpha_upper -> C.string c " type=\"A\""
+      | `Roman_lower -> C.string c " type=\"i\""
+      | `Roman_upper -> C.string c " type=\"I\""
+      end;
+      if start = 1 then C.string c ">\n" else
+      (C.string c " start=\""; C.string c (string_of_int start);
+       C.string c "\">\n");
+      List.iter (list_item ~tight c) (Block.List'.items l);
+      C.string c "</ol>\n"
+
+let definition_list c d =
+  let tight = Block.Definition_list.tight d in
+  let item (i, _) =
+    C.string c "<dt>";
+    C.inline c (Block.Definition_list.item_term i);
+    C.string c "</dt>\n<dd>";
+    (* A tight definition drops the paragraph wrapper around its content, as a
+       tight list item does. *)
+    item_block ~tight c (Block.Definition_list.item_definition i);
+    C.string c "</dd>\n"
+  in
+  C.string c "<dl>\n";
+  List.iter item (Block.Definition_list.items d);
+  C.string c "</dl>\n"
 
 let html_block c lines =
   let line (l, _) = C.string c l; C.byte c '\n' in
@@ -612,6 +659,8 @@ let block c = function
 | Block.Paragraph (p, _) -> paragraph c p; true
 | Block.Thematic_break (_, _) -> thematic_break c; true
 | Block.Ext_math_block (cb, _) -> math_block c cb; true
+| Block.Ext_raw_block (r, _) -> raw_block c r; true
+| Block.Ext_definition_list (d, _) -> definition_list c d; true
 | Block.Ext_table (t, _) -> table c t; true
 | Block.Ext_div (d, _) -> div c d; true
 | Block.Ext_jsx_block (j, _) -> jsx_block c j; true

@@ -304,6 +304,23 @@ type html_block_end_cond =
   [ `End_str of string | `End_cond_1 | `End_blank | `End_blank_7 ]
 (** The type for HTML block end conditions. *)
 
+(** The type for djot ordered list number styles. *)
+type ordered_style =
+[ `Decimal | `Alpha_lower | `Alpha_upper | `Roman_lower | `Roman_upper ]
+
+(** The type for djot ordered list delimiters: [1.], [1)] and [(1)]. *)
+type ordered_delim = [ `Period | `Paren | `Parens ]
+
+(** The type for list markers. An [`Ext_ordered] is a djot marker; its last
+    component is the marker's roman reading when the alpha reading it reports is
+    ambiguous ([i.] is alpha 9 or roman 1), so that the parser can resolve it
+    against the list already open. *)
+type list_marker =
+[ `Ordered of int * char
+| `Unordered of char
+| `Ext_ordered of
+    ordered_style * ordered_delim * int * (ordered_style * int) option ]
+
 type line_type =
 | Atx_heading_line of heading_level * byte_pos (* after # *) * first * last
 | Blank_line
@@ -311,13 +328,14 @@ type line_type =
 | Fenced_code_block_line of first * last * (first * last) option
 | Html_block_line of html_block_end_cond
 | Indented_code_block_line
-| List_marker_line of ([ `Ordered of int * char | `Unordered of char ] * last)
+| List_marker_line of (list_marker * last)
 | Paragraph_line
 | Setext_underline_line of heading_level * last
 | Thematic_break_line of last
 | Ext_table_row of last
 | Ext_footnote_label of rev_spans * last * string
 | Ext_div_line of first * last * (first * last) option
+| Ext_definition_line of last (* the ':' *)
   (* Oymarkit djot div: colon fence span and optional class name span *)
 | Ext_jsx_block_line of first * last * last
   (* Oymarkit JSX block open: tag name span (first, last; an empty span with
@@ -401,11 +419,21 @@ val could_be_link_reference_definition :
 
 (** {1:container Container blocks} *)
 
-val list_marker :
+val definition_list_marker :
   string -> last:byte_pos -> start:byte_pos -> line_type
+(** [definition_list_marker s ~last ~start] is a djot definition list marker in
+    the range \[[start];[last]\]: a [:] followed by a space or the end of the
+    line. A [:::] div fence is not one. *)
+
+val list_marker :
+  ?djot_styles:bool -> string -> last:byte_pos -> start:byte_pos -> line_type
 (** [list_marker s ~last ~start] is a list marker in the range
     \[[start];[last]\]. This checks there's at least one space
-    following unless the item is empty. *)
+    following unless the item is empty.
+
+    If [djot_styles] is [true] (defaults to [false]) djot's alpha ([a.]) and
+    roman ([iv.]) numbering and its fully parenthesized delimiter ([(a)]) are
+    also recognized, as [`Ext_ordered] markers. *)
 
 val ext_task_marker :
   string -> last:byte_pos -> start:byte_pos -> (Uchar.t * last) option

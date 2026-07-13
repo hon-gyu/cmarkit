@@ -140,6 +140,12 @@ let list_last_item_continuation_indent (l : Block.List'.t) : int option =
       let marker_length =
         match Block.List'.type' l with
         | `Unordered _ -> 1
+        | `Ext_ordered (style, delim, start) ->
+            let marker = fst (Block.List_item.marker item) in
+            if marker <> "" then String.length marker
+            else
+              let number = start + List.length (Block.List'.items l) - 1 in
+              String.length (Block.List'.ordered_marker style delim number)
         | `Ordered (start, sep) ->
             let marker = fst (Block.List_item.marker item) in
             if marker <> "" then String.length marker

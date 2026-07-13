@@ -106,6 +106,9 @@ let sexp_of_inline_core : inline_sexp =
                      recurse (Inline.Attributes.inline a) ]
     | Inline.Ext_math_span (ms, m) ->
       m, Sexp.List [ Atom "Math_span"; Atom (Inline.Math_span.tex ms) ]
+    | Inline.Ext_raw_inline (r, m) ->
+      m, Sexp.List [ Atom "Raw_inline"; Atom (Inline.Raw_inline.format r);
+                     Atom (Inline.Raw_inline.code r) ]
     | Inline.Ext_smart_punct (sp, m) ->
       let kind = match Inline.Smart_punct.kind sp with
         | Inline.Smart_punct.Left_double_quote -> "left_double_quote"
@@ -198,6 +201,17 @@ let sexp_of_block_core : block_sexp =
       with_meta meta
         (Sexp.List
            (Sexp.Atom "Div" :: class' @ [ recurse_block (Block.Div.block d) ]))
+    | Block.Ext_definition_list (d, meta) ->
+      let item (i, _) =
+        Sexp.List
+          [ Sexp.Atom "Item";
+            recurse_inline (Block.Definition_list.item_term i);
+            recurse_block (Block.Definition_list.item_definition i) ]
+      in
+      with_meta meta
+        (Sexp.List
+           (Sexp.Atom "Definition_list"
+            :: List.map ~f:item (Block.Definition_list.items d)))
     | Block.Ext_jsx_block (j, meta) ->
       let close = match Block.Jsx_block.raw_close j with
         | None -> [] | Some (c, _) -> [ Sexp.Atom c ]

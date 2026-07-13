@@ -1042,6 +1042,19 @@ let link_label b ~next_line s lines ~line ~start =
 type html_block_end_cond =
   [ `End_str of string | `End_cond_1 | `End_blank | `End_blank_7 ]
 
+(* Djot ordered list styles, see [list_marker]. The [alt] of an [`Ext_ordered]
+   is the marker's roman reading when its alpha reading is ambiguous. *)
+type ordered_style =
+[ `Decimal | `Alpha_lower | `Alpha_upper | `Roman_lower | `Roman_upper ]
+
+type ordered_delim = [ `Period | `Paren | `Parens ]
+
+type list_marker =
+[ `Ordered of int * char
+| `Unordered of char
+| `Ext_ordered of
+    ordered_style * ordered_delim * int * (ordered_style * int) option ]
+
 type line_type =
 | Atx_heading_line of heading_level * byte_pos * first * last
 | Blank_line
@@ -1049,13 +1062,14 @@ type line_type =
 | Fenced_code_block_line of first * last * (first * last) option
 | Html_block_line of html_block_end_cond
 | Indented_code_block_line
-| List_marker_line of ([ `Ordered of int * char | `Unordered of char ] * last)
+| List_marker_line of (list_marker * last)
 | Paragraph_line
 | Setext_underline_line of heading_level * last
 | Thematic_break_line of last
 | Ext_table_row of last
 | Ext_footnote_label of rev_spans * last * string
 | Ext_div_line of first * last * (first * last) option
+| Ext_definition_line of last (* the ':' *)
   (* Oymarkit djot div: colon fence span and optional class name span *)
 | Ext_jsx_block_line of first * last * last
   (* Oymarkit JSX block open: tag name span (first, last; an empty span with
@@ -1384,14 +1398,129 @@ let could_be_link_reference_definition s ~last ~start =
 
 (* Container blocks *)
 
-let list_marker s ~last ~start =
+(* Djot ordered list styles: lower/upper alpha ([a.]), lower/upper roman ([iv.])
+   and the fully parenthesized delimiter ([(a)]), on top of CommonMark's decimal.
+
+   A single letter that is also a roman digit ([i], [v], [x], [l], [c], [d], [m]
+   and their uppercase) has two readings: [i.] is alpha 9 or roman 1. We report
+   the alpha reading, which is what a marker starting a list means, plus the
+   roman reading as [alt]; the parser picks [alt] when the list already open is
+   roman. Djot resolves such markers by context in exactly this way. *)
+
+let roman_digit_value = function
+| 'i' | 'I' -> 1 | 'v' | 'V' -> 5 | 'x' | 'X' -> 10 | 'l' | 'L' -> 50
+| 'c' | 'C' -> 100 | 'd' | 'D' -> 500 | 'm' | 'M' -> 1000
+| _ -> 0
+
+let roman_value s ~first ~last =
+  (* Subtractive notation: a digit smaller than the one after it is subtracted.
+     We do not validate the spelling ([iiii] passes); djot does not either. *)
+  let rec loop acc k =
+    if k > last then Some acc else
+    let v = roman_digit_value s.[k] in
+    if v = 0 then None else
+    let next = if k + 1 > last then 0 else roman_digit_value s.[k + 1] in
+    loop (if v < next then acc - v else acc + v) (k + 1)
+  in
+  if first > last then None else loop 0 first
+
+let is_roman_string s ~first ~last =
+  let rec loop k =
+    if k > last then true else
+    if roman_digit_value s.[k] = 0 then false else loop (k + 1)
+  in
+  first <= last && loop first
+
+let list_marker ?(djot_styles = false) s ~last ~start =
   (* https://spec.commonmark.org/current/#list-marker *)
+  (* [word_last] is the last byte of the number, [close] the last byte of the
+     whole marker (they differ for the [(a)] form). *)
+  let ext_marker s ~first ~word_last ~delim ~close =
+    let text_len = word_last - first + 1 in
+    let upper = Ascii.is_upper s.[first] in
+    let is_alpha = text_len = 1 && Ascii.is_letter s.[first] in
+    let alpha_value () =
+      let base = if upper then Char.code 'A' else Char.code 'a' in
+      Char.code s.[first] - base + 1
+    in
+    let roman () =
+      if not (is_roman_string s ~first ~last:word_last) then None else
+      match roman_value s ~first ~last:word_last with
+      | None -> None
+      | Some v ->
+          Some ((if upper then `Roman_upper else `Roman_lower), v)
+    in
+    let mk (style, start') alt =
+      Some (List_marker_line (`Ext_ordered (style, delim, start', alt), close))
+    in
+    if is_alpha then
+      let alpha =
+        ((if upper then `Alpha_upper else `Alpha_lower), alpha_value ())
+      in
+      mk alpha (roman ())
+    else match roman () with
+    | Some roman -> mk roman None
+    | None ->
+        (* Decimal, which only reaches here for the [(1)] form: the [1.] and
+           [1)] forms are CommonMark's and stay [`Ordered]. *)
+        let rec digits acc k =
+          if k > word_last then Some acc else
+          match s.[k] with
+          | '0' .. '9' as c -> digits ((acc * 10) + (Char.code c - 0x30)) (k + 1)
+          | _ -> None
+        in
+        match digits 0 first with
+        | None -> None
+        | Some v -> mk (`Decimal, v) None
+  in
+  (* [(word)] : the fully parenthesized djot form. *)
+  let parens s ~start =
+    let first = start + 1 in
+    let rec scan k =
+      if k > last then None else
+      if s.[k] = ')' then (if k = first then None else Some k) else
+      if Ascii.is_alphanum s.[k] then scan (k + 1) else None
+    in
+    match scan first with
+    | None -> Nomatch
+    | Some close ->
+        let next = close + 1 in
+        if next <= last && not (Ascii.is_blank s.[next]) then Nomatch else
+        match
+          ext_marker s ~first ~word_last:(close - 1) ~delim:`Parens ~close
+        with
+        | None -> Nomatch
+        | Some m -> m
+  in
+  (* [word.] or [word)] with an alphabetic word: the djot alpha/roman forms. *)
+  let alpha_or_roman s ~start =
+    let rec scan k =
+      if k > last then Nomatch else
+      match s.[k] with
+      | c when Ascii.is_letter c -> scan (k + 1)
+      | '.' | ')' as c ->
+          if k = start then Nomatch else
+          let next = k + 1 in
+          if next <= last && not (Ascii.is_blank s.[next]) then Nomatch else
+          let delim = if c = '.' then `Period else `Paren in
+          begin match
+            ext_marker s ~first:start ~word_last:(k - 1) ~delim ~close:k
+          with
+          | None -> Nomatch
+          | Some m -> m
+          end
+      | _ -> Nomatch
+    in
+    scan start
+  in
   if start > last then Nomatch else match s.[start] with
   | '-' | '+' | '*' as c ->
       let next = start + 1 in
       if next > last || Ascii.is_blank s.[next]
       then List_marker_line (`Unordered c, start)
       else Nomatch
+  | '(' when djot_styles -> parens s ~start
+  | 'a' .. 'z' | 'A' .. 'Z' when djot_styles -> alpha_or_roman s ~start
   | '0' .. '9' as c ->
       let[@inline] digit c = Char.code c - 0x30 in
       let rec loop s last count acc k =
@@ -1407,6 +1536,16 @@ let list_marker s ~last ~start =
       in
       loop s last 1 (digit c) (start + 1)
   | _ -> Nomatch
+
+(* Djot definition list: a [:] followed by a space or the end of the line. The
+   term is the rest of the line and the definition is the indented blocks under
+   it. A [:::] div fence is not one: its [:] is followed by a [:]. *)
+let definition_list_marker s ~last ~start =
+  if start > last then Nomatch else
+  if s.[start] <> ':' then Nomatch else
+  let next = start + 1 in
+  if next > last || Ascii.is_blank s.[next] then Ext_definition_line start
+  else Nomatch
 
 let ext_task_marker s ~last ~start =
   if start + 1 > last then None else

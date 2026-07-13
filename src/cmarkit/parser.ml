@@ -161,6 +161,23 @@ module Block_struct = struct
   | Thematic_break of Layout.indent * line_span (* including trailing blanks *)
   | Ext_table of Layout.indent * (line_span * line_span (* trail blanks *)) list
   | Ext_footnote of Layout.indent * (Label.t * Label.t option) * t list
+  | Ext_def_list of def_list (* Oymarkit djot definition list *)
+
+  and def_item =
+   { before_marker : Layout.indent;
+     marker : line_span (* the ':' *);
+     after_marker : Layout.indent;
+     term : line_span (* the rest of the marker line *);
+     blocks : t list (* the definition, reversed *) }
+
+  and def_list =
+    { last_blank : bool;
+      loose : bool;
+      colon_indent : int (* indent of the ':' of the last item *);
+      (* The definition's indent is whatever its first line has, so it is not
+         known when the item is opened: [None] until that line shows up. *)
+      def_indent : int option;
+      def_items : def_item list; }
 
   and list_item =
    { before_marker : Layout.indent;
@@ -390,8 +407,22 @@ module Block_struct = struct
   | Code_block (`Indented ls) :: bs -> close_indented_code_block p ls bs
   | Paragraph par :: bs -> close_paragraph p par bs
   | List l :: bs -> close_list p l bs
+  | Ext_def_list dl :: bs -> close_def_list p dl bs
   | Ext_footnote (i, l, blocks) :: bs -> close_footnote p i l blocks bs
   | bs -> bs
+
+  and close_def_list p dl bs =
+    let i = List.hd dl.def_items in
+    let blocks = close_last_block p i.blocks in
+    (* Blank-line extraction, as for lists: a trailing blank belongs after the
+       list rather than inside its last definition. *)
+    match blocks with
+    | Blank_line _ as bl :: (_ :: _ as blocks) ->
+        let def_items = { i with blocks } :: List.tl dl.def_items in
+        bl :: Ext_def_list { dl with def_items } :: bs
+    | blocks ->
+        let def_items = { i with blocks } :: List.tl dl.def_items in
+        Ext_def_list { dl with def_items } :: bs
 
   and close_list p l bs =
     let i = List.hd l.items in
@@ -420,6 +451,11 @@ module Block_struct = struct
     in
     List.rev_append blanks (Ext_footnote (indent, label, blocks) :: bs)
 
+  let close_last_def_item p dl =
+    let item = List.hd dl.def_items in
+    let item = { item with blocks = close_last_block p item.blocks } in
+    { dl with def_items = item :: List.tl dl.def_items }
+
   let close_last_list_item p l =
     let item = List.hd l.items in
     let item = { item with blocks = close_last_block p item.blocks } in
@@ -446,6 +482,7 @@ module Block_struct = struct
       (* closed by the end of document: [raw_close] stays [None] *)
       Ext_jsx_block (o, end_doc p children) :: bs
   | List list :: bs -> close_list p list bs
+  | Ext_def_list dl :: bs -> close_def_list p dl bs
   | Paragraph par :: bs -> close_paragraph p par bs
   | Code_block (`Indented ls) :: bs -> close_indented_code_block p ls bs
   | Code_block (`Fenced f) :: bs -> end_doc_close_fenced_code_block p f bs
@@ -455,6 +492,10 @@ module Block_struct = struct
     | Attribute_specs _ | Ext_table _ ) :: _ | [] as bs -> bs
 
   (* Adding lines to blocks *)
+
+  let match_list_marker p ~last ~start =
+    let djot_styles = Oymarkit_mod.djot_ordered_list_styles p.oymarkit_mod in
+    Match.list_marker ~djot_styles p.i ~last ~start
 
   let match_html_block_start p ~last ~start =
     (* Djot has no HTML blocks: a line starting with a tag is a paragraph. *)
@@ -492,7 +533,7 @@ module Block_struct = struct
           if r <> Nomatch then r else
           let r = Match.thematic_break p.i ~last ~start in
           if r <> Nomatch then r else
-          let r = Match.list_marker p.i ~last ~start in
+          let r = match_list_marker p ~last ~start in
           if r <> Nomatch then r else
           Paragraph_line
       | '#' ->
@@ -502,7 +543,16 @@ module Block_struct = struct
       | '+' | '*' | '0' .. '9' ->
           let r = Match.thematic_break p.i ~last ~start in
           if r <> Nomatch then r else
-          let r = Match.list_marker p.i ~last ~start in
+          let r = match_list_marker p ~last ~start in
+          if r <> Nomatch then r else
+          Paragraph_line
+      | '(' | 'a' .. 'z' | 'A' .. 'Z'
+        when Oymarkit_mod.djot_ordered_list_styles p.oymarkit_mod ->
+          (* Djot's alpha/roman markers and its [(a)] form start on characters
+             that CommonMark never dispatches on. A word that is not a marker
+             falls through to a paragraph, which is what any other letter does
+             anyway. *)
+          let r = match_list_marker p ~last ~start in
           if r <> Nomatch then r else
           Paragraph_line
       | '_' ->
@@ -518,8 +568,22 @@ module Block_struct = struct
           let r = Match.fenced_code_block_start ~tilde_fences p.i ~last ~start in
           if r <> Nomatch then r else
           Paragraph_line
-      | ':' when Oymarkit_mod.div p.oymarkit_mod ->
-          let r = Match.div_open p.i ~last ~start in
+      | ':' when Oymarkit_mod.div p.oymarkit_mod
+                 || Oymarkit_mod.djot_definition_lists p.oymarkit_mod ->
+          (* A [:::] fence and a [: term] marker both start on a colon; the
+             fence is tried first, and only a colon followed by a space or the
+             end of the line can be a definition marker, so they never
+             compete. *)
+          let r =
+            if Oymarkit_mod.div p.oymarkit_mod
+            then Match.div_open p.i ~last ~start else Match.Nomatch
+          in
+          if r <> Nomatch then r else
+          let r =
+            if Oymarkit_mod.djot_definition_lists p.oymarkit_mod
+            then Match.definition_list_marker p.i ~last ~start
+            else Match.Nomatch
+          in
           if r <> Nomatch then r else
           Paragraph_line
       | '<' when Oymarkit_mod.jsx_element p.oymarkit_mod ->
@@ -561,16 +625,36 @@ module Block_struct = struct
     end
 
   let list_marker_can_interrupt_paragraph p = function
-  | `Ordered (1, _), marker_last | `Unordered _, marker_last ->
+  | `Ordered (1, _), marker_last | `Unordered _, marker_last
+  | `Ext_ordered (_, _, 1, _), marker_last ->
       let last = p.current_line_last_char and start = marker_last + 1 in
       let non_blank = Match.first_non_blank p.i ~last ~start in
       non_blank <= p.current_line_last_char (* line is not blank *)
   | _ -> false
 
-  let same_list_type t0 t1 = match t0, t1 with
-  | `Ordered (_, c0), `Ordered (_, c1)
-  | `Unordered c0, `Unordered c1 when Char.equal c0 c1 -> true
-  | _ -> false
+  (* A djot marker whose alpha reading is ambiguous ([i.] is alpha 9 or roman 1)
+     reads as roman only when the list it continues is roman; otherwise the alpha
+     reading wins, which is what a marker opening a list means. *)
+  let block_list_type ?open_type (m : Match.list_marker) : Block.List'.type' =
+    match m with
+    | `Unordered c -> `Unordered c
+    | `Ordered (n, c) -> `Ordered (n, c)
+    | `Ext_ordered (style, delim, start, alt) ->
+        match alt, open_type with
+        | Some (roman_style, roman_start),
+          Some (`Ext_ordered (open_style, open_delim, _))
+          when open_style = roman_style && open_delim = delim ->
+            `Ext_ordered (roman_style, delim, roman_start)
+        | _ -> `Ext_ordered (style, delim, start)
+
+  let same_list_type (t0 : Block.List'.type') (t1 : Block.List'.type') =
+    match t0, t1 with
+    | `Ordered (_, c0), `Ordered (_, c1)
+    | `Unordered c0, `Unordered c1 -> Char.equal c0 c1
+    (* Djot starts a new list on a style change, so both the style and the
+       delimiter must match for the marker to continue this list. *)
+    | `Ext_ordered (s0, d0, _), `Ext_ordered (s1, d1, _) -> s0 = s1 && d0 = d1
+    | _ -> false
 
   let rec add_open_blocks_with_line_class p ~indent_start ~indent bs = function
   | Match.Blank_line -> blank_line p :: bs
@@ -588,6 +672,7 @@ module Block_struct = struct
       div_block p ~indent ~fence_first ~fence_last ~class_span :: bs
   | Ext_jsx_block_line (name_first, name_last, tag_end) ->
       jsx_block p ~indent ~name_first ~name_last ~tag_end :: bs
+  | Ext_definition_line last -> def_list p ~indent ~last bs
   | Html_block_line end_cond -> html_block p ~end_cond ~indent_start :: bs
   | Paragraph_line -> paragraph p ~start:indent_start :: bs
   | Ext_table_row last -> table p ~indent ~last :: bs
@@ -634,13 +719,31 @@ module Block_struct = struct
     min, { before_marker; marker; after_marker; ext_task_marker;
            blocks = add_open_blocks p [] }
 
-  and list ~indent p (list_type, _ as m) bs =
+  and def_item ~indent p ~last =
+    let before_marker = indent in
+    let marker = current_line_span p ~first:p.current_char ~last in
+    let after_marker = accept_list_marker_and_indent p ~marker_size:1 ~last in
+    (* The rest of the marker line is the term, taken as a span: it is inline
+       content, not blocks, so it is not dispatched like a list item's line. *)
+    let term =
+      current_line_span p ~first:p.current_char ~last:p.current_line_last_char
+    in
+    { before_marker; marker; after_marker; term; blocks = [] }
+
+  and def_list ~indent p ~last bs =
+    let item = def_item ~indent p ~last in
+    Ext_def_list { last_blank = false; loose = false; colon_indent = indent;
+                   def_indent = None; def_items = [item] } :: bs
+
+  and list ~indent p (marker, _ as m) bs =
     let item_min_indent, item = list_item ~indent p m in
+    let list_type = block_list_type marker in
     List { last_blank = false; loose = false;
            item_min_indent; list_type; items = [item] } :: bs
 
-  let try_add_to_list ~indent p (lt, _ as m) l bs =
+  let try_add_to_list ~indent p (marker, _ as m) l bs =
     let item_min_indent, item = list_item ~indent p m in
+    let lt = block_list_type ~open_type:l.list_type marker in
     if same_list_type lt l.list_type then
       let l = close_last_list_item p l and last_blank = false in
       let list_type = l.list_type in
@@ -693,6 +796,8 @@ module Block_struct = struct
         jsx_block p ~indent ~name_first ~name_last ~tag_end :: bs
     | Html_block_line end_cond ->
         html_block p ~end_cond ~indent_start :: (close_paragraph p par bs)
+    | Ext_definition_line last ->
+        def_list p ~indent ~last (close_paragraph p par bs)
     | Nomatch -> assert false
 
   let try_add_to_indented_code_block p ls bs =
@@ -854,6 +959,50 @@ module Block_struct = struct
         let bs = close_list p list bs in
         add_open_blocks_with_line_class p ~indent ~indent_start bs ltype
 
+  (* Djot definition lists.
+
+     A [: term] line opens an item whose definition is the blocks indented under
+     it. Unlike a list item, the definition's indent is not fixed by the marker
+     ([:] plus one space would be 2, but djot lets the definition sit at any
+     indent past the colon), so it is taken from the first line of the definition
+     and every later line must reach it. *)
+  and try_add_to_def_list p dl bs =
+    let indent_start = p.current_char and indent = current_indent p in
+    if only_blanks p then begin
+      let item = List.hd dl.def_items in
+      let item = { item with blocks = add_line p item.blocks } in
+      let def_items = item :: List.tl dl.def_items in
+      Ext_def_list { dl with last_blank = true; def_items } :: bs
+    end else
+    let in_definition = match dl.def_indent with
+    | Some def_indent -> indent >= def_indent
+    | None -> indent > dl.colon_indent
+    in
+    if in_definition then begin
+      let def_indent = match dl.def_indent with
+      | Some def_indent -> def_indent
+      | None -> indent (* the first definition line fixes it *)
+      in
+      accept_cols ~count:def_indent p;
+      let item = List.hd dl.def_items in
+      let item = { item with blocks = add_line p item.blocks } in
+      let def_items = item :: List.tl dl.def_items in
+      Ext_def_list { dl with def_indent = Some def_indent; last_blank = false;
+                     def_items } :: bs
+    end else
+    match match_line_type ~indent ~no_setext:true p with
+    | Ext_definition_line last ->
+        (* Another term: a new item of the same list. A blank line before it
+           makes the list loose, exactly as for list items. *)
+        let dl = close_last_def_item p dl in
+        let item = def_item ~indent p ~last in
+        Ext_def_list { loose = dl.loose || dl.last_blank; last_blank = false;
+                       colon_indent = indent; def_indent = None;
+                       def_items = item :: dl.def_items } :: bs
+    | ltype ->
+        let bs = close_def_list p dl bs in
+        add_open_blocks_with_line_class p ~indent ~indent_start bs ltype
+
   (* Oymarkit djot divs.
 
      A div has no per-line marker; its content is block-level and runs until a
@@ -962,6 +1111,7 @@ module Block_struct = struct
   | Html_block html :: bs -> try_add_to_html_block p html bs
   | Ext_table (ind, rows) :: bs -> try_add_to_table p ind rows bs
   | Ext_footnote (i, l, blocks) :: bs -> try_add_to_footnote p i l blocks bs
+  | Ext_def_list dl :: bs -> try_add_to_def_list p dl bs
 
   (* Parsing *)
 
@@ -1052,9 +1202,17 @@ let block_struct_to_code_block p = function
       meta_of_spans p ~first ~last
     in
     let cb = {Block.Code_block.layout = `Fenced layout; info_string; code} in
-    if p.exts && Block.Code_block.is_math_block info_string
-    then Block.Ext_math_block (cb, meta)
-    else Block.Code_block (cb, meta)
+    let raw_format =
+      if not (Oymarkit_mod.djot_raw p.oymarkit_mod) then None else
+      Block.Code_block.raw_format_of_info_string info_string
+    in
+    match raw_format with
+    | Some format ->
+        Block.Ext_raw_block (Block.Raw_block.make ~format cb, meta)
+    | None ->
+        if p.exts && Block.Code_block.is_math_block info_string
+        then Block.Ext_math_block (cb, meta)
+        else Block.Code_block (cb, meta)
 
 let block_struct_to_heading p = function
 | `Atx { Block_struct.indent; level; after_open; heading; layout_after } ->
@@ -1445,7 +1603,63 @@ and block_struct_to_list p list =
   let meta = meta_of_metas p ~first:(snd (List.hd items)) ~last:(snd last) in
   Block.List ({ type' = list.Block_struct.list_type; tight; items }, meta)
 
+and block_struct_to_def_item p (i : Block_struct.def_item) =
+  (* Same tightness rule as a list item: a blank line *between* two blocks of
+     the definition makes it loose, a trailing one does not (it is the blank
+     that separates two items). The [bstate] walk is the one
+     [block_struct_to_list_item] does, on the same reversed block list. *)
+  let rec loop bstate tight acc = function
+  | Block_struct.Blank_line _ as bl :: bs ->
+      let bstate = if bstate = `Trail_blank then `Trail_blank else `Blank in
+      loop bstate tight (block_struct_to_block p bl :: acc) bs
+  | b :: bs ->
+      let tight = tight && not (bstate = `Blank) in
+      loop `Non_blank tight (block_struct_to_block p b :: acc) bs
+  | [] -> tight, acc
+  in
+  let marker = (* not layout to get loc *) clean_raw_span p i.marker in
+  let _term_layout, term = Inline_struct.parse p [i.term] in
+  let last_meta, (tight, blocks) = match i.blocks with
+  | [] -> snd marker, (true, [])
+  | [Block_struct.Blank_line _ as blank] ->
+      let bl = block_struct_to_block p blank in
+      Block.meta bl, (true, [bl])
+  | Block_struct.Blank_line _ as blank :: bs ->
+      let bl = block_struct_to_block p blank in
+      Block.meta bl, loop `Trail_blank true [bl] bs
+  | b :: bs ->
+      let b = block_struct_to_block p b in
+      Block.meta b, loop `Non_blank true [b] bs
+  in
+  let definition = match blocks with
+  | [] -> Block.empty
+  | [b] -> b
+  | bs ->
+      let first = Block.meta (List.hd bs) in
+      Block.Blocks (bs, meta_of_metas p ~first ~last:last_meta)
+  in
+  let meta = meta_of_metas p ~first:(snd marker) ~last:last_meta in
+  let item =
+    { Block.Definition_list.before_marker = i.before_marker; marker;
+      after_marker = i.after_marker; term; definition }
+  in
+  (item, meta), tight
+
+and block_struct_to_def_list p (dl : Block_struct.def_list) =
+  let rec loop tight acc = function
+  | [] -> tight, acc
+  | i :: items ->
+      let item, item_tight = block_struct_to_def_item p i in
+      loop (tight && item_tight) (item :: acc) items
+  in
+  let items = dl.def_items in
+  let last, tight = block_struct_to_def_item p (List.hd items) in
+  let tight, items = loop (not dl.loose && tight) [last] (List.tl items) in
+  let meta = meta_of_metas p ~first:(snd (List.hd items)) ~last:(snd last) in
+  Block.Ext_definition_list ({ tight; items }, meta)
+
 and block_struct_to_block p = function
+| Block_struct.Ext_def_list dl -> block_struct_to_def_list p dl
 | Block_struct.Block_quote (ind, marker, bs) ->
     block_struct_to_block_quote p ind marker bs
 | Block_struct.List list -> block_struct_to_list p list

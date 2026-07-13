@@ -253,6 +253,11 @@ let rec inline defs (i : Inline.t) : json list =
   | Inline.Raw_html (h, meta) ->
       let s = String.concat "\n" (List.map (fun (_, (h, _)) -> h) h) in
       [ node ~meta "html" [ ("value", Str s) ] ]
+  (* Djot raw inline. mdast/hast can only carry HTML, so that is the only format
+     we keep; content aimed at another backend is dropped, as djot specifies. *)
+  | Inline.Ext_raw_inline (r, meta) ->
+      if Inline.Raw_inline.format r <> "html" then []
+      else [ node ~meta "html" [ ("value", Str (Inline.Raw_inline.code r)) ] ]
   | Inline.Ext_strikethrough (s, meta) ->
       [
         node ~meta "delete"
@@ -527,6 +532,24 @@ let rec block defs (b : Block.t) : json list =
             ]
           "div";
       ]
+  | Block.Ext_definition_list (d, meta) ->
+      let item (i, imeta) =
+        [ element ~meta:imeta
+            ~children:(inline defs (Block.Definition_list.item_term i)) "dt";
+          element ~meta:imeta
+            ~children:(block defs (Block.Definition_list.item_definition i))
+            "dd" ]
+      in
+      [ element ~meta
+          ~children:
+            (List.concat_map item (Block.Definition_list.items d))
+          "dl" ]
+  (* Djot raw block, see the raw inline case above. *)
+  | Block.Ext_raw_block (r, meta) ->
+      if Block.Raw_block.format r <> "html" then []
+      else
+        let value = code_block_value (Block.Raw_block.code_block r) in
+        [ node ~meta "html" [ ("value", Str value) ] ]
   | Block.Ext_jsx_block (j, meta) ->
       let open' =
         [
@@ -568,7 +591,7 @@ and list defs ~meta l =
   let ordered, start =
     match Block.List'.type' l with
     | `Unordered _ -> (false, Null)
-    | `Ordered (start, _) -> (true, Int start)
+    | `Ordered (start, _) | `Ext_ordered (_, _, start) -> (true, Int start)
   in
   let tight = Block.List'.tight l in
   let item (i, item_meta) =

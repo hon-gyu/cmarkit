@@ -1129,7 +1129,7 @@ let ext_jsx_element_token p ~first ~last ~line e =
 
 (* Parsers *)
 
-let try_code p toks start_line ~start:cstart ~count ~escaped =
+let try_code_span p toks start_line ~start:cstart ~count ~escaped =
   (* https://spec.commonmark.org/current/#code-span *)
   let count = if escaped then count - 1 else count in
   if count <= 0 then None else
@@ -1155,6 +1155,56 @@ let try_code p toks start_line ~start:cstart ~count ~escaped =
   in
   let first = cstart + count in
   match_backticks toks { start_line with first } ~count [] first
+
+(* Djot raw inline: a verbatim span immediately followed by a [ {=format} ]
+   specifier, e.g. [ `<a>`{=html} ]. The specifier is not attribute syntax —
+   [Attribute.of_string] rejects a spec starting with '=' — and it is only one
+   here if it is adjacent to a verbatim span and its braces hold nothing but the
+   format. Anything else stays what it was: text, or an attribute specifier.
+
+   This runs on the code-span token rather than in the tokenizer because the
+   verbatim span only exists once backticks have been matched up. *)
+
+let is_raw_format_char = function
+| 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' | '+' | '-' -> true
+| _ -> false
+
+let try_promote_raw_inline p toks t = match t with
+| Inline { start; inline = Inline.Code_span (cs, cs_meta); endline; next }
+  when Oymarkit_mod.djot_raw p.oymarkit_mod ->
+    let last = endline.last in
+    if next + 2 > last || p.i.[next] <> '{' || p.i.[next + 1] <> '=' then None
+    else
+    let fst_format = next + 2 in
+    let rec scan k =
+      if k > last then None else
+      if is_raw_format_char p.i.[k] then scan (k + 1) else
+      if p.i.[k] = '}' && k > fst_format then Some k else None
+    in
+    begin match scan fst_format with
+    | None -> None
+    | Some close ->
+        let format = String.sub p.i fst_format (close - fst_format) in
+        let meta =
+          if p.nolocs then Meta.none else
+          let last_byte = close and last_line = endline.line_pos in
+          meta p (Textloc.set_last (Meta.textloc cs_meta) ~last_byte ~last_line)
+        in
+        let raw = Inline.Raw_inline.make ~format cs in
+        let inline = Inline.Ext_raw_inline (raw, meta) in
+        let next = close + 1 in
+        let toks = drop_until ~start:next toks in
+        Some (toks, Inline { start; inline; endline; next })
+    end
+| _ -> None
+
+let try_code p toks start_line ~start ~count ~escaped =
+  match try_code_span p toks start_line ~start ~count ~escaped with
+  | None -> None
+  | Some (toks, line, t) ->
+      match try_promote_raw_inline p toks t with
+      | Some (toks, t) -> Some (toks, line, t)
+      | None -> Some (toks, line, t)
 
 let try_math_span p toks start_line ~start:cstart ~count =
   if not (has_math_span_closer ~count ~after:cstart p.cidx) then None else

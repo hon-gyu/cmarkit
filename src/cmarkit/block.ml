@@ -82,6 +82,17 @@ module Code_block = struct
   | None -> false | Some (i, _) -> match language_of_info_string i with
   | Some ("math", _) -> true
   | Some _ | None -> false
+
+  (* Djot raw block: the whole info string is [=format], e.g. [ ```=html ]. The
+     format is the info string's only word, so [=html extra] is not one — it is
+     an ordinary code block with a funny language. *)
+  let raw_format_of_info_string = function
+  | None -> None
+  | Some (i, _) ->
+      match language_of_info_string i with
+      | Some (word, "") when String.length word > 1 && word.[0] = '=' ->
+          Some (String.sub word 1 (String.length word - 1))
+      | Some _ | None -> None
 end
 
 module Heading = struct
@@ -147,7 +158,59 @@ module List_item = struct
 end
 
 module List' = struct
-  type type' = [ `Unordered of Layout.char | `Ordered of int * Layout.char ]
+  (* Djot ordered list styles. CommonMark only counts in decimal and only
+     delimits with [.] or [)], which stays [`Ordered]; the djot-only styles and
+     the fully parenthesized delimiter go through [`Ext_ordered] so a document
+     parsed without the knob keeps exactly the AST it had. *)
+  type ordered_style =
+  [ `Decimal | `Alpha_lower | `Alpha_upper | `Roman_lower | `Roman_upper ]
+
+  type ordered_delim = [ `Period (* [1.] *) | `Paren (* [1)] *)
+                       | `Parens (* [(1)] *) ]
+
+  type type' =
+  [ `Unordered of Layout.char
+  | `Ordered of int * Layout.char
+  | `Ext_ordered of ordered_style * ordered_delim * int ]
+
+  (* Number to marker text, e.g. [4] as [`Roman_lower] is ["iv"]. Alpha runs out
+     at [z] and roman has no zero, so out-of-range numbers fall back to decimal
+     rather than inventing a spelling. *)
+  let alpha_of_int ~upper n =
+    if n < 1 || n > 26 then Int.to_string n else
+    let base = if upper then Char.code 'A' else Char.code 'a' in
+    String.make 1 (Char.chr (base + n - 1))
+
+  let roman_of_int ~upper n =
+    if n < 1 || n > 3999 then Int.to_string n else
+    let digits =
+      [ 1000, "m"; 900, "cm"; 500, "d"; 400, "cd"; 100, "c"; 90, "xc";
+        50, "l"; 40, "xl"; 10, "x"; 9, "ix"; 5, "v"; 4, "iv"; 1, "i" ]
+    in
+    let b = Buffer.create 8 in
+    let rec loop n = function
+    | [] -> ()
+    | (v, s) :: ds when n >= v -> Buffer.add_string b s; loop (n - v) ((v, s) :: ds)
+    | _ :: ds -> loop n ds
+    in
+    loop n digits;
+    let s = Buffer.contents b in
+    if upper then String.uppercase_ascii s else s
+
+  let ordered_number style n = match style with
+  | `Decimal -> Int.to_string n
+  | `Alpha_lower -> alpha_of_int ~upper:false n
+  | `Alpha_upper -> alpha_of_int ~upper:true n
+  | `Roman_lower -> roman_of_int ~upper:false n
+  | `Roman_upper -> roman_of_int ~upper:true n
+
+  let ordered_marker style delim n =
+    let n = ordered_number style n in
+    match delim with
+    | `Period -> n ^ "."
+    | `Paren -> n ^ ")"
+    | `Parens -> "(" ^ n ^ ")"
+
   type t =
     { type' : type';
       tight : bool;
@@ -519,8 +582,54 @@ module Jsx_block = struct
   let raw_close j = j.raw_close
 end
 
+module Definition_list = struct
+  (* Djot definition list. An item is a [: term] line followed by the definition
+     blocks, which are indented under it. Unlike a list item, the marker line
+     carries content (the term), so the term is inline and the definition is the
+     block child — they are not the same kind of thing and do not share a node. *)
+  type block = t
+
+  type item =
+    { before_marker : Layout.indent;
+      marker : Layout.string node;
+      after_marker : Layout.indent;
+      term : Inline.t;
+      definition : block }
+
+  type t = { tight : bool; items : item node list }
+
+  let make_item ?(before_marker = 0) ?(marker = Layout.empty)
+      ?(after_marker = 1) ~term definition
+    =
+    { before_marker; marker; after_marker; term; definition }
+
+  let make ?(tight = true) items = { tight; items }
+
+  let tight d = d.tight
+  let items d = d.items
+  let item_before_marker i = i.before_marker
+  let item_marker i = i.marker
+  let item_after_marker i = i.after_marker
+  let item_term i = i.term
+  let item_definition i = i.definition
+end
+
+module Raw_block = struct
+  (* Djot raw block: a code fence whose info string is [=format]. The content is
+     passed through verbatim by a renderer whose output format is [format] and
+     dropped by every other one. The [Code_block.t] is kept whole, info string
+     included, so layout and rendering back to djot need nothing special. *)
+  type t = { format : string; code_block : Code_block.t }
+
+  let make ~format code_block = { format; code_block }
+  let format r = r.format
+  let code_block r = r.code_block
+end
+
 type t +=
 | Ext_math_block of Code_block.t node
+| Ext_definition_list of Definition_list.t node
+| Ext_raw_block of Raw_block.t node
 | Ext_table of Table.t node
 | Ext_footnote_definition of Footnote.t node
 | Ext_div of Div.t node
@@ -536,7 +645,8 @@ let meta ?(ext = ext_none) = function
 | Blank_line (_, m) | Block_quote (_, m) | Blocks (_, m) | Code_block (_, m)
 | Heading (_, m) | Html_block (_, m) | Link_reference_definition (_, m)
 | List (_, m) | Paragraph (_, m) | Thematic_break (_, m)
-| Ext_math_block (_, m) | Ext_table (_, m)
+| Ext_math_block (_, m) | Ext_raw_block (_, m) | Ext_table (_, m)
+| Ext_definition_list (_, m)
 | Ext_attributes (_, m)
 | Ext_div (_, m)
 | Ext_jsx_block (_, m)
@@ -571,9 +681,15 @@ let merge_adjacent_lists_enabled () =
 
 (* The merge "kind": ordered lists merge on their delimiter, unordered on their
    bullet; the ordered start number does not affect merging. *)
-let list_kind : List'.type' -> [ `U of char | `O of char ] = function
+let list_kind :
+  List'.type' ->
+  [ `U of char | `O of char
+  | `Ext_o of List'.ordered_style * List'.ordered_delim ] = function
   | `Unordered c -> `U c
   | `Ordered (_, c) -> `O c
+  (* A style change starts a new list in djot, so the style is part of the kind
+     two lists must share to merge. *)
+  | `Ext_ordered (style, delim, _) -> `Ext_o (style, delim)
 
 (* Append [blanks] (the [Blank_line]s that sat between two fused lists) into the
    last item's content, reproducing the loose-list shape the parser emits for
@@ -672,7 +788,7 @@ and absorb_following_code cb rest =
 let rec normalize ?(ext = ext_none) = function
 | Blank_line _ | Code_block _ | Heading _ | Html_block _
 | Link_reference_definition _ | Paragraph _ | Thematic_break _
-| Blocks ([], _) | Ext_math_block _ | Ext_table _ as b -> b
+| Blocks ([], _) | Ext_math_block _ | Ext_raw_block _ | Ext_table _ as b -> b
 | Block_quote (b, m) ->
     let b = { b with block = normalize ~ext b.block } in
     Block_quote (b, m)
@@ -696,6 +812,12 @@ let rec normalize ?(ext = ext_none) = function
     let bs = if merge_adjacent_lists_enabled () then merge_adjacent_lists bs else bs in
     let bs = if merge_adjacent_indented_cb_enabled () then merge_adjacent_indented_cb bs else bs in
     (match bs with [b] -> b | _ -> Blocks (bs, m))
+| Ext_definition_list (d, m) ->
+    let item (i, meta) =
+      { i with Definition_list.definition =
+                 normalize ~ext i.Definition_list.definition }, meta
+    in
+    Ext_definition_list ({ d with items = List.map item d.items }, m)
 | Ext_footnote_definition (fn, m) ->
     let fn = { fn with block = normalize ~ext fn.block } in
     Ext_footnote_definition (fn, m)
@@ -714,8 +836,11 @@ let rec defs
   = function
   | Blank_line _ | Code_block _ | Heading _ | Html_block _
   | Paragraph _ | Thematic_break _
-  | Ext_math_block _ | Ext_table _ -> init
+  | Ext_math_block _ | Ext_raw_block _ | Ext_table _ -> init
   | Ext_attributes (a, _) -> defs ~ext ~init a.block
+  | Ext_definition_list (d, _) ->
+      let item init (i, _) = defs ~ext ~init i.Definition_list.definition in
+      List.fold_left item init d.items
   | Block_quote (b, _) -> defs ~ext ~init (Block_quote.block b)
   | Blocks (bs, _) -> List.fold_left (fun init b -> defs ~ext ~init b) init bs
   | List (l, _) ->

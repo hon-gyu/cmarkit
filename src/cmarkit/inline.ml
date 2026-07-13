@@ -461,9 +461,23 @@ module Wikilink = struct
         | None -> w.content)
 end
 
+module Raw_inline = struct
+  (* Djot raw inline: a verbatim span followed by a [ {=format} ] specifier, e.g.
+     [ `<a>`{=html} ]. Passed through verbatim by a renderer whose output format
+     is [format], dropped by every other one. The [Code_span.t] is kept whole so
+     the content and its backtick count survive a render back to djot. *)
+  type t = { format : string; code_span : Code_span.t }
+
+  let make ~format code_span = { format; code_span }
+  let format r = r.format
+  let code_span r = r.code_span
+  let code r = Code_span.code r.code_span
+end
+
 [@@@ocamlformat "disable"]
 
 type t +=
+| Ext_raw_inline of Raw_inline.t node
 | Ext_strikethrough of Strikethrough.t node
 | Ext_extra_inline_container of Extra_inline_container.t node
 | Ext_attributes of Attributes.t node
@@ -487,6 +501,7 @@ let meta ?(ext = ext_none) = function
 | Ext_strikethrough (_, m) | Ext_extra_inline_container (_, m) -> m
 | Ext_attributes (_, m) -> m
 | Ext_math_span (_, m) -> m
+| Ext_raw_inline (_, m) -> m
 | Ext_smart_punct (_, m) -> m
 | Ext_symbol (_, m) -> m
 | Ext_wikilink (_, m) -> m
@@ -496,7 +511,7 @@ let meta ?(ext = ext_none) = function
 
 let rec normalize ?(ext = ext_none) = function
 | Autolink _ | Break _ | Code_span _ | Raw_html _ | Text _
-| Inlines ([], _) | Ext_math_span _ | Ext_smart_punct _ | Ext_symbol _
+| Inlines ([], _) | Ext_math_span _ | Ext_raw_inline _ | Ext_smart_punct _ | Ext_symbol _
 | Ext_wikilink _ | Ext_jsx_expr _ as i -> i
 | Ext_jsx_element (e, m) ->
     (match Jsx_element.children e with
@@ -589,6 +604,8 @@ let to_plain_text ?(ext = ext_none) ~break_on_soft i =
       loop ~break_on_soft acc (Attributes.inline a :: is)
   | Ext_math_span (m, _) :: is ->
       loop ~break_on_soft (push (Math_span.tex m) acc) is
+  | Ext_raw_inline (r, _) :: is ->
+      loop ~break_on_soft (push (Raw_inline.code r) acc) is
   | Ext_smart_punct (sp, _) :: is ->
       loop ~break_on_soft (push (Smart_punct.to_utf_8 sp) acc) is
   | Ext_symbol (s, _) :: is ->

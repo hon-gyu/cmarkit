@@ -22,7 +22,8 @@ let of_string
     ?djot ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis
     ?marked_emphasis_delims ?strong_emphasis_width ?extra_inline_containers
     ?block_id ?djot_inline_attributes ?djot_block_attributes
-    ?djot_thematic_break ?djot_symbols ?djot_escapes ?smart_punctuation
+    ?djot_thematic_break ?djot_symbols ?djot_escapes ?djot_raw
+    ?djot_ordered_list_styles ?djot_definition_lists ?smart_punctuation
     ?indented_code ?setext_headings ?lazy_continuation ?raw_html ?entity_refs
     ?tilde_code_fences ?block_quote_marker_space
     ?div ?wikilink ?jsx_expr ?jsx_element ?callout
@@ -39,7 +40,8 @@ let of_string
       ?djot ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis ?file
       ?marked_emphasis_delims ?strong_emphasis_width ?extra_inline_containers
       ?block_id ?djot_inline_attributes ?djot_block_attributes
-      ?djot_thematic_break ?djot_symbols ?djot_escapes ?smart_punctuation
+      ?djot_thematic_break ?djot_symbols ?djot_escapes ?djot_raw
+      ?djot_ordered_list_styles ?djot_definition_lists ?smart_punctuation
       ?indented_code ?setext_headings ?lazy_continuation ?raw_html ?entity_refs
       ?tilde_code_fences ?block_quote_marker_space
       ?div ?wikilink ?jsx_expr ?jsx_element ?callout ~strict s

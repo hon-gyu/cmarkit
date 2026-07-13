@@ -953,6 +953,29 @@ module Inline : sig
         separated by space. The {!tex} function does that for you. *)
   end
 
+  (* CR: include an example in following docstring *)
+  (** Djot raw inline. *)
+  module Raw_inline : sig
+    type t
+    (** The type for {{!Cmarkit.ext_raw}raw inlines}: a verbatim span whose
+        content is passed through verbatim to one output format. *)
+
+    val make : format:string -> Code_span.t -> t
+    (** [make ~format code_span] is raw content for the output format [format]
+        (e.g. ["html"]), written in the source as [code_span] followed by a
+        [ {=format} ] specifier. *)
+
+    val format : t -> string
+    (** [format r] is the output format [r] is destined for. A renderer whose
+        output format is not [format] drops [r]. *)
+
+    val code_span : t -> Code_span.t
+    (** [code_span r] is the verbatim span holding the raw content. *)
+
+    val code : t -> string
+    (** [code r] is the raw content of [r]. *)
+  end
+
   [@@@ocamlformat "enable"]
 
   (** Djot smart punctuation. *)
@@ -1123,6 +1146,7 @@ module Inline : sig
   | Ext_extra_inline_container of Extra_inline_container.t node
   | Ext_attributes of Attributes.t node
   | Ext_math_span of Math_span.t node
+  | Ext_raw_inline of Raw_inline.t node (** djot {{!Inline.Raw_inline}raw inline} *)
   | Ext_smart_punct of Smart_punct.t node
     (** djot {{!Inline.Smart_punct}smart punctuation} *)
   | Ext_symbol of Symbol.t node (** djot {{!Inline.Symbol}symbol} *)
@@ -1272,6 +1296,11 @@ module Block : sig
     (** [language_of_info_string s] extracts a (non-empty) language,
         the first word of [s] and a trimmed remainder. Assumes [s] is
         {!String.trim}ed which is what {!info_string} gives you. *)
+
+    val raw_format_of_info_string : string node option -> string option
+    (** [raw_format_of_info_string i] is [Some format] if [i] is [=format], the
+        info string of a djot {{!Block.Raw_block}raw block}. The format is the
+        info string's only word: [=html extra] is not one. *)
   end
 
   (** Headings. *)
@@ -1383,12 +1412,34 @@ module Block : sig
   (** Lists. *)
   module List' : sig
 
+    type ordered_style =
+    [ `Decimal | `Alpha_lower | `Alpha_upper | `Roman_lower | `Roman_upper ]
+    (** The type for djot ordered list numbering styles. *)
+
+    type ordered_delim = [ `Period | `Paren | `Parens ]
+    (** The type for djot ordered list delimiters: [1.], [1)] and [(1)]. *)
+
     type type' =
     [ `Unordered of Layout.char (** with given marker. *)
     | `Ordered of int * Layout.char
       (** starting at given integer, markers ending with given character
-          ([')'] or ['.']). *) ]
+          ([')'] or ['.']). *)
+    | `Ext_ordered of ordered_style * ordered_delim * int
+      (** djot {{!ext_djot_list_styles}ordered list}, numbered in the given
+          style with the given delimiter, starting at the given integer.
+          CommonMark's decimal [1.] and [1)] stay [`Ordered]: only the styles
+          and the delimiter djot adds go here, so a document parsed without
+          [djot_ordered_list_styles] keeps the AST it always had. *) ]
     (** The type for list types. *)
+
+    val ordered_number : ordered_style -> int -> string
+    (** [ordered_number style n] is [n] written in [style], e.g. [4] in
+        [`Roman_lower] is ["iv"]. Alpha stops at [z] and roman has no zero, so a
+        number out of a style's range falls back to decimal. *)
+
+    val ordered_marker : ordered_style -> ordered_delim -> int -> string
+    (** [ordered_marker style delim n] is the source marker for the [n]th item,
+        e.g. ["(iv)"] for [`Roman_lower] and [`Parens]. *)
 
     type t
     (** The type for {{:https://spec.commonmark.org/0.31.2/#lists}lists}. *)
@@ -1569,6 +1620,69 @@ module Block : sig
 
       See the description of {{!Cmarkit.extensions}extensions}. *)
 
+  (** Djot definition list. *)
+  module Definition_list : sig
+    type block := t
+
+    type item
+    (** The type for {{!Cmarkit.ext_djot_definition_lists}definition list}
+        items: a term and the blocks that define it. *)
+
+    type t
+    (** The type for definition lists. *)
+
+    val make_item :
+      ?before_marker:Layout.indent -> ?marker:Layout.string node ->
+      ?after_marker:Layout.indent -> term:Inline.t -> block -> item
+    (** [make_item ~term definition] is an item defining [term] as
+        [definition]. *)
+
+    val make : ?tight:bool -> item node list -> t
+    (** [make items] is a definition list of [items]. [tight] defaults to
+        [true] but should be computed from [items] in practice. *)
+
+    val tight : t -> bool
+    (** [tight d] is [true] if the list is tight. *)
+
+    val items : t -> item node list
+    (** [items d] are the items of [d]. *)
+
+    val item_term : item -> Inline.t
+    (** [item_term i] is the term [i] defines. *)
+
+    val item_definition : item -> block
+    (** [item_definition i] is the definition of {!item_term}. *)
+
+    val item_before_marker : item -> Layout.indent
+    (** [item_before_marker i] is the indent before the [:] marker. *)
+
+    val item_marker : item -> Layout.string node
+    (** [item_marker i] is the [:] marker. *)
+
+    val item_after_marker : item -> Layout.indent
+    (** [item_after_marker i] is the indent between the marker and the term. *)
+  end
+
+  (** Djot raw block. *)
+  module Raw_block : sig
+    type t
+    (** The type for {{!Cmarkit.ext_raw}raw blocks}: a code block whose content
+        is passed through verbatim to one output format. *)
+
+    val make : format:string -> Code_block.t -> t
+    (** [make ~format code_block] is raw content for the output format [format]
+        (e.g. ["html"]), written in the source as a code fence whose info string
+        is [=format]. *)
+
+    val format : t -> string
+    (** [format r] is the output format [r] is destined for. A renderer whose
+        output format is not [format] drops [r]. *)
+
+    val code_block : t -> Code_block.t
+    (** [code_block r] is the code block holding the raw content, info string
+        included. *)
+  end
+
   (** Tables. *)
   module Table : sig
 
@@ -1711,6 +1825,9 @@ module Block : sig
 
   type t +=
   | Ext_math_block of Code_block.t node
+  | Ext_definition_list of Definition_list.t node
+    (** djot {{!Block.Definition_list}definition list} *)
+  | Ext_raw_block of Raw_block.t node (** djot {{!Block.Raw_block}raw block} *)
     (** {{!Cmarkit.ext_math_display}display math}*)
   | Ext_table of Table.t node (** *)
   | Ext_footnote_definition of Footnote.t node (** *)
@@ -1800,7 +1917,9 @@ module Doc : sig
     ?extra_inline_containers:Inline.Extra_inline_container.Config.t ->
     ?block_id:bool -> ?djot_inline_attributes:bool ->
     ?djot_block_attributes:bool -> ?djot_thematic_break:bool ->
-    ?djot_symbols:bool -> ?djot_escapes:bool -> ?smart_punctuation:bool ->
+    ?djot_symbols:bool -> ?djot_escapes:bool -> ?djot_raw:bool ->
+    ?djot_ordered_list_styles:bool -> ?djot_definition_lists:bool ->
+    ?smart_punctuation:bool ->
     ?indented_code:bool -> ?setext_headings:bool ->
     ?lazy_continuation:bool -> ?raw_html:bool -> ?entity_refs:bool ->
     ?tilde_code_fences:bool -> ?block_quote_marker_space:bool ->
@@ -1951,6 +2070,22 @@ module Doc : sig
       marker} must be a [>] followed by a space or the end of the line, so
       [>text] is a paragraph rather than a quote. This is djot's rule. The
       default is [false], which preserves CommonMark behavior.}
+   {- If [djot_raw] is [true], djot {{!ext_raw}raw content} is parsed: a verbatim
+      span followed by [ {=format} ] gets into an
+      {!Inline.extension-Ext_raw_inline} node and a code fence whose info string
+      is [=format] into an {!Block.extension-Ext_raw_block} block. The default is
+      [false], which preserves CommonMark behavior.}
+   {- If [djot_definition_lists] is [true], a [: term] line followed by the
+      blocks indented under it is a djot
+      {{!ext_djot_definition_lists}definition list}, represented by
+      {!Block.extension-Ext_definition_list}. The default is [false], which
+      preserves CommonMark behavior.}
+   {- If [djot_ordered_list_styles] is [true], an ordered list may be numbered in
+      the djot {{!ext_djot_list_styles}styles} — lower or upper alpha, lower or
+      upper roman — and delimited by [(1)] as well as [1.] and [1)]. Such a list
+      gets into an [`Ext_ordered] {!Block.List'.type'}; CommonMark's decimal
+      lists are unaffected. The default is [false], which preserves CommonMark
+      behavior.}
    {- If [djot_escapes] is [true], a hard line break is written with a trailing
       backslash only — two trailing spaces are just trailing spaces — and a
       backslash before a space stands for a non-breaking space (U+00A0), which
@@ -2353,6 +2488,84 @@ end
     {{:https://spec.commonmark.org/0.31.2/#unicode-whitespace-character}
     Unicode whitespace}. When a closer can close multiple openers, the
     neareast opener is closed. Strikethrough inlines can be nested.
+
+    {2:ext_djot_definition_lists Definition lists}
+
+    According to
+    {{:https://htmlpreview.github.io/?https://github.com/jgm/djot/blob/master/doc/syntax.html#definition-list}djot},
+    behind the [djot_definition_lists] knob of {!Doc.of_string}.
+
+{v
+: apple
+  A fruit.
+
+: onion
+  A vegetable.
+v}
+
+    A [:] followed by a space or the end of the line opens an item: the term is
+    the rest of that line and the definition is the blocks indented under it.
+    The list gets into a {!Block.extension-Ext_definition_list} block.
+
+    A [:::] div fence is not a definition marker — its [:] is
+    followed by another [:] — so the two can be enabled together. Unlike a list
+    item, the definition's indent is not fixed by the marker: the first line of
+    the definition fixes it and later lines must reach it. Tightness works as it
+    does for lists: a blank line between two blocks of a definition makes the
+    list loose.
+
+    {2:ext_djot_list_styles Ordered list styles}
+
+    According to
+    {{:https://htmlpreview.github.io/?https://github.com/jgm/djot/blob/master/doc/syntax.html#ordered-list}djot},
+    behind the [djot_ordered_list_styles] knob of {!Doc.of_string}.
+
+{v
+a. lower alpha
+b. and so on
+
+(iv) roman, fully parenthesized
+(v) and so on
+v}
+
+    On top of CommonMark's decimal numbering, an ordered list may be numbered in
+    lower or upper alpha ([a.]) or lower or upper roman ([iv.]), and may be
+    delimited by [1.], [1)] or [(1)]. Such a list gets into a
+    {!Block.List'.type'} of [`Ext_ordered]; CommonMark's [1.] and [1)] stay
+    [`Ordered].
+
+    A style change starts a new list. A marker that is a single roman letter is
+    ambiguous — [i.] is alpha 9 or roman 1 — and resolves by context: it is
+    roman only if it continues a roman list, and alpha otherwise (in particular
+    when it opens one).
+
+    {2:ext_raw Raw content}
+
+    According to
+    {{:https://htmlpreview.github.io/?https://github.com/jgm/djot/blob/master/doc/syntax.html#raw-content}djot},
+    behind the [djot_raw] knob of {!Doc.of_string}.
+
+{v
+Here is `<a href="x">a link</a>`{=html} in HTML only.
+
+```=html
+<p>A whole raw block.</p>
+```
+v}
+
+    A verbatim span followed by a [ {=format} ] specifier gets into an
+    {!Inline.extension-Ext_raw_inline} node, and a code fence whose info string
+    is [=format] into an {!Block.extension-Ext_raw_block} block. A renderer
+    passes the content through verbatim when [format] is its own output format
+    and drops it otherwise, so the same document can carry both HTML and LaTeX
+    output and render correctly to each.
+
+    The specifier is not attribute syntax — {!Attribute.of_string} rejects a
+    spec starting with ['='] — and [ {=html} ] is raw content only when it is
+    adjacent to a verbatim span and the braces hold nothing but the format.
+    Elsewhere it stays text. This is how djot asks
+    for raw output, having no raw HTML of its own (see the [raw_html] knob of
+    {!Doc.of_string}).
 
     {2:ext_math Math}
 
