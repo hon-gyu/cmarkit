@@ -204,6 +204,25 @@ let newline_token ~djot_escapes s prev_line newline =
   let start (* includes spaces or '\\' on prev line *), break_type =
     let first = prev_line.first and last = prev_line.last in
     let non_space = Match.rev_drop_spaces s ~first ~start:last in
+    (* In djot the backslash of a hard break may be followed by trailing blanks,
+       tabs included; [rev_drop_spaces] only drops spaces. *)
+    let non_blank =
+      if not djot_escapes then non_space else
+      let rec loop k =
+        if k < first then first - 1 else
+        if Ascii.is_blank s.[k] then loop (k - 1) else k
+      in
+      loop last
+    in
+    if djot_escapes && non_blank >= first && s.[non_blank] = '\\' then begin
+      (* The blanks on either side of the backslash are layout: the text ends at
+         the last non-blank before it. *)
+      let rec back k =
+        if k < first then first else
+        if Ascii.is_blank s.[k] then back (k - 1) else k + 1
+      in
+      (back (non_blank - 1), `Hard)
+    end else
     if non_space = last && s.[non_space] = '\\' then (non_space, `Hard) else
     let start = non_space + 1 in
     (* In djot's escape rule, a trailing backslash is the only hard break:

@@ -94,6 +94,27 @@ let buffer_add_html_escaped_string b s =
 
 let html_escaped_string c s = buffer_add_html_escaped_string (C.buffer c) s
 
+(* Djot writes a non-breaking space as an entity: as a raw U+00A0 it would be
+   indistinguishable from a space in the output. *)
+let djot_escaped_string c s =
+  let b = C.buffer c in
+  let len = String.length s in
+  let rec loop start i =
+    if i >= len then
+      (if start < len then buffer_add_html_escaped_string b
+         (String.sub s start (len - start)))
+    else if i + 1 < len && s.[i] = '\xc2' && s.[i + 1] = '\xa0' then begin
+      if start < i then
+        buffer_add_html_escaped_string b (String.sub s start (i - start));
+      Buffer.add_string b "&nbsp;";
+      loop (i + 2) (i + 2)
+    end else loop start (i + 1)
+  in
+  loop 0 0
+
+let text_string c s =
+  if djot c then djot_escaped_string c s else html_escaped_string c s
+
 let attributes c a =
   begin match Attribute.id a with
   | None -> ()
@@ -403,7 +424,7 @@ let inline c = function
 | Inline.Link (l, _) -> link c l; true
 | Inline.Raw_html (html, _) -> raw_html c html; true
 | Inline.Strong_emphasis (e, _) -> strong_emphasis c e; true
-| Inline.Text (t, _) -> html_escaped_string c t; true
+| Inline.Text (t, _) -> text_string c t; true
 | Inline.Ext_strikethrough (s, _) -> strikethrough c s; true
 | Inline.Ext_extra_inline_container (ic, _) -> extra_inline_container c ic; true
 | Inline.Ext_attributes (a, _) -> inline_attributes c a; true
@@ -820,8 +841,9 @@ let table c t =
   rows c (Block.Table.col_count t) ~align:[] (Block.Table.rows t);
   C.string c (if djot then "</table>\n" else "</table></div>")
 
-let div c d =
+let div ?attrs c d =
   C.string c "<div";
+  (match attrs with None -> () | Some a -> attributes c a);
   begin match Block.Div.class' d with
   | None -> ()
   | Some (cls, _) ->
@@ -857,6 +879,9 @@ let block_attributes c a =
   | Block.Thematic_break _ -> thematic_break ~attrs c
   | Block.Code_block (cb, _) -> code_block ~attrs c cb
   | Block.List (l, _) -> list ~attrs c l
+  (* A div already is the element the attributes belong on: wrapping it in
+     another one would nest two divs. *)
+  | Block.Ext_div (d, _) -> div ~attrs c d
   | block ->
       C.string c "<div"; attributes c attrs; C.string c ">\n";
       C.block c block; C.string c "</div>\n"
