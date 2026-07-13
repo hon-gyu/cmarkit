@@ -177,7 +177,7 @@ let tokens_of_string ?intraword_emphasis ?marked_emphasis_delims
   let p, lines = (parser, line_spans) in
   let _layout, _meta, lines = strip_paragraph p lines in
   let _cidx, toks, _first_line =
-    tokenize ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i lines
+    tokenize ~p ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i lines
   in
   toks
 
@@ -208,7 +208,7 @@ let () =
         let p, lines = (parser, line_spans) in
         let layout, meta, lines = strip_paragraph p lines in
         let cidx, toks, first_line =
-          tokenize ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i lines
+          tokenize ~p ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i lines
         in
         p.cidx <- cidx;
         let toks, _had_link = first_pass p toks first_line in
@@ -419,7 +419,7 @@ let () =
     let p, lines = (parser, line_spans) in
     let _layout, _meta, lines = strip_paragraph p lines in
     let _cidx, toks, _first_line =
-      tokenize ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i lines
+      tokenize ~p ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i lines
     in
     toks
   in

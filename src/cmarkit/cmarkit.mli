@@ -1,3 +1,5 @@
+[@@@ocamlformat "disable"]
+
 (*---------------------------------------------------------------------------
    Copyright (c) 2021 The cmarkit programmers. All rights reserved.
    SPDX-License-Identifier: ISC
@@ -946,6 +948,77 @@ module Inline : sig
         separated by space. The {!tex} function does that for you. *)
   end
 
+  [@@@ocamlformat "enable"]
+
+  (** Djot smart punctuation. *)
+  module Smart_punct : sig
+    type kind =
+    | Left_double_quote | Right_double_quote
+    | Left_single_quote | Right_single_quote
+    | Ellipsis (** [...] *)
+    | Em_dash (** [---] *)
+    | En_dash (** [--] *)
+    (** The type for kinds of
+        {{:https://htmlpreview.github.io/?https://github.com/jgm/djot/blob/master/doc/syntax.html#smart-punctuation}smart punctuation}. *)
+
+    type t
+    (** The type for smart punctuation. *)
+
+    val make : ?marker:bool -> kind -> t
+    (** [make kind] is smart punctuation of kind [kind]. [marker] indicates a
+        quote written with an explicit brace override, [{"] or ["}]; it
+        defaults to [false] and is meaningless for the other kinds. *)
+
+    val kind : t -> kind
+    (** [kind sp] is the kind of [sp]. *)
+
+    val marker : t -> bool
+    (** [marker sp] is [true] if [sp] is a quote whose direction was forced by
+        an explicit [{"] or ["}] brace override rather than inferred from
+        context. *)
+
+    val to_source : t -> string
+    (** [to_source sp] is [sp] in its source form, brace override included.
+        Note that a marked quote must keep its braces to survive a roundtrip: a
+        bare quote may curl the other way when re-parsed, since direction is
+        otherwise inferred from context. *)
+
+    val to_utf_8 : t -> string
+    (** [to_utf_8 sp] is the UTF-8 encoded character [sp] denotes, e.g. ["\u{2014}"]
+        for {!Em_dash}. *)
+
+    val divide_hyphens : int -> int * int
+    (** [divide_hyphens n] is the [(em, en)] count of em- and en-dashes a run of
+        [n] hyphens becomes: uniformly if it can, preferring em-dashes when
+        either would be uniform. So [4] is two en-dashes and [6] is two
+        em-dashes. A run of [1] is [(0, 0)]: a lone hyphen is left alone. The
+        counts always account for the whole run, [3 * em + 2 * en = n]. *)
+  end
+
+  [@@@ocamlformat "disable"]
+
+  (** Djot symbols. *)
+  module Symbol : sig
+    type t
+    (** The type for {{:https://htmlpreview.github.io/?https://github.com/jgm/djot/blob/master/doc/syntax.html#symbols}djot symbols}:
+        a word surrounded by [:], as in [:smile:].
+
+        A symbol carries no meaning of its own. Djot renders it literally and
+        leaves interpretation (mapping it to an emoji, say) to a downstream
+        filter; the renderers here do the same. *)
+
+    val make : string -> t
+    (** [make name] is a symbol named [name], which is the text between the
+        two [:]. *)
+
+    val name : t -> string
+    (** [name s] is the name of [s], without the delimiting [:]. *)
+
+    val to_source : t -> string
+    (** [to_source s] is [s] in its source form, [:name:]. This is also how
+        [s] renders, since a symbol renders literally. *)
+  end
+
   (** Obsidian wikilinks. *)
   module Wikilink : sig
     type fragment =
@@ -1045,6 +1118,9 @@ module Inline : sig
   | Ext_extra_inline_container of Extra_inline_container.t node
   | Ext_attributes of Attributes.t node
   | Ext_math_span of Math_span.t node
+  | Ext_smart_punct of Smart_punct.t node
+    (** djot {{!Inline.Smart_punct}smart punctuation} *)
+  | Ext_symbol of Symbol.t node (** djot {{!Inline.Symbol}symbol} *)
   | Ext_wikilink of Wikilink.t node
   | Ext_jsx_expr of Jsx_expr.t node
   | Ext_jsx_element of Jsx_element.t node
@@ -1718,7 +1794,10 @@ module Doc : sig
     ?marked_emphasis_delims:bool -> ?strong_emphasis_width:int ->
     ?extra_inline_containers:Inline.Extra_inline_container.Config.t ->
     ?block_id:bool -> ?djot_inline_attributes:bool ->
-    ?djot_block_attributes:bool -> ?div:bool -> ?wikilink:bool ->
+    ?djot_block_attributes:bool -> ?djot_thematic_break:bool ->
+    ?djot_symbols:bool -> ?smart_punctuation:bool ->
+    ?indented_code:bool -> ?setext_headings:bool ->
+    ?div:bool -> ?wikilink:bool ->
     ?jsx_expr:bool -> ?jsx_element:bool ->
     ?callout:Block.Callout.Config.t ->
     ?strict:bool -> string -> t
@@ -1794,6 +1873,39 @@ module Doc : sig
    {- If [djot_block_attributes] is [true], Djot attribute lines immediately
       preceding a block are represented by {!Block.Ext_attributes}. Continued
       lines inside a block attribute must be indented.}
+   {- If [djot_thematic_break] is [true], a
+      {{:https://htmlpreview.github.io/?https://github.com/jgm/djot/blob/master/doc/syntax.html#thematic-break}djot}
+      thematic break is a line of three or more [*] or [-], and nothing else
+      but spaces or tabs. Unlike CommonMark, [_] is not a break character:
+      [___] is ordinary text. Djot also allows a break to be indented
+      arbitrarily; that follows from [indented_code] rather than from this
+      knob, since a deep indent is only claimed by something else when
+      indented code blocks exist. The default is [false], which preserves
+      CommonMark behavior.}
+   {- If [djot_symbols] is [true], [:name:] is represented by
+      {!Inline.Ext_symbol}, where [name] is a non-empty run of ASCII
+      alphanumerics, ['_'], ['+'] or ['-']. An unterminated run stays text.
+      Like djot, the renderers emit a symbol literally: giving [:smile:] a
+      meaning is a consumer's job. The default is [false], which preserves
+      CommonMark behavior.}
+   {- If [smart_punctuation] is [true], straight quotes, [...], [--] and [---]
+      are represented by {!Inline.Ext_smart_punct}. A quote curls according to
+      context: it closes when it is right-flanking, which is also what turns
+      the apostrophes of [don't] and [Socrates'] the right way. Braces override
+      the inference, [{"] forcing an opener and ["}] a closer, and a
+      backslash-escaped quote stays straight. The default is [false], which
+      preserves CommonMark behavior.}
+   {- If [indented_code] is [false], a line indented by four or more columns no
+      longer opens an
+      {{:https://spec.commonmark.org/0.31.2/#indented-code-blocks}indented code
+      block}; it is dispatched like any other line. Fenced code blocks are
+      unaffected. Djot has no indented code blocks. The default is [true],
+      which preserves CommonMark behavior.}
+   {- If [setext_headings] is [false],
+      {{:https://spec.commonmark.org/0.31.2/#setext-headings}setext heading}
+      underlines are not recognized, so [---] under a paragraph is free to be
+      read as a thematic break instead of an [<h2>]. Djot has no setext
+      headings. The default is [true], which preserves CommonMark behavior.}
    {- If [wikilink] is [true], Obsidian {{!ext_wikilink}wikilinks} [ [[...]] ]
       and embeds [ ![[...]] ] are represented by {!Inline.Ext_wikilink}. The
       default is [false]. This knob is independent of [strict].}

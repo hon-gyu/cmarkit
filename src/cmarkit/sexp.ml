@@ -106,6 +106,22 @@ let sexp_of_inline_core : inline_sexp =
                      recurse (Inline.Attributes.inline a) ]
     | Inline.Ext_math_span (ms, m) ->
       m, Sexp.List [ Atom "Math_span"; Atom (Inline.Math_span.tex ms) ]
+    | Inline.Ext_smart_punct (sp, m) ->
+      let kind = match Inline.Smart_punct.kind sp with
+        | Inline.Smart_punct.Left_double_quote -> "left_double_quote"
+        | Inline.Smart_punct.Right_double_quote -> "right_double_quote"
+        | Inline.Smart_punct.Left_single_quote -> "left_single_quote"
+        | Inline.Smart_punct.Right_single_quote -> "right_single_quote"
+        | Inline.Smart_punct.Ellipsis -> "ellipsis"
+        | Inline.Smart_punct.Em_dash -> "em_dash"
+        | Inline.Smart_punct.En_dash -> "en_dash"
+      in
+      let marker =
+        if Inline.Smart_punct.marker sp then [ Sexp.Atom "marker" ] else []
+      in
+      m, Sexp.List (Atom "Smart_punct" :: Atom kind :: marker)
+    | Inline.Ext_symbol (s, m) ->
+      m, Sexp.List [ Atom "Symbol"; Atom (Inline.Symbol.name s) ]
     | Inline.Ext_jsx_expr (j, m) ->
       m, Sexp.List [ Atom "Jsx_expr"; Atom (Inline.Jsx_expr.expr j) ]
     | Inline.Ext_jsx_element (e, m) ->

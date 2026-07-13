@@ -267,6 +267,21 @@ let inline c = function
 | Inline.Ext_extra_inline_container (ic, _) -> extra_inline_container c ic; true
 | Inline.Ext_attributes (a, _) -> inline_attributes c a; true
 | Inline.Ext_math_span (ms, _) -> math_span c ms; true
+| Inline.Ext_smart_punct (sp, _) ->
+    (* TeX's own spellings rather than the Unicode characters, which would need
+       a Unicode-aware engine or inputenc to typeset. *)
+    C.string c
+      begin match Inline.Smart_punct.kind sp with
+      | Inline.Smart_punct.Left_double_quote -> "``"
+      | Inline.Smart_punct.Right_double_quote -> "''"
+      | Inline.Smart_punct.Left_single_quote -> "`"
+      | Inline.Smart_punct.Right_single_quote -> "'"
+      | Inline.Smart_punct.Ellipsis -> "\\ldots{}"
+      | Inline.Smart_punct.Em_dash -> "---"
+      | Inline.Smart_punct.En_dash -> "--"
+      end;
+    true
+| Inline.Ext_symbol (s, _) -> text c (Inline.Symbol.to_source s); true
 | Inline.Ext_wikilink (wl, _) -> text c (Inline.Wikilink.to_plain_text wl); true
 | Inline.Ext_jsx_expr _ -> comment c "JSX expression omitted"; true
 | Inline.Ext_jsx_element (e, _) ->

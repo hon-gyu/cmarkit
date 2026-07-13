@@ -361,6 +361,11 @@ let inline c = function
 | Inline.Ext_extra_inline_container (ic, _) -> extra_inline_container c ic; true
 | Inline.Ext_attributes (a, _) -> inline_attributes c a; true
 | Inline.Ext_math_span (ms, _) -> math_span c ms; true
+| Inline.Ext_smart_punct (sp, _) ->
+    C.string c (Inline.Smart_punct.to_utf_8 sp); true
+| Inline.Ext_symbol (s, _) ->
+    (* Djot renders a symbol literally; a filter may give it a meaning. *)
+    html_escaped_string c (Inline.Symbol.to_source s); true
 | Inline.Ext_wikilink (wl, _) -> wikilink c wl; true
 | Inline.Ext_jsx_expr _ -> true (* opaque JSX expression: no HTML rendering *)
 | Inline.Ext_jsx_element (e, _) ->

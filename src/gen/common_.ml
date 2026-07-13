@@ -94,30 +94,30 @@ let html_block_absorbs (lines : (string * Cmarkit_.Meta.t) list) : bool =
       if last < 0 then false
       else
         let start = Match.first_non_blank first ~last ~start:0 in
-        begin
-          match Match.html_block_start first ~last ~start with
-          | Match.Html_block_line end_cond ->
-              not
-                (List.exists
-                   (fun (l, _) ->
-                     let last = String.length l - 1 in
-                     last >= 0 && Match.html_block_end ~end_cond l ~last ~start:0)
-                   lines)
-          | _ -> false
+        begin match Match.html_block_start first ~last ~start with
+        | Match.Html_block_line end_cond ->
+            not
+              (List.exists
+                 (fun (l, _) ->
+                   let last = String.length l - 1 in
+                   last >= 0 && Match.html_block_end ~end_cond l ~last ~start:0)
+                 lines)
+        | _ -> false
         end
 
 let reparse ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis
     ?marked_emphasis_delims ?strong_emphasis_width ?extra_inline_containers
-    ?block_id ?djot_inline_attributes ?djot_block_attributes (b : Block.t) :
-    Block.t =
+    ?block_id ?djot_inline_attributes ?djot_block_attributes ?djot_symbols
+    ?smart_punctuation (b : Block.t) : Block.t =
   b |> to_commonmark
   |> Doc.of_string ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis
        ?marked_emphasis_delims ?strong_emphasis_width ?extra_inline_containers
-       ?block_id ?djot_inline_attributes ?djot_block_attributes
+       ?block_id ?djot_inline_attributes ?djot_block_attributes ?djot_symbols
+       ?smart_punctuation
   |> Doc.block
 
-(** Continuation indentation of the final list item as it will be emitted by
-    the CommonMark renderer.
+(** Continuation indentation of the final list item as it will be emitted by the
+    CommonMark renderer.
 
     This is the number of leading columns that a following line must have to
     remain inside that item:

@@ -278,6 +278,20 @@ let rec inline defs (i : Inline.t) : json list =
           ~children:[ node ~meta "text" [ ("value", Str tex) ] ]
           "span";
       ]
+  | Inline.Ext_smart_punct (sp, meta) ->
+      (* Resolved text: mdast consumers expect the curly character, not [--]. *)
+      [ node ~meta "text" [ ("value", Str (Inline.Smart_punct.to_utf_8 sp)) ] ]
+  | Inline.Ext_symbol (s, meta) ->
+      (* Literal text, as in djot. The name is kept in [data] so a downstream
+         filter can give the symbol a meaning (an emoji, say) without having to
+         re-scan the text for [:...:]. *)
+      let data =
+        Obj [ ("oySymbol", Obj [ ("name", Str (Inline.Symbol.name s)) ]) ]
+      in
+      [
+        node ~meta "text"
+          [ ("value", Str (Inline.Symbol.to_source s)); ("data", data) ];
+      ]
   | Inline.Ext_wikilink (wl, meta) ->
       let target = Option.value ~default:"" (Inline.Wikilink.target wl) in
       let frag =

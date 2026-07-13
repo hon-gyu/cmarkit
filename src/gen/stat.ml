@@ -28,6 +28,8 @@ let inline_stats : Inline.t QCheck2.stat list =
     ("link",           count (function Inline.Link _            -> true | _ -> false));
     ("image",          count (function Inline.Image _           -> true | _ -> false));
     ("inlines",        count (function Inline.Inlines _         -> true | _ -> false));
+    ("symbol",         count (function Inline.Ext_symbol _       -> true | _ -> false));
+    ("smart_punct",    count (function Inline.Ext_smart_punct _  -> true | _ -> false));
   ] [@@ocamlformat "disable"]
 
 let count_in_block pred b =

@@ -684,7 +684,146 @@ let try_add_jsx_element_token oymarkit_mod acc s line ~start =
                 tag_end + 1)
       | _ -> None
 
-let tokenize ?oymarkit_mod ~exts s lines =
+(* Smart punctuation. Like symbols below, these resolve outright into [Inline]
+   tokens: a quote's direction is decided from its immediate neighbours (the
+   same flanking test emphasis uses), and dash and period runs are decided by
+   their own length, so nothing needs matching up in a later pass.
+
+   A quote is a closer exactly when it is right-flanking. That single rule
+   covers the apostrophes too: in [don't] and [Socrates'] the quote is both
+   left- and right-flanking, and taking the closer gives the right curl. An
+   explicit [{"] or ["}] marker overrides the test, as in djot. *)
+
+let smart_punct_token p ~kind ~marker ~first ~last ~line =
+  let textloc = textloc_of_span p { line with first; last } in
+  let sp = Inline.Smart_punct.make ~marker kind in
+  let inline = Inline.Ext_smart_punct (sp, meta p textloc) in
+  Inline { start = first; inline; endline = line; next = last + 1 }
+
+(* [start] is the quote, or the '{' of an opener marker. *)
+let try_add_smart_quote_token p oymarkit_mod acc s line ~start =
+  if not (Oymarkit_mod.smart_punctuation oymarkit_mod) then None else
+  let open_marker = s.[start] = '{' in
+  let qpos = if open_marker then start + 1 else start in
+  if qpos > line.last then None else
+  match s.[qpos] with
+  | '"' | '\'' as char ->
+      let close_marker =
+        (not open_marker) && qpos < line.last && s.[qpos + 1] = '}'
+      in
+      (* The span runs [start]..[last]. An opener marker widens it to the left
+         (the '{' is [start]), a closer marker to the right (the '}'). *)
+      let last = if close_marker then qpos + 1 else qpos in
+      let closer = match open_marker, close_marker with
+      | true, _ -> false
+      | _, true -> true
+      | _ ->
+          let prev_uchar = Match.prev_uchar s ~first:line.first ~before:qpos in
+          let next_uchar = Match.next_uchar s ~last:line.last ~after:qpos in
+          let prev_white = Cmarkit_data.is_unicode_whitespace prev_uchar in
+          let next_white = Cmarkit_data.is_unicode_whitespace next_uchar in
+          let prev_punct = Cmarkit_data.is_unicode_punctuation prev_uchar in
+          let next_punct = Cmarkit_data.is_unicode_punctuation next_uchar in
+          not prev_white && ((not prev_punct) || next_white || next_punct)
+      in
+      let kind =
+        let open Inline.Smart_punct in
+        match char, closer with
+        | '"', false -> Left_double_quote
+        | '"', true -> Right_double_quote
+        | _, false -> Left_single_quote
+        | _, true -> Right_single_quote
+      in
+      let marker = open_marker || close_marker in
+      let t = smart_punct_token p ~kind ~marker ~first:start ~last ~line in
+      Some (t :: acc, last + 1)
+  | _ -> None
+
+(* A run of hyphens becomes em- and en-dashes; a run of periods becomes one
+   ellipsis per three. Whatever is left over stays text.
+
+   The hyphen is also the delimiter of the deleted inline container ([{-x-}], or
+   bare [-x-] when curly braces are optional), so the two features have to be
+   told apart. The rule: a run of two or more hyphens is punctuation, a lone
+   hyphen is a container delimiter. Nothing is lost — a bare container delimits
+   with a single hyphen, and a lone hyphen is not punctuation anyway — and it
+   leaves one hole to plug: the closing [-}] of a curly container, whose hyphen
+   would otherwise be swallowed by a preceding run, as in [ {-a--} ]. So a
+   hyphen that closes a curly container is held back from the run. *)
+let try_add_smart_dashes_token p oymarkit_mod acc s line ~start =
+  if not (Oymarkit_mod.smart_punctuation oymarkit_mod) then None else
+  if s.[start] <> '-' then None else
+  let run_last = Match.run_of ~char:'-' ~last:line.last s ~start:(start + 1) in
+  let run_last =
+    let deleted_enabled =
+      let open Inline.Extra_inline_container.Config in
+      Oymarkit_mod.extra_inline_container_syntax oymarkit_mod
+        Inline.Extra_inline_container.Deleted <> Disabled
+    in
+    if deleted_enabled && run_last < line.last && s.[run_last + 1] = '}'
+    then run_last - 1 else run_last
+  in
+  let n = run_last - start + 1 in
+  let em, en = Inline.Smart_punct.divide_hyphens n in
+  if em = 0 && en = 0 then None else
+  let rec add acc k count kind width =
+    if count = 0 then acc, k else
+    let last = k + width - 1 in
+    let t = smart_punct_token p ~kind ~marker:false ~first:k ~last ~line in
+    add (t :: acc) (last + 1) (count - 1) kind width
+  in
+  let acc, k = add acc start em Inline.Smart_punct.Em_dash 3 in
+  let acc, _ = add acc k en Inline.Smart_punct.En_dash 2 in
+  Some (acc, run_last + 1)
+
+let try_add_smart_ellipsis_token p oymarkit_mod acc s line ~start =
+  if not (Oymarkit_mod.smart_punctuation oymarkit_mod) then None else
+  let run_last = Match.run_of ~char:'.' ~last:line.last s ~start:(start + 1) in
+  let n = run_last - start + 1 in
+  if n < 3 then None else
+  let rec add acc k count =
+    if count = 0 then acc, k else
+    let last = k + 2 in
+    let t =
+      smart_punct_token p ~kind:Inline.Smart_punct.Ellipsis ~marker:false
+        ~first:k ~last ~line
+    in
+    add (t :: acc) (last + 1) (count - 1)
+  in
+  let acc, next = add acc start (n / 3) in
+  (* Leftover periods (one or two) are not part of any ellipsis: leave them to
+     be picked up as text. *)
+  Some (acc, next)
+
+(* Djot symbols [ :name: ]. A symbol is opaque, single line and has no inline
+   children, so unlike the delimiter-based extensions there is nothing to match
+   up in a later pass: the tokenizer resolves it outright into an [Inline]
+   token, which every downstream pass already carries through untouched. *)
+
+let is_symbol_char c =
+  (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+  || c = '_' || c = '+' || c = '-'
+
+let try_add_symbol_token p oymarkit_mod acc s line ~start =
+  if not (Oymarkit_mod.djot_symbols oymarkit_mod) then None else
+  (* [start] is the opening ':'. The name must be non-empty, so [::] is not a
+     symbol. An unterminated run is not one either: it stays text. *)
+  let rec scan k =
+    if k > line.last then None else
+    if is_symbol_char s.[k] then scan (k + 1) else
+    if s.[k] = ':' && k > start + 1 then Some k else None
+  in
+  match scan (start + 1) with
+  | None -> None
+  | Some last ->
+      let name = String.sub s (start + 1) (last - start - 1) in
+      let textloc = textloc_of_span p { line with first = start; last } in
+      let sym = Inline.Symbol.make name in
+      let inline = Inline.Ext_symbol (sym, meta p textloc) in
+      let t = Inline { start; inline; endline = line; next = last + 1 } in
+      Some (t :: acc, last + 1)
+
+let tokenize ~p ?oymarkit_mod ~exts s lines =
   (* For inlines this is where we conditionalize for extensions. All code
       paths after that no longer check for p.exts: there just won't be
       extension data to process if [exts] was not [true] here. *)
@@ -728,8 +867,15 @@ let tokenize ?oymarkit_mod ~exts s lines =
                     jumped := Some (remaining, spec.endline);
                     Attribute_spec spec :: acc, spec.next
                 | None ->
-                    try_add_marked_emphasis_opener_token oymarkit_mod acc s line
-                      ~start:k
+                    begin match
+                      try_add_smart_quote_token p oymarkit_mod acc s line
+                        ~start:k
+                    with
+                    | Some r -> r
+                    | None ->
+                        try_add_marked_emphasis_opener_token oymarkit_mod acc s
+                          line ~start:k
+                    end
                 end
             end
             end
@@ -741,6 +887,29 @@ let tokenize ?oymarkit_mod ~exts s lines =
             try_add_marked_emphasis_closer_token oymarkit_mod acc s line
               ~start:k
         | _ -> try_add_emphasis_token acc s line ~start:k
+        end
+    | ':' ->
+        begin match oymarkit_mod with
+        | Some oymarkit_mod when is_oymarkit_enabled () ->
+            begin match try_add_symbol_token p oymarkit_mod acc s line ~start:k
+            with
+            | Some r -> r
+            | None -> acc, k + 1
+            end
+        | _ -> acc, k + 1
+        end
+    | '"' | '\'' | '.' as c ->
+        begin match oymarkit_mod with
+        | Some oymarkit_mod when is_oymarkit_enabled () ->
+            let try_add =
+              if c = '.' then try_add_smart_ellipsis_token
+              else try_add_smart_quote_token
+            in
+            begin match try_add p oymarkit_mod acc s line ~start:k with
+            | Some r -> r
+            | None -> acc, k + 1
+            end
+        | _ -> acc, k + 1
         end
     | ']' -> Right_brack { start = k } :: acc, k + 1
     | '[' ->
@@ -785,12 +954,20 @@ let tokenize ?oymarkit_mod ~exts s lines =
             with
             | Some r -> r
             | None ->
+                (* A hyphen run of two or more is punctuation; a lone hyphen
+                   stays a container delimiter. *)
+                begin match
+                  try_add_smart_dashes_token p oymarkit_mod acc s line ~start:k
+                with
+                | Some r -> r
+                | None ->
                 begin match
                   try_add_extra_inline_container_marks_token oymarkit_mod acc s
                     line ~start:k
                 with
                 | Some r -> r
                 | None -> acc, k + 1
+                end
                 end
             end
         | _ -> acc, k + 1
@@ -1787,7 +1964,7 @@ let strip_paragraph p lines =
 let parse p lines =
   let layout, meta, lines = strip_paragraph p lines in
   let cidx, toks, first_line =
-    tokenize ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i lines
+    tokenize ~p ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i lines
   in
   p.cidx <- cidx;
   let is, _had_link = parse_tokens p toks first_line in
@@ -1885,7 +2062,7 @@ let rec parse_cols p line acc toks k = match toks with
 
 let parse_table_row p line =
   let cidx, toks, first_line =
-    tokenize ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i [line]
+    tokenize ~p ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i [line]
   in
   p.cidx <- cidx;
   let toks, _had_link = first_pass p toks first_line in
@@ -2058,7 +2235,7 @@ let run_keyed_passes p lines =
      colon detection) is on the last line. *)
   let plast = (List.hd (List.rev lines)).last in
   let cidx, toks, first_line =
-    tokenize ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i lines
+    tokenize ~p ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i lines
   in
   p.cidx <- cidx;
   let toks, _had_link = first_pass p toks first_line in

@@ -328,6 +328,11 @@ let inline c = function
 | Inline.Ext_extra_inline_container (ic, _) -> extra_inline_container c ic; true
 | Inline.Ext_attributes (a, _) -> inline_attributes c a; true
 | Inline.Ext_math_span (m, _) -> math_span c m; true
+| Inline.Ext_smart_punct (sp, _) ->
+    (* Back to source, markers included: a bare quote could curl the other way
+       when re-parsed, since direction is inferred from context. *)
+    C.string c (Inline.Smart_punct.to_source sp); true
+| Inline.Ext_symbol (s, _) -> C.string c (Inline.Symbol.to_source s); true
 | Inline.Ext_wikilink (wl, _) -> C.string c (Inline.Wikilink.to_commonmark wl); true
 | Inline.Ext_jsx_expr (j, _) ->
     C.byte c '{'; C.string c (Inline.Jsx_expr.expr j); C.byte c '}'; true

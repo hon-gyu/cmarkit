@@ -78,6 +78,11 @@ module Oymarkit_mod = struct
     block_id : bool;
     djot_inline_attributes : bool;
     djot_block_attributes : bool;
+    djot_thematic_break : bool;
+    djot_symbols : bool;
+    smart_punctuation : bool;
+    indented_code : bool;
+    setext_headings : bool;
     div : bool;
     wikilink : bool;
     jsx_expr : bool;
@@ -107,8 +112,9 @@ module Oymarkit_mod = struct
 
   let make ~emphasis_delims ~strong_emphasis_delims ~intraword_emphasis
       ~marked_emphasis_delims ~strong_emphasis_width ~extra_inline_containers
-      ~block_id ~djot_inline_attributes ~djot_block_attributes ~div ~wikilink
-      ~jsx_expr ~jsx_element ~callout =
+      ~block_id ~djot_inline_attributes ~djot_block_attributes
+      ~djot_thematic_break ~djot_symbols ~smart_punctuation ~indented_code
+      ~setext_headings ~div ~wikilink ~jsx_expr ~jsx_element ~callout =
     let emphasis_delims =
       match parse_emph_delims emphasis_delims with
       | Ok delims -> delims
@@ -131,6 +137,11 @@ module Oymarkit_mod = struct
       block_id;
       djot_inline_attributes;
       djot_block_attributes;
+      djot_thematic_break;
+      djot_symbols;
+      smart_punctuation;
+      indented_code;
+      setext_headings;
       div;
       wikilink;
       jsx_expr;
@@ -196,6 +207,17 @@ module Oymarkit_mod = struct
   let block_id t = t.block_id
   let djot_inline_attributes t = t.djot_inline_attributes
   let djot_block_attributes t = t.djot_block_attributes
+
+  (* Djot thematic breaks are runs of [*] or [-] only: [_] is not a break
+     character. Djot also lets a break be indented arbitrarily, but that falls
+     out of [indented_code] rather than needing its own rule — with indented
+     code blocks disabled there is no competing interpretation of a deep
+     indent, so the break simply matches. *)
+  let djot_thematic_break t = t.djot_thematic_break
+  let djot_symbols t = t.djot_symbols
+  let smart_punctuation t = t.smart_punctuation
+  let indented_code t = t.indented_code
+  let setext_headings t = t.setext_headings
   let div t = t.div
   let wikilink t = t.wikilink
   let jsx_expr t = t.jsx_expr
@@ -247,6 +269,11 @@ let parser
     ?(block_id = false)
     ?(djot_inline_attributes = false)
     ?(djot_block_attributes = false)
+    ?(djot_thematic_break = false)
+    ?(djot_symbols = false)
+    ?(smart_punctuation = false)
+    ?(indented_code = true)
+    ?(setext_headings = true)
     ?(div = false)
     ?(wikilink = false)
     ?(jsx_expr = false)
@@ -259,7 +286,9 @@ let parser
     Oymarkit_mod.make ~emphasis_delims ~strong_emphasis_delims
       ~intraword_emphasis ~marked_emphasis_delims ~strong_emphasis_width
       ~extra_inline_containers ~block_id ~djot_inline_attributes
-      ~djot_block_attributes ~div ~wikilink ~jsx_expr ~jsx_element ~callout
+      ~djot_block_attributes ~djot_thematic_break ~djot_symbols ~smart_punctuation
+      ~indented_code ~setext_headings ~div ~wikilink ~jsx_expr ~jsx_element
+      ~callout
   in
   let nolocs = not locs and nolayout = not layout and exts = not strict in
   { file; i; buf = Buffer.create 512; exts; nolocs; nolayout;

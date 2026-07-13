@@ -20,3 +20,27 @@
   (inline_tests)
   (preprocess (pps ppx_expect))
 )
+
+(library
+  (name test_thematic_break)
+  (libraries cmarkit_ cmarkit_commonmark cmarkit_html)
+  (modules test_thematic_break)
+  (inline_tests)
+  (preprocess (pps ppx_expect))
+)
+
+(library
+  (name test_smart_punct)
+  (libraries cmarkit_ cmarkit_commonmark cmarkit_html cmarkit_latex)
+  (modules test_smart_punct)
+  (inline_tests)
+  (preprocess (pps ppx_expect))
+)
+
+(library
+  (name test_symbol)
+  (libraries cmarkit_ cmarkit_commonmark cmarkit_html sexplib0)
+  (modules test_symbol)
+  (inline_tests)
+  (preprocess (pps ppx_expect ppx_sexp_conv))
+)

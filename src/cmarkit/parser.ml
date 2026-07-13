@@ -452,8 +452,13 @@ module Block_struct = struct
 
   let match_line_type ~no_setext ~indent p =
     (* Effects on [p]'s column advance *)
+    let no_setext =
+      no_setext || not (Oymarkit_mod.setext_headings p.oymarkit_mod)
+    in
+    let djot_tb = Oymarkit_mod.djot_thematic_break p.oymarkit_mod in
     if only_blanks p then Match.Blank_line else
-    if indent >= 4 then Indented_code_block_line else begin
+    if indent >= 4 && Oymarkit_mod.indented_code p.oymarkit_mod
+    then Indented_code_block_line else begin
       accept_cols ~count:indent p;
       if end_of_line p then Match.Blank_line else
       let start = p.current_char and last = p.current_line_last_char in
@@ -490,7 +495,11 @@ module Block_struct = struct
           if r <> Nomatch then r else
           Paragraph_line
       | '_' ->
-          let r = Match.thematic_break p.i ~last ~start in
+          (* Djot has no [_] thematic break: [___] is ordinary text. *)
+          let r =
+            if djot_tb then Match.Nomatch else
+            Match.thematic_break p.i ~last ~start
+          in
           if r <> Nomatch then r else
           Paragraph_line
       | '~' | '`' ->
