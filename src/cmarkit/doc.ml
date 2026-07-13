@@ -24,7 +24,8 @@ let of_string
     ?block_id ?djot_inline_attributes ?djot_block_attributes
     ?djot_thematic_break ?djot_symbols ?djot_escapes ?djot_raw
     ?djot_ordered_list_styles ?djot_definition_lists ?djot_math
-    ?djot_table_captions ?smart_punctuation
+    ?djot_table_captions ?djot_verbatim_trim ?djot_headings ?djot_links ?djot_emphasis
+    ?smart_punctuation
     ?indented_code ?setext_headings ?lazy_continuation ?raw_html ?entity_refs
     ?tilde_code_fences ?block_quote_marker_space
     ?div ?wikilink ?jsx_expr ?jsx_element ?callout
@@ -43,12 +44,17 @@ let of_string
       ?block_id ?djot_inline_attributes ?djot_block_attributes
       ?djot_thematic_break ?djot_symbols ?djot_escapes ?djot_raw
       ?djot_ordered_list_styles ?djot_definition_lists ?djot_math
-      ?djot_table_captions ?smart_punctuation
+      ?djot_table_captions ?djot_verbatim_trim ?djot_headings ?djot_links ?djot_emphasis
+      ?smart_punctuation
       ?indented_code ?setext_headings ?lazy_continuation ?raw_html ?entity_refs
       ?tilde_code_fences ?block_quote_marker_space
       ?div ?wikilink ?jsx_expr ?jsx_element ?callout ~strict s
   in
   let nl, doc = Block_struct.parse p in
+  (* Djot headings are link reference targets; they must be in [defs] before the
+     blocks are converted, since that is when inline parsing resolves
+     references. *)
+  register_heading_labels p (fst doc);
   let block = block_struct_to_doc p doc in
   make ~nl block ~defs:p.defs
 

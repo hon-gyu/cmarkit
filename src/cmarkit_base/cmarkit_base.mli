@@ -288,6 +288,13 @@ val link_title :
     order, [last] is on the closing delimiter and guaranteed to be on
     [last_line]. *)
 
+val label_key : Buffer.t -> string -> string
+(** [label_key b s] is the {{:https://spec.commonmark.org/0.31.2/#link-label}link
+    label} key of [s]: case-folded, with runs of whitespace collapsed to a
+    single space and leading and trailing whitespace dropped. This is the
+    normalization {!link_label} performs while scanning, for a string already in
+    hand. [b] is used as scratch space. *)
+
 val link_label :
   Buffer.t -> next_line:'a next_line -> string -> 'a -> line:line_span ->
   start:byte_pos -> ('a * line_span * rev_spans * last * string) option

@@ -987,6 +987,32 @@ let link_title ~next_line s lines ~line ~start =
       paren ~next_line s lines ~line ~prev_bslash start [] start
   | _ -> None
 
+(* The key of a link label: case-folded, with runs of white collapsed to a
+   single space and leading/trailing white dropped. [link_label] below builds
+   this incrementally while it scans; this is the same normalization for a
+   string that is already in hand (a djot heading's text, say), so that a
+   heading and a reference to it agree on their key. *)
+let label_key b s =
+  Buffer.reset b;
+  let max = String.length s - 1 in
+  let rec loop pending_white k =
+    if k > max then Buffer.contents b else
+    let c = s.[k] in
+    if Ascii.is_white c then loop true (k + 1) else
+    let () =
+      if pending_white && Buffer.length b <> 0 then Buffer.add_char b ' '
+    in
+    let d = String.get_utf_8_uchar s k in
+    let u = Uchar.utf_decode_uchar d in
+    let u = match Uchar.to_int u with 0x0000 -> Uchar.rep | _ -> u in
+    let () = match Cmarkit_data.unicode_case_fold u with
+    | None -> Buffer.add_utf_8_uchar b u
+    | Some fold -> Buffer.add_string b fold
+    in
+    loop false (k + Uchar.utf_decode_length d)
+  in
+  loop false 0
+
 let link_label b ~next_line s lines ~line ~start =
   (* https://spec.commonmark.org/current/#link-label *)
   let rec loop b ~next_line s lines ~line ~prev_byte start acc count k =

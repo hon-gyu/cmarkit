@@ -86,6 +86,10 @@ module Oymarkit_mod = struct
     djot_definition_lists : bool;
     djot_math : bool;
     djot_table_captions : bool;
+    djot_verbatim_trim : bool;
+    djot_headings : bool;
+    djot_links : bool;
+    djot_emphasis : bool;
     smart_punctuation : bool;
     indented_code : bool;
     setext_headings : bool;
@@ -126,7 +130,8 @@ module Oymarkit_mod = struct
       ~block_id ~djot_inline_attributes ~djot_block_attributes
       ~djot_thematic_break ~djot_symbols ~djot_escapes ~djot_raw
       ~djot_ordered_list_styles ~djot_definition_lists ~djot_math
-      ~djot_table_captions ~smart_punctuation
+      ~djot_table_captions ~djot_verbatim_trim ~djot_headings ~djot_links
+      ~djot_emphasis ~smart_punctuation
       ~indented_code ~setext_headings ~lazy_continuation ~raw_html ~entity_refs
       ~tilde_code_fences ~block_quote_marker_space ~div ~wikilink ~jsx_expr
       ~jsx_element ~callout =
@@ -160,6 +165,10 @@ module Oymarkit_mod = struct
       djot_definition_lists;
       djot_math;
       djot_table_captions;
+      djot_verbatim_trim;
+      djot_headings;
+      djot_links;
+      djot_emphasis;
       smart_punctuation;
       indented_code;
       setext_headings;
@@ -197,15 +206,25 @@ module Oymarkit_mod = struct
 
   let emphasis_may_open_close t ~role ~char ~is_left_flanking ~is_right_flanking
       ~prev_white ~next_white ~prev_punct ~next_punct =
-    let may_open =
-      (char = '*' && is_left_flanking)
-      || char = '_' && is_left_flanking
-         && ((not is_right_flanking) || prev_punct)
-    in
-    let may_close =
-      (char = '*' && is_right_flanking)
-      || char = '_' && is_right_flanking
-         && ((not is_left_flanking) || next_punct)
+    (* Djot has no flanking classification at all: a delimiter may open if it is
+       not followed by whitespace and may close if it is not preceded by
+       whitespace, and [_] plays by the same rules as [*] (CommonMark gives [_]
+       extra punctuation clauses to keep [snake_case] intact — djot leaves that
+       to [intraword_emphasis], which stays orthogonal to this knob). A run may
+       therefore both open and close; which it does is settled by matching. *)
+    let may_open, may_close =
+      if t.djot_emphasis then (not next_white), (not prev_white) else
+      let may_open =
+        (char = '*' && is_left_flanking)
+        || char = '_' && is_left_flanking
+           && ((not is_right_flanking) || prev_punct)
+      in
+      let may_close =
+        (char = '*' && is_right_flanking)
+        || char = '_' && is_right_flanking
+           && ((not is_left_flanking) || next_punct)
+      in
+      may_open, may_close
     in
     let may_open, may_close =
       if t.intraword_emphasis then (may_open, may_close)
@@ -270,6 +289,22 @@ module Oymarkit_mod = struct
   (* Djot table caption: a [^ text] line after a table, continuation lines
      indented. *)
   let djot_table_captions t = t.djot_table_captions
+
+  (* Djot strips a padding space of a verbatim span only where it is what lets
+     the content start or end with a backtick; CommonMark strips one from both
+     ends whenever both are there. See [Inline.Code_span.code]. *)
+  let djot_verbatim_trim t = t.djot_verbatim_trim
+
+  (* A djot heading runs until a blank line: the lines after the [#] line
+     continue its inline content, whether or not they repeat the [#]. *)
+  let djot_headings t = t.djot_headings
+
+  (* Djot links have no titles: the whole of [ (url "title") ] is the
+     destination, which may also be split over lines (the newlines are removed).
+     Reference definitions likewise have no titles: the rest of the line is the
+     destination. *)
+  let djot_links t = t.djot_links
+  let djot_emphasis t = t.djot_emphasis
   let smart_punctuation t = t.smart_punctuation
   let indented_code t = t.indented_code
   let setext_headings t = t.setext_headings
@@ -353,6 +388,10 @@ let parser
     ?djot_definition_lists
     ?djot_math
     ?djot_table_captions
+    ?djot_verbatim_trim
+    ?djot_headings
+    ?djot_links
+    ?djot_emphasis
     ?smart_punctuation
     ?indented_code
     ?setext_headings
@@ -414,6 +453,10 @@ let parser
   let djot_table_captions =
     knob ~cmark:false ~djot:true djot_table_captions
   in
+  let djot_verbatim_trim = knob ~cmark:false ~djot:true djot_verbatim_trim in
+  let djot_headings = knob ~cmark:false ~djot:true djot_headings in
+  let djot_links = knob ~cmark:false ~djot:true djot_links in
+  let djot_emphasis = knob ~cmark:false ~djot:true djot_emphasis in
   let smart_punctuation = knob ~cmark:false ~djot:true smart_punctuation in
   let indented_code = knob ~cmark:true ~djot:false indented_code in
   let setext_headings = knob ~cmark:true ~djot:false setext_headings in
@@ -431,7 +474,8 @@ let parser
       ~extra_inline_containers ~block_id ~djot_inline_attributes
       ~djot_block_attributes ~djot_thematic_break ~djot_symbols ~djot_escapes
       ~djot_raw ~djot_ordered_list_styles ~djot_definition_lists ~djot_math
-      ~djot_table_captions ~smart_punctuation ~indented_code ~setext_headings ~lazy_continuation
+      ~djot_table_captions ~djot_verbatim_trim ~djot_headings ~djot_links
+      ~djot_emphasis ~smart_punctuation ~indented_code ~setext_headings ~lazy_continuation
       ~raw_html ~entity_refs ~tilde_code_fences ~block_quote_marker_space ~div
       ~wikilink ~jsx_expr ~jsx_element ~callout
   in

@@ -1049,7 +1049,10 @@ let code_span_token p ~count ~first ~last ~first_line ~last_line rev_spans =
   let textloc = textloc_of_lines p ~first ~last ~first_line ~last_line in
   let code_layout = raw_tight_block_lines p ~rev_spans in
   let meta = meta p textloc in
-  let cs = Inline.Code_span ({ backtick_count = count; code_layout }, meta) in
+  let djot_trim = Oymarkit_mod.djot_verbatim_trim p.oymarkit_mod in
+  let cs =
+    Inline.Code_span ({ backtick_count = count; code_layout; djot_trim }, meta)
+  in
   Inline { start = first; inline = cs; endline = last_line; next = last + 1 }
 
 let autolink_token p line ~first ~last ~is_email =
@@ -1381,7 +1384,60 @@ let try_collapsed_reflink p toks line ~image ~start (* is starting [ or ! *) =
       | None -> None
       | Some def -> Some (toks, line, `Ref (`Collapsed, ref, def), last)
 
+(* Djot inline link: everything between the [(] and the matching [)] is the
+   destination — there are no titles, so the quoted part of [ (url "title") ] is
+   just more URL — and it may be split over lines, the newlines being removed.
+   That is why this cannot reuse [Match.link_destination], whose grammar stops
+   at a space and knows nothing about titles. *)
+let try_djot_inline_link_remainder p toks start_line ~start:st (* is ( *) =
+  if not (has_right_paren ~after:st p.cidx) then None else
+  let rec scan toks line ~seg_first segs k =
+    if k > line.last then
+      let segs = { line with first = seg_first; last = line.last } :: segs in
+      match next_line toks with
+      | None -> None
+      | Some (toks, newline) ->
+          let first = first_non_blank_in_span p newline in
+          scan toks newline ~seg_first:first segs first
+    else
+    match p.i.[k] with
+    | '\\' -> scan toks line ~seg_first segs (k + 2)
+    | ')' ->
+        let segs = { line with first = seg_first; last = k - 1 } :: segs in
+        Some (toks, line, List.rev segs, k)
+    | _ -> scan toks line ~seg_first segs (k + 1)
+  in
+  let first = st + 1 in
+  match scan toks start_line ~seg_first:first [] first with
+  | None -> None
+  | Some (toks, line, segs, close) ->
+      let dest =
+        let seg span =
+          if span.first > span.last then "" else
+          String.trim (fst (clean_unesc_unref_span p span))
+        in
+        String.concat "" (List.map seg segs)
+      in
+      let textloc =
+        textloc_of_lines p ~first:st ~last:close ~first_line:start_line
+          ~last_line:line
+      in
+      let dest = if dest = "" then None else Some (dest, meta p textloc) in
+      let layout =
+        { Link_definition.indent = 0; angled_dest = false; before_dest = [];
+          after_dest = []; title_open_delim = '\"'; after_title = [] }
+      in
+      let ld =
+        { Link_definition.layout; label = None; defined_label = None; dest;
+          title = None; attributes = None }
+      in
+      let ld = (ld, meta p textloc) in
+      let toks = drop_until ~start:(close + 1) toks in
+      Some (toks, line, `Inline ld, close)
+
 let try_inline_link_remainder p toks start_line ~image ~start:st (* is ( *) =
+  if Oymarkit_mod.djot_links p.oymarkit_mod
+  then try_djot_inline_link_remainder p toks start_line ~start:st else
   (* https://spec.commonmark.org/current/#inline-link *)
   if not (has_right_paren ~after:st p.cidx) then None else
   let first_non_blank_over_nl = first_non_blank_over_nl ~next_line in
@@ -1421,7 +1477,10 @@ let try_inline_link_remainder p toks start_line ~image ~start:st (* is ( *) =
           after_dest; title_open_delim; after_title; }
       in
       let label = None and defined_label = None in
-      let ld = { Link_definition.layout; label; defined_label; dest; title }in
+      let ld =
+        { Link_definition.layout; label; defined_label; dest; title;
+          attributes = None }
+      in
       let textloc =
         let first = st and last = start in
         textloc_of_lines p ~first ~last ~first_line:start_line ~last_line:line
@@ -1500,6 +1559,31 @@ let try_link_def
       let link = { Inline.Link.text; reference } in
       let first_line = start_line and last_line = endline in
       let t = link_token p ~image ~first ~last ~first_line ~last_line link in
+      (* Djot attributes written above a reference definition merge onto every
+         link that references it: the link is wrapped in [Ext_attributes], the
+         same node an inline [ {...} ] specifier produces, so nothing downstream
+         needs to know where the attributes came from. *)
+      let t = match reference with
+      | `Ref (_, _, def) ->
+          begin match Label.Map.find_opt (Label.key def) p.defs with
+          | Some (Link_definition.Def (ld, _)) ->
+              begin match Link_definition.attributes ld with
+              | None -> t
+              | Some attrs ->
+                  begin match t with
+                  | Inline ({ inline; _ } as tok) ->
+                      let a = Inline.Attributes.make ~specs:[attrs] inline in
+                      let inline =
+                        Inline.Ext_attributes (a, Inline.meta inline)
+                      in
+                      Inline { tok with inline }
+                  | t -> t
+                  end
+              end
+          | _ -> t
+          end
+      | `Inline _ -> t
+      in
       let had_link = not image && not p.nested_links in
       Some (toks, endline, t, had_link)
 

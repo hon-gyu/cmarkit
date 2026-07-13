@@ -40,11 +40,17 @@ module Break = struct
 end
 
 module Code_span = struct
+  (* [djot_trim] selects djot's rule for stripping the padding spaces of a
+     verbatim span, see [code] below. It is a property of the span rather than a
+     renderer option because it is decided by how the document was parsed, and
+     every renderer that reads the content must strip it the same way. *)
   type t =
     { backtick_count : Layout.count;
-      code_layout : Block_line.tight list; }
+      code_layout : Block_line.tight list;
+      djot_trim : bool }
 
-  let make ~backtick_count code_layout = { backtick_count; code_layout }
+  let make ?(djot_trim = false) ~backtick_count code_layout =
+    { backtick_count; code_layout; djot_trim }
 
   let min_backtick_count ~min counts =
     let rec loop min = function
@@ -52,8 +58,8 @@ module Code_span = struct
     in
     loop min (List.sort Int.compare counts)
 
-  let of_string ?(meta = Meta.none) = function
-  | "" -> { backtick_count = 1 ; code_layout = ["", ("", meta)] }
+  let of_string ?(meta = Meta.none) ?(djot_trim = false) = function
+  | "" -> { backtick_count = 1 ; code_layout = ["", ("", meta)]; djot_trim }
   | s ->
       (* This finds out the needed backtick count, whether spaces are needed,
           and treats blanks after newline as layout *)
@@ -83,16 +89,34 @@ module Code_span = struct
         loop [] [] max 0 0 0
       in
       let backtick_count = min_backtick_count ~min:1 backtick_counts in
-      { backtick_count; code_layout }
+      { backtick_count; code_layout; djot_trim }
 
   let backtick_count cs = cs.backtick_count
   let code_layout cs = cs.code_layout
+  let djot_trim cs = cs.djot_trim
+
+  (* Djot strips a padding space only where it is doing work, i.e. only where it
+     is what lets the content start or end with a backtick. CommonMark strips one
+     from both ends whenever both are there, which also eats the spaces of
+     [ ` a ` ]; djot keeps those. The two sides are independent here. *)
+  let djot_code s =
+    let max = String.length s - 1 in
+    let first =
+      if max >= 1 && s.[0] = ' ' && s.[1] = '`' then 1 else 0
+    in
+    let last =
+      if max - 1 >= first && s.[max] = ' ' && s.[max - 1] = '`' then max - 1
+      else max
+    in
+    if first > last then "" else String.sub s first (last - first + 1)
+
   let code cs =
     (* Extract code, see https://spec.commonmark.org/0.31.2/#code-spans *)
     let sp c = Char.equal c ' ' in
     let s = List.map Block_line.tight_to_string cs.code_layout in
     let s = String.concat " " s in
     if s = "" then "" else
+    if cs.djot_trim then djot_code s else
     if s.[0] = ' ' && s.[String.length s - 1] = ' ' &&
         not (String.for_all sp s)
     then String.sub s 1 (String.length s - 2) else s

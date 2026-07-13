@@ -567,12 +567,21 @@ module Link_definition : sig
 
   val make :
     ?layout:layout -> ?defined_label:Label.t option -> ?label:Label.t ->
-    ?dest:string node -> ?title:Block_line.tight list -> unit -> t
+    ?dest:string node -> ?title:Block_line.tight list ->
+    ?attributes:Attribute.t -> unit -> t
   (** [make ()] is a link reference with given parameters. If [dest] is
       given and [layout] is not, the latter is computed with
       {!layout_for_dest}. [label] is a label if the link is defined
       via a link reference definition. [defined_label] defaults to
-      [label]. *)
+      [label]. [attributes] are the djot {{!attributes}attributes} written above
+      a reference definition, which merge onto the links that reference it. *)
+
+  val attributes : t -> Attribute.t option
+  (** [attributes ld] are the djot attributes written above the reference
+      definition [ld], if any. They merge onto every link referencing it. *)
+
+  val with_attributes : Attribute.t option -> t -> t
+  (** [with_attributes attrs ld] is [ld] with attributes [attrs]. *)
 
   val layout : t -> layout
   (** [layout ld] is the layout of [ld]. *)
@@ -683,15 +692,18 @@ module Inline : sig
     (** The type for
           {{:https://spec.commonmark.org/0.31.2/#code-spans}code spans}. *)
 
-    val make : backtick_count:Layout.count -> Block_line.tight list -> t
+    val make :
+      ?djot_trim:bool -> backtick_count:Layout.count ->
+      Block_line.tight list -> t
     (** [make ~backtick_count code_layout] is a code span with given
-        parameters.
+        parameters. [djot_trim] (defaults to [false]) selects djot's rule for
+        stripping the span's padding spaces, see {!code}.
 
         {b Warning.} Nothing is made to ensure correctness of the
         data, use {!of_string} to compute the right amount of
         backticks. *)
 
-    val of_string : ?meta:Meta.t -> string -> t
+    val of_string : ?meta:Meta.t -> ?djot_trim:bool -> string -> t
     (** [of_string s] is a code span for [s]. [s] can start with or
         include backticks; the appropriate minimal backtick count and
         possible needed leading and trailing space are computed
@@ -703,7 +715,18 @@ module Inline : sig
     (** [backtick_count cs] is the number of delimiting backticks. *)
 
     val code : t -> string
-    (** [code cs] computes from {!code_layout} the code in the span [cs]. *)
+    (** [code cs] computes from {!code_layout} the code in the span [cs].
+
+        A padding space is stripped from each end when both are present and the
+        content is not all spaces
+        ({{:https://spec.commonmark.org/0.31.2/#code-spans}CommonMark}), or, if
+        {!djot_trim} is [true], only where the space is what lets the content
+        start or end with a backtick (djot). So [ ` a ` ] is ["a"] under the
+        first rule and [" a "] under the second. *)
+
+    val djot_trim : t -> bool
+    (** [djot_trim cs] is [true] if [cs] strips its padding spaces with djot's
+        rule, see {!code}. *)
 
     val code_layout : t -> Block_line.tight list
     (** [code_layout cs] is the code data in a form that allows layout
@@ -1939,7 +1962,8 @@ module Doc : sig
     ?djot_symbols:bool -> ?djot_escapes:bool -> ?djot_raw:bool ->
     ?djot_ordered_list_styles:bool -> ?djot_definition_lists:bool ->
     ?djot_math:bool -> ?djot_table_captions:bool ->
-    ?smart_punctuation:bool ->
+    ?djot_verbatim_trim:bool -> ?djot_headings:bool -> ?djot_links:bool ->
+    ?djot_emphasis:bool -> ?smart_punctuation:bool ->
     ?indented_code:bool -> ?setext_headings:bool ->
     ?lazy_continuation:bool -> ?raw_html:bool -> ?entity_refs:bool ->
     ?tilde_code_fences:bool -> ?block_quote_marker_space:bool ->
@@ -2095,6 +2119,34 @@ module Doc : sig
       {!Inline.extension-Ext_raw_inline} node and a code fence whose info string
       is [=format] into an {!Block.extension-Ext_raw_block} block. The default is
       [false], which preserves CommonMark behavior.}
+   {- If [djot_emphasis] is [true], emphasis delimiters are classified djot's
+      way rather than CommonMark's: a delimiter run may open if it is not
+      followed by whitespace and may close if it is not preceded by whitespace,
+      with no
+      {{:https://spec.commonmark.org/0.31.2/#left-flanking-delimiter-run}flanking}
+      classification and no extra clauses for [_]. [intraword_emphasis] stays
+      orthogonal: it is what keeps [snake_case] intact, which CommonMark folds
+      into its [_] rules. The default is [false], which preserves CommonMark
+      behavior.}
+   {- If [djot_links] is [true], links have no titles: everything between the
+      [(] and the matching [)] is the destination, so the quoted trailer of
+      [ [a](url "title") ] is just more URL, and the destination may be split
+      over lines (the newlines are removed). A reference definition likewise has
+      no title: the rest of the line is the destination, continued on indented
+      lines. The default is [false], which preserves CommonMark behavior.}
+   {- If [djot_headings] is [true], a heading runs until a blank line: the lines
+      after the [#] line continue its inline content, whether or not they repeat
+      the [#] (which is stripped when they do). A heading also becomes an
+      implicit link reference target, so [ [Some Heading][] ] links to it; that
+      part needs [heading_auto_ids], which computes the id the link points at,
+      and an explicit link reference definition of the same label wins. The
+      default is [false], which preserves CommonMark behavior.}
+   {- If [djot_verbatim_trim] is [true], a verbatim span strips a padding space
+      only where the space is what lets its content start or end with a
+      backtick, rather than stripping one from each end whenever both are
+      present. So [ ` a ` ] holds [" a "] rather than ["a"]. This is djot's
+      rule, see {!Inline.Code_span.code}. The default is [false], which
+      preserves CommonMark behavior.}
    {- If [djot_math] is [true], a verbatim span prefixed with [$] or [$$] is
       djot {{!ext_djot_math}math}, producing the same
       {!Inline.extension-Ext_math_span} as the pandoc [$...$] spelling. The

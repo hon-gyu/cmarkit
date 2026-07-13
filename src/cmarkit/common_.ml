@@ -144,20 +144,27 @@ module Link_definition = struct
       label : Label.t option;
       defined_label : Label.t option;
       dest : string node option;
-      title : Block_line.tight list option; }
+      title : Block_line.tight list option;
+      (* Djot attributes written above the definition. They merge onto every
+         link that references it, so they live on the definition rather than on
+         the [Link_reference_definition] block: a link needs them at inline
+         parsing time, when it only has the definition in hand. *)
+      attributes : Attribute.t option; }
 
-  let make ?layout ?defined_label ?label ?dest ?title () =
+  let make ?layout ?defined_label ?label ?dest ?title ?attributes () =
     let layout = match dest with
     | None -> default_layout | Some (d, _) -> layout_for_dest d
     in
     let defined_label = match defined_label with None -> label | Some d -> d in
-    { layout; label; defined_label; dest; title }
+    { layout; label; defined_label; dest; title; attributes }
 
   let layout ld = ld.layout
   let label ld = ld.label
   let defined_label ld = ld.defined_label
   let dest ld = ld.dest
   let title ld = ld.title
+  let attributes ld = ld.attributes
+  let with_attributes attributes ld = { ld with attributes }
 
   type Label.def += Def of t node
 end

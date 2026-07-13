@@ -117,7 +117,10 @@ module Block_struct = struct
       level : Match.heading_level;
       after_open : byte_pos;
       heading : line_span;
-      layout_after : line_span }
+      layout_after : line_span;
+      (* Djot heading continuation lines, reversed. Empty unless
+         [djot_headings]: in CommonMark a heading is exactly one line. *)
+      more : line_span list }
 
   type setext =
     { level : Match.heading_level;
@@ -219,7 +222,8 @@ module Block_struct = struct
       let first = last_content + 1 and last = p.current_line_last_char in
       current_line_span p ~first ~last
     in
-    Heading (`Atx { indent; level; after_open; heading; layout_after })
+    Heading (`Atx { indent; level; after_open; heading; layout_after;
+                    more = [] })
 
   let setext_heading p ~indent ~level ~last_underline heading_lines =
     let u = current_line_span p ~first:p.current_char ~last:last_underline in
@@ -316,11 +320,75 @@ module Block_struct = struct
      This is invoked when we close a paragraph and works on the paragraph
      lines. *)
 
+  (* Djot reference definition: [ [label]: url ], where the destination is the
+     rest of the line and there are no titles (a quoted trailer is just more
+     URL). The destination may be continued on indented lines, the newlines being
+     removed. *)
+  let parse_djot_link_reference_definition p lines =
+    let none () = raise_notrace Exit in
+    let next_line = function line :: lines -> Some (lines, line) | [] -> None in
+    try
+      let lines, line = match next_line lines with
+      | None -> none () | Some v -> v
+      in
+      let start = first_non_blank_in_span p line in
+      let indent = start - line.first in
+      let meta_first = { line with first = start } in
+      let lines, line, label, start =
+        match Match.link_label p.buf ~next_line p.i lines ~line ~start with
+        | None -> none ()
+        | Some (lines, line, rev_spans, last, key) ->
+            let colon = last + 1 in
+            if colon > line.last || p.i.[colon] <> ':' then none () else
+            let label = Inline_struct.label_of_rev_spans p ~key rev_spans in
+            lines, line, label, colon + 1
+      in
+      let rec collect lines line ~first segs =
+        let segs = { line with first; last = line.last } :: segs in
+        match next_line lines with
+        | None -> lines, line, List.rev segs
+        | Some (lines', next) ->
+            let nb = first_non_blank_in_span p next in
+            (* An indented, non-blank line continues the destination. *)
+            if nb > next.last || nb = next.first then lines, line, List.rev segs
+            else collect lines' next ~first:nb segs
+      in
+      let first = Match.first_non_blank p.i ~last:line.last ~start in
+      let lines, line, segs = collect lines line ~first [] in
+      let dest =
+        let seg span =
+          if span.first > span.last then "" else
+          String.trim (fst (clean_unesc_unref_span p span))
+        in
+        String.concat "" (List.map seg segs)
+      in
+      if dest = "" then none () else
+      let meta_last = line in
+      let meta = meta_of_spans p ~first:meta_first ~last:meta_last in
+      let layout =
+        { Link_definition.indent; angled_dest = false; before_dest = [];
+          after_dest = []; title_open_delim = '\"'; after_title = [] }
+      in
+      let defined_label = def_label p label in
+      let dest = Some (dest, meta) in
+      let ld =
+        { Link_definition.layout; label = Some label; defined_label; dest;
+          title = None; attributes = None }, meta
+      in
+      begin match defined_label with
+      | None -> () | Some def -> set_label_def p def (Link_definition.Def ld)
+      end;
+      Some (ld, lines)
+    with
+    | Exit -> None
+
   let parse_link_reference_definition p lines =
     (* Has no side effect on [p], parsing occurs on [lines] spans. *)
     (* https://spec.commonmark.org/current/#link-reference-definitions *)
     let none () = raise_notrace Exit in
     let next_line = function line :: lines -> Some (lines, line) | [] -> None in
+    if Oymarkit_mod.djot_links p.oymarkit_mod
+    then parse_djot_link_reference_definition p lines else
     try
       let lines, line = match next_line lines with
       | None -> none () | Some v -> v
@@ -388,7 +456,8 @@ module Block_struct = struct
       let defined_label = def_label p label in
       let label = Some label in
       let ld =
-        { Link_definition.layout; label; defined_label; dest; title }, meta
+        { Link_definition.layout; label; defined_label; dest; title;
+          attributes = None }, meta
       in
       begin match defined_label with
       | None -> () | Some def -> set_label_def p def (Link_definition.Def ld)
@@ -855,6 +924,28 @@ module Block_struct = struct
           let fence = { b.fence with closing_fence = Some close } in
           Code_block (`Fenced { b with fence }) :: bs
 
+  (* Djot headings run until a blank line: a following line continues the
+     heading's inline content, whether or not it repeats the [#] prefix (which
+     is stripped when it does). CommonMark headings are exactly one line, so
+     without the knob a heading is never open and this is never reached. *)
+  let try_add_to_atx_heading p (a : atx) bs =
+    if only_blanks p then add_open_blocks p (Heading (`Atx a) :: bs) else
+    let indent = current_indent p in
+    accept_cols ~count:indent p;
+    let start = p.current_char and last = p.current_line_last_char in
+    let first =
+      (* Strip a leading [#] run and the blank after it, if any. *)
+      let hashes = Match.run_of ~char:'#' p.i ~last ~start in
+      if hashes < start then start else
+      let next = hashes + 1 in
+      if next > last then next else
+      if Ascii.is_blank p.i.[next]
+      then Match.first_non_blank p.i ~last ~start:next
+      else start
+    in
+    let line = current_line_span p ~first ~last in
+    Heading (`Atx { a with more = line :: a.more }) :: bs
+
   let try_add_to_html_block p b bs = match b.end_cond with
   | None -> add_open_blocks p (Html_block { b with end_cond = None} :: bs)
   | Some end_cond ->
@@ -1142,6 +1233,8 @@ module Block_struct = struct
 
   and add_line p = function
   | Paragraph par :: bs -> try_add_to_paragraph p par bs
+  | Heading (`Atx a) :: bs when Oymarkit_mod.djot_headings p.oymarkit_mod ->
+      try_add_to_atx_heading p a bs
   | ((Thematic_break _ | Heading _ | Blank_line _ | Linkref_def _
       | Attribute_specs _) :: _)
   | [] as bs -> add_open_blocks p bs
@@ -1259,7 +1352,7 @@ let block_struct_to_code_block p = function
         else Block.Code_block (cb, meta)
 
 let block_struct_to_heading p = function
-| `Atx { Block_struct.indent; level; after_open; heading; layout_after } ->
+| `Atx { Block_struct.indent; level; after_open; heading; layout_after; more } ->
     let after_opening =
       let first = after_open and last = heading.first - 1 in
       layout_clean_raw_span' p { heading with first; last }
@@ -1269,7 +1362,9 @@ let block_struct_to_heading p = function
     let meta =
       meta p (textloc_of_span p { heading with first = after_open - level })
     in
-    let _layout, inline = Inline_struct.parse p [heading] in
+    (* [Inline_struct.parse] takes its lines with the last one at the head, and
+       [more] is already in that order. *)
+    let _layout, inline = Inline_struct.parse p (more @ [heading]) in
     let id = match p.heading_auto_ids with
     | false -> None
     | true -> Some (`Auto (Inline.id ~buf:p.buf inline))
@@ -1434,8 +1529,40 @@ let split_attribute_paragraph p (par : Block_struct.paragraph) =
       | [], lines -> [Block_struct.Paragraph { par with lines = List.rev lines }]
       | specs, [] -> [Block_struct.Attribute_specs specs]
       | specs, lines ->
-          [ Block_struct.Attribute_specs specs;
-            Block_struct.Paragraph { par with lines = List.rev lines } ]
+          (* The lines under the specifier were never offered to link reference
+             definition parsing: the paragraph they were part of started with
+             the '{' of the specifier, so it did not even look like one. Now that
+             the specifier is peeled off, they can be — which is what makes
+             [ {.cls}\n[label]: url ] a definition rather than a paragraph.
+
+             Djot merges such attributes onto every link referencing the
+             definition, so they also go onto the definition in [p.defs] here.
+             This is the right moment: inline parsing, where a link looks its
+             definition up, happens later. *)
+          let rest =
+            Block_struct.maybe_add_link_reference_definitions p
+              (List.rev lines) []
+          in
+          let attach_attributes () =
+            let attrs = List.fold_left Attribute.merge Attribute.empty specs in
+            let attach (ld, _) = match Link_definition.defined_label ld with
+            | None -> ()
+            | Some l ->
+                let key = Label.key l in
+                match Label.Map.find_opt key p.defs with
+                | Some (Link_definition.Def (d, m)) ->
+                    let d = Link_definition.with_attributes (Some attrs) d in
+                    p.defs <- Label.Map.add key (Link_definition.Def (d, m)) p.defs
+                | _ -> ()
+            in
+            (* [rest] is in reverse document order: the first definition under
+               the specifier is the last one here. *)
+            match List.rev rest with
+            | Block_struct.Linkref_def ld :: _ -> attach ld
+            | _ -> ()
+          in
+          attach_attributes ();
+          Block_struct.Attribute_specs specs :: List.rev rest
 
 let rec prepare_block_struct p = function
 | Block_struct.Block_quote (indent, marker, bs) ->
@@ -1734,6 +1861,50 @@ and block_struct_to_block p = function
 | Block_struct.Ext_footnote (i, labels, bs) ->
     block_struct_to_footnote_definition p i labels bs
 
+(* Djot headings are implicit link reference targets: [ [Some Heading][] ] links
+   to the heading. This must run before the blocks are converted, because a
+   reference may sit in a paragraph *above* the heading it points at, and inline
+   parsing (which resolves references) happens during conversion, in document
+   order. So we walk the block structure first and register a definition for
+   every heading.
+
+   The heading's inline content is parsed here only to derive the key and the
+   id; the conversion parses it again, and that second result — resolved against
+   the complete [defs] — is the one that ends up in the AST.
+
+   An explicit definition of the same label wins: it is already in [p.defs] by
+   now (link reference definitions are collected during block-structure parsing)
+   and we do not overwrite it. *)
+let register_heading_labels p (doc : Block_struct.t list) =
+  if not (Oymarkit_mod.djot_headings p.oymarkit_mod) then () else
+  let register lines =
+    let _layout, inline = Inline_struct.parse p lines in
+    let text = Inline.to_plain_text ~break_on_soft:false inline in
+    let text = String.concat " " (List.map (String.concat "") text) in
+    let key = Match.label_key p.buf text in
+    if key = "" || Label.Map.mem key p.defs then () else
+    let id = Inline.id ~buf:p.buf inline in
+    let label = Label.make ~key [ "", (text, Meta.none) ] in
+    let dest = ("#" ^ id, Meta.none) in
+    let ld = Link_definition.make ~defined_label:(Some label) ~dest () in
+    set_label_def p label (Link_definition.Def (ld, Meta.none))
+  in
+  let rec block (b : Block_struct.t) = match b with
+  | Heading (`Atx { heading; more; _ }) -> register (more @ [heading])
+  | Heading (`Setext { heading_lines; _ }) -> register heading_lines
+  | Block_quote (_, _, bs) | Ext_div (_, bs) | Ext_jsx_block (_, bs)
+  | Ext_footnote (_, _, bs) -> List.iter block bs
+  | List l ->
+      List.iter (fun (i : Block_struct.list_item) -> List.iter block i.blocks)
+        l.items
+  | Ext_def_list dl ->
+      List.iter (fun (i : Block_struct.def_item) -> List.iter block i.blocks)
+        dl.def_items
+  | Blank_line _ | Code_block _ | Html_block _ | Linkref_def _
+  | Attribute_specs _ | Paragraph _ | Thematic_break _ | Ext_table _ -> ()
+  in
+  List.iter block doc
+
 let block_struct_to_doc p (doc, meta) =
   let rec resolve_block = function
   | Block.Block_quote (bq, meta) ->
@@ -1754,6 +1925,9 @@ let block_struct_to_doc p (doc, meta) =
   | b -> b
   and resolve_blocks bs =
     let is_empty = function Block.Blocks ([], _) -> true | _ -> false in
+    let is_linkref_def = function
+    | Block.Link_reference_definition _ -> true | _ -> false
+    in
     let rec loop pending acc = function
     | Block.Ext_attributes (a, _) :: bs
       when is_empty (Block.Attributes.block a) ->
@@ -1769,6 +1943,12 @@ let block_struct_to_doc p (doc, meta) =
         let b =
           match pending with
           | [] -> b
+          | _ when is_linkref_def b ->
+              (* Attributes above a reference definition have already been
+                 merged onto the definition itself, so that they reach the links
+                 referencing it. Wrapping the definition block in them too would
+                 render an empty element: the definition renders as nothing. *)
+              b
           | specs ->
               Block.Ext_attributes
                 (Block.Attributes.make ~specs b, Block.meta b)
