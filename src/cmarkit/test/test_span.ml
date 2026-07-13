@@ -71,7 +71,7 @@ let%expect_test "span: not a span (no adjacent non-empty attribute)" =
   html "[word]{% just a comment %}";
   [%expect
     {|
-    <p>[word] {.cls}</p>
+    <p>[word] </p>
 
     <p>[word]</p>
 

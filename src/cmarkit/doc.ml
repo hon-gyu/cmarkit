@@ -55,6 +55,7 @@ let of_string
      blocks are converted, since that is when inline parsing resolves
      references. *)
   register_heading_labels p (fst doc);
+  attach_ref_def_attributes p (fst doc);
   let block = block_struct_to_doc p doc in
   make ~nl block ~defs:p.defs
 

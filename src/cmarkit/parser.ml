@@ -795,10 +795,59 @@ module Block_struct = struct
          of match_line_type ~no_setext:true *)
       assert false
 
+  (* A djot block attribute line is a block of its own, recognized while parsing
+     rather than peeled out of a paragraph afterwards. That matters for what
+     follows it: in
+
+       {.special}
+       1. one
+
+     the list only starts if the attribute line is not part of a paragraph — a
+     list marker does not interrupt a paragraph in djot. Only a specifier that
+     opens and closes on this line is taken here; a multi-line one still goes
+     through [split_attribute_paragraph]. *)
+  and match_block_attribute p =
+    if not (Oymarkit_mod.djot_block_attributes p.oymarkit_mod) then None else
+    if end_of_line p then None else
+    let start = p.current_char and last = p.current_line_last_char in
+    if p.i.[start] <> '{' then None else
+    let rec scan k depth in_quote escaped in_comment =
+      if k > last then None else
+      let c = p.i.[k] in
+      if in_comment then scan (k + 1) depth in_quote false (c <> '%') else
+      if escaped then scan (k + 1) depth in_quote false false else
+      match c with
+      | '\\' when in_quote -> scan (k + 1) depth in_quote true false
+      | '"' -> scan (k + 1) depth (not in_quote) false false
+      | '%' when not in_quote -> scan (k + 1) depth in_quote false true
+      | '{' when not in_quote -> scan (k + 1) (depth + 1) in_quote false false
+      | '}' when not in_quote ->
+          if depth > 1 then scan (k + 1) (depth - 1) in_quote false false else
+          (* Nothing but blanks may follow the specifier on the line. *)
+          let after = Match.first_non_blank p.i ~last ~start:(k + 1) in
+          if after <= last then None else Some k
+      | _ -> scan (k + 1) depth in_quote false false
+    in
+    match scan (start + 1) 1 false false false with
+    | None -> None
+    | Some close ->
+        let spec = String.sub p.i (start + 1) (close - start - 1) in
+        match Attribute.of_string spec with
+        | None -> None
+        | Some a ->
+            accept_cols p ~count:(last - p.current_char + 1);
+            (* Comment-only or empty specifiers convey nothing and are dropped,
+               as djot does. *)
+            if Attribute.is_empty a then Some [] else Some [a]
+
   and add_open_blocks p bs =
     let indent_start = p.current_char and indent = current_indent p in
-    let ltype = match_line_type ~no_setext:true ~indent p in
-    add_open_blocks_with_line_class p ~indent_start ~indent bs ltype
+    match match_block_attribute p with
+    | Some [] -> bs
+    | Some specs -> Attribute_specs specs :: bs
+    | None ->
+        let ltype = match_line_type ~no_setext:true ~indent p in
+        add_open_blocks_with_line_class p ~indent_start ~indent bs ltype
 
   and footnote p ~indent ~last rev_spans key =
     let label = Inline_struct.label_of_rev_spans p ~key rev_spans in
@@ -2027,6 +2076,44 @@ let register_heading_labels p (doc : Block_struct.t list) =
   in
   List.iter block doc
 
+(* Djot attributes written above a reference definition merge onto every link
+   that references it. They must reach the definition in [p.defs] before any
+   inline content is parsed, since that is when a link looks its definition up —
+   so this runs on the block structure, like the heading labels above.
+
+   The block-structure list is in reverse document order, so the attribute line
+   that *precedes* a definition follows it here. *)
+let attach_ref_def_attributes p (doc : Block_struct.t list) =
+  if not (Oymarkit_mod.djot_block_attributes p.oymarkit_mod) then () else
+  let attach (ld, _) specs =
+    let attrs = List.fold_left Attribute.merge Attribute.empty specs in
+    match Link_definition.defined_label ld with
+    | None -> ()
+    | Some l ->
+        let key = Label.key l in
+        match Label.Map.find_opt key p.defs with
+        | Some (Link_definition.Def (d, m)) ->
+            let d = Link_definition.with_attributes (Some attrs) d in
+            p.defs <- Label.Map.add key (Link_definition.Def (d, m)) p.defs
+        | _ -> ()
+  in
+  let rec walk (bs : Block_struct.t list) = match bs with
+  | Linkref_def ld :: (Attribute_specs specs :: _ as bs) ->
+      attach ld specs; walk bs
+  | b :: bs -> block b; walk bs
+  | [] -> ()
+  and block (b : Block_struct.t) = match b with
+  | Block_quote (_, _, bs) | Ext_div (_, bs) | Ext_jsx_block (_, bs)
+  | Ext_footnote (_, _, bs) -> walk bs
+  | List l ->
+      List.iter (fun (i : Block_struct.list_item) -> walk i.blocks) l.items
+  | Ext_def_list dl ->
+      List.iter (fun (i : Block_struct.def_item) -> walk i.blocks) dl.def_items
+  | Blank_line _ | Code_block _ | Heading _ | Html_block _ | Linkref_def _
+  | Attribute_specs _ | Paragraph _ | Thematic_break _ | Ext_table _ -> ()
+  in
+  walk doc
+
 let block_struct_to_doc p (doc, meta) =
   let rec resolve_block = function
   | Block.Block_quote (bq, meta) ->
@@ -2055,6 +2142,11 @@ let block_struct_to_doc p (doc, meta) =
       when is_empty (Block.Attributes.block a) ->
         loop (pending @ Block.Attributes.specs a) acc bs
     | Block.Blank_line _ as blank :: bs when pending <> [] ->
+        (* Djot: attributes must come right before a block, so a blank line
+           drops them. Otherwise they are kept as an empty [Ext_attributes] so
+           that the source can be rendered back. *)
+        if Oymarkit_mod.djot_block_attributes p.oymarkit_mod
+        then loop [] (blank :: acc) bs else
         let marker =
           Block.Ext_attributes
             (Block.Attributes.make ~specs:pending Block.empty, Meta.none)

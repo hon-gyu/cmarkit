@@ -1,4 +1,4 @@
-attributes.test           24/35   (2 skipped)
+attributes.test           30/35   (2 skipped)
 block_quote.test          13/15 
 code_blocks.test           5/7  
 definition_lists.test      1/4  
@@ -16,11 +16,11 @@ para.test                  0/1
 raw.test                   1/4  
 regression.test            1/5    (1 skipped)
 smart.test                14/18 
-spans.test                 2/3  
+spans.test                 3/3  
 sourcepos.test             0/0    (1 skipped)
 super_subscript.test       4/4  
 tables.test                8/9  
 task_lists.test            3/3  
 thematic_breaks.test       3/4  
 verbatim.test              6/8  
-TOTAL                    191/265  (6 skipped)
+TOTAL                    198/265  (6 skipped)

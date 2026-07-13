@@ -459,7 +459,7 @@ let callout c co bq =
   C.string c "</div>\n";
   C.string c "</"; C.string c outer; C.string c ">\n"
 
-let code_block c cb =
+let code_block ?attrs c cb =
   let i = Option.map fst (Block.Code_block.info_string cb) in
   let lang = Option.bind i Block.Code_block.language_of_info_string in
   let line (l, _) = html_escaped_string c l; C.byte c '\n' in
@@ -468,7 +468,9 @@ let code_block c cb =
       if lang = "=html" && not (safe c)
       then block_lines c (Block.Code_block.code cb) else ()
   | _ ->
-      C.string c "<pre><code";
+      C.string c "<pre";
+      (match attrs with None -> () | Some a -> attributes c a);
+      C.string c "><code";
       begin match lang with
       | None -> ()
       | Some (lang, _env) ->
@@ -674,20 +676,23 @@ let list_item ~tight c (i, _) = match Block.List_item.ext_task_marker i with
     item_block ~tight c (Block.List_item.block i);
     C.string c close
 
-let list c l =
+let list ?attrs c l =
   let tight = Block.List'.tight l in
   if djot c then begin
     let items = Block.List'.items l in
     let is_task (i, _) = Block.List_item.ext_task_marker i <> None in
     let task_class = if List.exists is_task items then " class=\"task-list\"" else "" in
+    let attrs c = match attrs with None -> () | Some a -> attributes c a in
     let close = match Block.List'.type' l with
-    | `Unordered _ -> C.string c "<ul"; C.string c task_class; C.string c ">\n"; "</ul>\n"
+    | `Unordered _ ->
+        C.string c "<ul"; C.string c task_class; attrs c; C.string c ">\n";
+        "</ul>\n"
     | `Ordered (start, _) | `Ext_ordered (_, _, start) ->
         C.string c "<ol"; C.string c task_class;
         if start <> 1
         then (C.string c " start=\""; C.string c (string_of_int start);
               C.string c "\"");
-        C.string c ">\n"; "</ol>\n"
+        attrs c; C.string c ">\n"; "</ol>\n"
     in
     List.iter (djot_list_item ~tight c) items;
     C.string c close
@@ -741,7 +746,10 @@ let html_block c lines =
   if safe c then (comment c "CommonMark HTML block omitted"; C.byte c '\n') else
   List.iter line lines
 
-let thematic_break c = C.string c "<hr>\n"
+let thematic_break ?attrs c =
+  C.string c "<hr";
+  (match attrs with None -> () | Some a -> attributes c a);
+  C.string c ">\n"
 
 let math_block c cb =
   let line l = html_escaped_string c (Block_line.to_string l); C.byte c '\n' in
@@ -846,6 +854,9 @@ let block_attributes c a =
       C.string c "<blockquote"; attributes c attrs; C.string c ">\n";
       C.block c (Block.Block_quote.block bq);
       C.string c "</blockquote>\n"
+  | Block.Thematic_break _ -> thematic_break ~attrs c
+  | Block.Code_block (cb, _) -> code_block ~attrs c cb
+  | Block.List (l, _) -> list ~attrs c l
   | block ->
       C.string c "<div"; attributes c attrs; C.string c ">\n";
       C.block c block; C.string c "</div>\n"

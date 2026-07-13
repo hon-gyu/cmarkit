@@ -2046,11 +2046,17 @@ and last_pass p toks start_line =
         | (Inline.Break _ | Inline.Inlines _) :: _ | [] -> []
         | target :: acc -> wrap target [attribute] :: acc
       in
+      (* A specifier that has nothing to attach to — at the start of a line, or
+         after a space — is dropped by djot rather than left as text. *)
+      let unattached acc =
+        if Oymarkit_mod.djot_inline_attributes p.oymarkit_mod
+        then loop toks endline acc next else
+        let literal = "{" ^ Attribute.to_string attribute ^ "}" in
+        loop toks endline (Inline.Text (literal, Meta.none) :: acc) next
+      in
       if k = start then begin
         match add_to_target acc with
-        | [] ->
-            let literal = "{" ^ Attribute.to_string attribute ^ "}" in
-            loop toks endline (Inline.Text (literal, Meta.none) :: acc) next
+        | [] -> unattached acc
         | acc -> loop toks endline acc next
       end else begin
         let last = start - 1 in
@@ -2063,8 +2069,7 @@ and last_pass p toks start_line =
         let first = target_first last in
         if first > last then
           let acc = try_add_text_inline p line ~first:k ~last acc in
-          let literal = "{" ^ Attribute.to_string attribute ^ "}" in
-          loop toks endline (Inline.Text (literal, Meta.none) :: acc) next
+          unattached acc
         else
           let acc = try_add_text_inline p line ~first:k ~last:(first - 1) acc in
           let target =
