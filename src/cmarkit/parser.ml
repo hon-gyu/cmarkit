@@ -1829,18 +1829,32 @@ and block_struct_to_footnote_definition p indent (label, defined_label) bs =
   Block.Ext_footnote_definition fn
 
 and block_struct_to_list_item p (i : Block_struct.list_item) =
+  let djot_tight = Oymarkit_mod.djot_list_tightness p.oymarkit_mod in
   let rec loop bstate tight acc = function
   | Block_struct.Blank_line _ as bl :: bs ->
       let bstate = if bstate = `Trail_blank then `Trail_blank else `Blank in
       loop bstate tight (block_struct_to_block p bl :: acc) bs
   | Block_struct.List
       { items = { blocks = Block_struct.Blank_line _ :: _ } :: _ } as l :: bs
-    ->
+    when not djot_tight ->
       loop bstate false (block_struct_to_block p l :: acc) bs
   | b :: bs ->
       let tight = tight && not (bstate = `Blank)  in
       loop `Non_blank tight (block_struct_to_block p b :: acc) bs
   | [] -> tight, acc
+  in
+  (* Djot judges tightness in document order: a blank line loosens the list only
+     if the block that *follows* it is not a list. [i.blocks] is reversed, which
+     is why this cannot ride along with the conversion walk above. *)
+  let djot_item_tight () =
+    let rec scan seen_blank = function
+    | [] -> true (* a trailing blank loosens nothing: nothing follows it *)
+    | Block_struct.Blank_line _ :: bs -> scan true bs
+    | b :: bs ->
+        let is_list = match b with Block_struct.List _ -> true | _ -> false in
+        if seen_blank && not is_list then false else scan false bs
+    in
+    scan false (List.rev i.blocks)
   in
   let last_meta, (tight, blocks) = match i.blocks with
   | [Block_struct.Blank_line _ as blank] ->
@@ -1871,6 +1885,7 @@ and block_struct_to_list_item p (i : Block_struct.list_item) =
     { Block.List_item.before_marker; marker; after_marker; block;
       ext_task_marker }
   in
+  let tight = if djot_tight then djot_item_tight () else tight in
   (i, meta), tight
 
 and block_struct_to_list p list =
@@ -1882,7 +1897,12 @@ and block_struct_to_list p list =
   in
   let items = list.Block_struct.items in
   let last, tight = block_struct_to_list_item p (List.hd items) in
-  let tight, items = loop p (not list.loose && tight) [last] (List.tl items) in
+  (* [list.loose] records a blank line between two items, which djot does not
+     count: the blank is followed by a list boundary. *)
+  let inter_item_loose =
+    list.loose && not (Oymarkit_mod.djot_list_tightness p.oymarkit_mod)
+  in
+  let tight, items = loop p (not inter_item_loose && tight) [last] (List.tl items) in
   let meta = meta_of_metas p ~first:(snd (List.hd items)) ~last:(snd last) in
   Block.List ({ type' = list.Block_struct.list_type; tight; items }, meta)
 

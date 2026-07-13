@@ -310,9 +310,19 @@ let math_span c ms =
   in
   let tex = Inline.Math_span.tex_layout ms in
   if tex = [] then () else
-  (C.string c (if Inline.Math_span.display ms then "\\[" else "\\(");
-   tex_lines c tex;
-   C.string c (if Inline.Math_span.display ms then "\\]" else "\\)"))
+  let display = Inline.Math_span.display ms in
+  (* Djot marks the math up so a consumer can find it: the TeX delimiters alone
+     leave nothing to select on. *)
+  let djot = djot c in
+  if djot then begin
+    C.string c "<span class=\"math ";
+    C.string c (if display then "display" else "inline");
+    C.string c "\">"
+  end;
+  C.string c (if display then "\\[" else "\\(");
+  tex_lines c tex;
+  C.string c (if display then "\\]" else "\\)");
+  if djot then C.string c "</span>"
 
 let extra_inline_container c ic =
   let tag =
@@ -625,13 +635,18 @@ let djot_list_item ~tight c (i, _) =
   end;
   (* [item_block] prepends a newline before a block child, which would double the
      one we just wrote after [<li>]. *)
-  begin match Block.List_item.block i with
-  | Block.Blocks (bs, _) ->
-      List.iter
-        (function Block.Blank_line _ -> () | b -> C.block c b; ensure_nl c) bs
+  let child c = function
+  | Block.Blank_line _ -> ()
+  (* A tight item's paragraphs lose their wrapper, as in a CommonMark tight
+     list; the newline is ours, not [item_block]'s, which would double the one
+     after [<li>]. *)
   | Block.Paragraph (p, _) when tight ->
       C.inline c (Block.Paragraph.inline p); ensure_nl c
   | b -> C.block c b; ensure_nl c
+  in
+  begin match Block.List_item.block i with
+  | Block.Blocks (bs, _) -> List.iter (child c) bs
+  | b -> child c b
   end;
   C.string c "</li>\n"
 
@@ -730,9 +745,13 @@ let thematic_break c = C.string c "<hr>\n"
 
 let math_block c cb =
   let line l = html_escaped_string c (Block_line.to_string l); C.byte c '\n' in
+  let djot = djot c in
+  if djot then C.string c "<span class=\"math display\">";
   C.string c "\\[\n";
   List.iter line (Block.Code_block.code cb);
-  C.string c "\\]\n"
+  C.string c "\\]";
+  if djot then C.string c "</span>";
+  C.byte c '\n'
 
 let table c t =
   (* Djot writes the alignment as an inline style and does not wrap the table in

@@ -25,7 +25,7 @@ let of_string
     ?djot_thematic_break ?djot_symbols ?djot_escapes ?djot_raw
     ?djot_ordered_list_styles ?djot_definition_lists ?djot_math
     ?djot_table_captions ?djot_verbatim_trim ?djot_headings ?djot_links ?djot_emphasis
-    ?list_marker_interrupts_paragraph ?djot_list_indent ?smart_punctuation
+    ?list_marker_interrupts_paragraph ?djot_list_indent ?djot_list_tightness ?smart_punctuation
     ?indented_code ?setext_headings ?lazy_continuation ?raw_html ?entity_refs
     ?tilde_code_fences ?block_quote_marker_space
     ?div ?wikilink ?jsx_expr ?jsx_element ?callout
@@ -45,7 +45,7 @@ let of_string
       ?djot_thematic_break ?djot_symbols ?djot_escapes ?djot_raw
       ?djot_ordered_list_styles ?djot_definition_lists ?djot_math
       ?djot_table_captions ?djot_verbatim_trim ?djot_headings ?djot_links ?djot_emphasis
-      ?list_marker_interrupts_paragraph ?djot_list_indent ?smart_punctuation
+      ?list_marker_interrupts_paragraph ?djot_list_indent ?djot_list_tightness ?smart_punctuation
       ?indented_code ?setext_headings ?lazy_continuation ?raw_html ?entity_refs
       ?tilde_code_fences ?block_quote_marker_space
       ?div ?wikilink ?jsx_expr ?jsx_element ?callout ~strict s

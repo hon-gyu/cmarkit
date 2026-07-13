@@ -9,7 +9,10 @@ open Cmarkit_
     The knobs here are the ones that {e remove} or {e change} behavior, rather
     than add syntax:
 
-    - [lazy_continuation]: djot has no lazy lines;
+    - [lazy_continuation]: an unmarked line no longer continues the paragraph
+      inside a block quote or list item. This one is {e not} a djot behavior:
+      djot keeps CommonMark's lazy continuation, so the preset leaves the knob
+      on. The knob stands on its own, for a stricter dialect;
     - [raw_html]: djot parses no HTML, inline or block;
     - [entity_refs]: djot's only escape is the backslash;
     - [djot_escapes]: backslash-newline is the only hard break, and
@@ -39,7 +42,7 @@ let%expect_test "commonmark: an unmarked line continues the quoted paragraph" =
     </blockquote>
     |}]
 
-let%expect_test "djot: an unmarked line closes the block quote" =
+let%expect_test "off: an unmarked line closes the block quote" =
   html ~lazy_continuation:false "> quoted\nlazy\n";
   [%expect {|
     <blockquote>
@@ -48,7 +51,7 @@ let%expect_test "djot: an unmarked line closes the block quote" =
     <p>lazy</p>
     |}]
 
-let%expect_test "djot: a marked line still continues the block quote" =
+let%expect_test "off: a marked line still continues the block quote" =
   html ~lazy_continuation:false "> quoted\n> more\n";
   [%expect {|
     <blockquote>
@@ -66,7 +69,7 @@ let%expect_test "commonmark: an unindented line continues the list item" =
     </ul>
     |}]
 
-let%expect_test "djot: an unindented line closes the list" =
+let%expect_test "off: an unindented line closes the list" =
   html ~lazy_continuation:false "- item\nlazy\n";
   [%expect {|
     <ul>
@@ -75,7 +78,7 @@ let%expect_test "djot: an unindented line closes the list" =
     <p>lazy</p>
     |}]
 
-let%expect_test "djot: an indented line still continues the list item" =
+let%expect_test "off: an indented line still continues the list item" =
   html ~lazy_continuation:false "- item\n  more\n";
   [%expect {|
     <ul>
@@ -219,15 +222,17 @@ let%expect_test "djot: the marker needs a space or the end of the line" =
 (* The [djot] preset
    ================= *)
 
-let%expect_test "preset: no lazy lines, no HTML, no entities, djot escapes" =
+let%expect_test "preset: lazy lines stay, no HTML, no entities, djot escapes" =
+  (* Djot has lazy continuation, so the preset keeps it: the quoted paragraph
+     swallows the unmarked line. *)
   html ~djot:true "> quoted\nlazy\n";
   html ~djot:true "<b>text</b> &amp;";
   html ~djot:true "one  \ntwo";
   [%expect {|
     <blockquote>
-    <p>quoted</p>
+    <p>quoted
+    lazy</p>
     </blockquote>
-    <p>lazy</p>
     <p>&lt;b&gt;text&lt;/b&gt; &amp;amp;</p>
     <p>one
     two</p>
