@@ -329,10 +329,18 @@ module Ascii = struct
 end
 
 module Text = struct
-  let _utf_8_clean_unesc_unref ~do_unesc buf s ~first ~last =
+  let nbsp = Uchar.of_int 0x00A0
+
+  let _utf_8_clean_unesc_unref ~do_unesc ~unref ~djot_escapes buf s ~first ~last
+    =
     (* This unescapes CommonMark escapes if [do_unesc] is true,
-       resolves entity and character references and replaces U+0000 or
-       UTF-8 decoding errors by U+FFFD *)
+       resolves entity and character references if [unref] is true and
+       replaces U+0000 or UTF-8 decoding errors by U+FFFD.
+
+       With [djot_escapes], a backslash before a space stands for a
+       non-breaking space; djot has no other syntax for one. Backslash before
+       ASCII punctuation is unchanged, and a backslash before anything else
+       stays literal in both. *)
     let get = String.get in
     let flush buf s last start k =
       if start <= last then Buffer.add_substring buf s start (k - start)
@@ -406,12 +414,17 @@ module Text = struct
       | '\\' when do_unesc ->
           if next > last then resolve ~do_unesc buf s last start next else
           let nc = get s next in
+          if djot_escapes && nc = ' ' then begin
+            let next' = next + 1 in
+            flush buf s last start k; Buffer.add_utf_8_uchar buf nbsp;
+            resolve ~do_unesc buf s last next' next'
+          end else
           if not (Ascii.is_punct nc)
           then resolve ~do_unesc buf s last start next else
           let next' = next + 1 in
           (flush buf s last start k; Buffer.add_char buf nc;
            resolve ~do_unesc buf s last next' next')
-      | '&' ->
+      | '&' when unref ->
           if k + 2 > last then resolve ~do_unesc buf s last start next else
           begin match get s next with
           | c when Ascii.is_letter c ->
@@ -444,7 +457,9 @@ module Text = struct
       match unsafe_get s k with
       | '\\' when do_unesc ->
           Buffer.reset buf; resolve ~do_unesc buf s last start k
-      | '&' | '\x00' ->
+      | '&' when unref ->
+          Buffer.reset buf; resolve ~do_unesc buf s last start k
+      | '\x00' ->
           Buffer.reset buf; resolve ~do_unesc buf s last start k
       | '\x01' .. '\x7F' ->
           check ~do_unesc buf s last start (k + 1)
@@ -460,11 +475,15 @@ module Text = struct
     let first = if first < 0 then 0 else first in
     check ~do_unesc buf s last first first
 
-  let utf_8_clean_unesc_unref buf s ~first ~last =
-    _utf_8_clean_unesc_unref ~do_unesc:true buf s ~first ~last
+  let utf_8_clean_unesc_unref ?(unref = true) ?(djot_escapes = false) buf s
+      ~first ~last
+    =
+    _utf_8_clean_unesc_unref ~do_unesc:true ~unref ~djot_escapes buf s ~first
+      ~last
 
-  let utf_8_clean_unref buf s ~first ~last =
-    _utf_8_clean_unesc_unref ~do_unesc:false buf s ~first ~last
+  let utf_8_clean_unref ?(unref = true) buf s ~first ~last =
+    _utf_8_clean_unesc_unref ~do_unesc:false ~unref ~djot_escapes:false buf s
+      ~first ~last
 
   let utf_8_clean_raw ?(pad = 0) buf s ~first ~last =
     let get = String.get in
@@ -1112,8 +1131,9 @@ let setext_heading_underline s ~last ~start =
   if not (s.[start] = '-' || s.[start] = '=') then Nomatch else
   underline s last start (start + 1)
 
-let fenced_code_block_start s ~last ~start  =
+let fenced_code_block_start ?(tilde_fences = true) s ~last ~start  =
   (* https://spec.commonmark.org/current/#code-fence *)
+  (* Djot fences are backticks only; a [~~~] line is then ordinary text. *)
   let rec info s last nobt info_first k =
     if k > last then Some (info_first, last) else
     if nobt && s.[k] = '`' then raise_notrace Exit else
@@ -1136,10 +1156,11 @@ let fenced_code_block_start s ~last ~start  =
     in
     Fenced_code_block_line (fence_first, fence_last, info)
   in
+  let is_fence c = c = '`' || (tilde_fences && c = '~') in
   let rec loop s first last k =
     if k > last then Nomatch else
     if k - first + 1 < 4 && s.[k] = ' ' then loop s first last (k + 1) else
-    if not (s.[k] = '~' || s.[k] = '`') then Nomatch else
+    if not (is_fence s.[k]) then Nomatch else
     try fence s last k (k + 1) with
     | Exit (* backtick fence and info *) -> Nomatch
   in

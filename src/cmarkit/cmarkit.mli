@@ -900,6 +900,11 @@ module Inline : sig
       val explicit : t
       (** [explicit] enables every extra inline container with compulsory
           curly braces. *)
+
+      val djot : t
+      (** [djot] is djot's spelling: highlight, inserted and deleted are written with
+          compulsory curly braces ([ {=x=} ], [ {+x+} ], [ {-x-} ]); superscript and
+          subscript may be written without them ([ ^x^ ], [ ~x~ ]). *)
     end
 
     type t
@@ -1789,14 +1794,16 @@ module Doc : sig
   val of_string :
     ?defs:Label.defs -> ?resolver:Label.resolver -> ?nested_links:bool ->
     ?heading_auto_ids:bool -> ?layout:bool -> ?locs:bool ->
-    ?file:Textloc.fpath -> ?emphasis_delims:char list ->
+    ?file:Textloc.fpath -> ?djot:bool -> ?emphasis_delims:char list ->
     ?strong_emphasis_delims:char list -> ?intraword_emphasis:bool ->
     ?marked_emphasis_delims:bool -> ?strong_emphasis_width:int ->
     ?extra_inline_containers:Inline.Extra_inline_container.Config.t ->
     ?block_id:bool -> ?djot_inline_attributes:bool ->
     ?djot_block_attributes:bool -> ?djot_thematic_break:bool ->
-    ?djot_symbols:bool -> ?smart_punctuation:bool ->
+    ?djot_symbols:bool -> ?djot_escapes:bool -> ?smart_punctuation:bool ->
     ?indented_code:bool -> ?setext_headings:bool ->
+    ?lazy_continuation:bool -> ?raw_html:bool -> ?entity_refs:bool ->
+    ?tilde_code_fences:bool -> ?block_quote_marker_space:bool ->
     ?div:bool -> ?wikilink:bool ->
     ?jsx_expr:bool -> ?jsx_element:bool ->
     ?callout:Block.Callout.Config.t ->
@@ -1806,7 +1813,16 @@ module Doc : sig
 
     {ul
     {- If [strict] is [true] (default) the CommonMark specification is
-       followed. If [false] these {{!extensions}extensions} are enabled.}
+       followed. If [false] these {{!extensions}extensions} are enabled.
+       With [djot] it defaults to [false], since djot's tables, footnotes,
+       task lists and math are cmarkit extensions.}
+    {- If [djot] is [true] (defaults to [false]) every knob below that has a
+       djot meaning takes its djot value rather than its CommonMark one, which
+       is the
+       {{:https://htmlpreview.github.io/?https://github.com/jgm/djot/blob/master/doc/syntax.html}djot}
+       configuration in a single expression. A knob given explicitly still wins,
+       so the preset can be used as a base with individual features dialed back,
+       e.g. [~djot:true ~indented_code:true].}
     {- [file] is the file path from which [s] is assumed to have been read
        (defaults to {!Textloc.file_none}), used in the {!Textloc.t}
        values iff [locs] is [true].}
@@ -1906,6 +1922,40 @@ module Doc : sig
       underlines are not recognized, so [---] under a paragraph is free to be
       read as a thematic break instead of an [<h2>]. Djot has no setext
       headings. The default is [true], which preserves CommonMark behavior.}
+   {- If [lazy_continuation] is [false], a paragraph inside a block quote or a
+      list item is not continued by a
+      {{:https://spec.commonmark.org/0.31.2/#lazy-continuation-line}lazy line}:
+      a line that carries neither the [>] marker nor the item's indentation
+      closes the container instead of continuing the paragraph in it. Djot has
+      no lazy lines. The default is [true], which preserves CommonMark
+      behavior.}
+   {- If [raw_html] is [false], neither
+      {{:https://spec.commonmark.org/0.31.2/#raw-html}inline raw HTML} nor
+      {{:https://spec.commonmark.org/0.31.2/#html-blocks}HTML blocks} are
+      recognized: [<div>] is text. Autolinks are unaffected. Djot parses no raw
+      HTML; HTML is written with its raw syntax instead. The default is [true],
+      which preserves CommonMark behavior.}
+   {- If [entity_refs] is [false], HTML
+      {{:https://spec.commonmark.org/0.31.2/#entity-and-numeric-character-references}entity
+      and character references} are left literal: [&amp;] is the five characters
+      it is written with. Djot escapes with backslashes only. The default is
+      [true], which preserves CommonMark behavior.}
+   {- If [tilde_code_fences] is [false], a
+      {{:https://spec.commonmark.org/0.31.2/#fenced-code-blocks}code fence} can
+      only be written with backticks: [~~~] is ordinary text. Djot has no tilde
+      fences. Djot's other fence rule — no backtick inside the info string — is
+      CommonMark's rule too and needs no knob. The default is [true], which
+      preserves CommonMark behavior.}
+   {- If [block_quote_marker_space] is [true], a
+      {{:https://spec.commonmark.org/0.31.2/#block-quote-marker}block quote
+      marker} must be a [>] followed by a space or the end of the line, so
+      [>text] is a paragraph rather than a quote. This is djot's rule. The
+      default is [false], which preserves CommonMark behavior.}
+   {- If [djot_escapes] is [true], a hard line break is written with a trailing
+      backslash only — two trailing spaces are just trailing spaces — and a
+      backslash before a space stands for a non-breaking space (U+00A0), which
+      CommonMark has no syntax for. Backslash before ASCII punctuation is
+      unchanged. The default is [false], which preserves CommonMark behavior.}
    {- If [wikilink] is [true], Obsidian {{!ext_wikilink}wikilinks} [ [[...]] ]
       and embeds [ ![[...]] ] are represented by {!Inline.Ext_wikilink}. The
       default is [false]. This knob is independent of [strict].}

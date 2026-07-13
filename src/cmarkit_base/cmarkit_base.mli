@@ -155,15 +155,21 @@ val next_uchar : string -> last:int -> after:int -> Uchar.t
     references. *)
 module Text : sig
   val utf_8_clean_unesc_unref :
+    ?unref:bool -> ?djot_escapes:bool ->
     Buffer.t -> string -> first:int -> last:int -> string
   (** [utf_8_clean_unesc_unref b s ~first ~last] unescapes CommonMark
       escapes, resolves HTML entity and character references in the
       given span and replaces U+0000 and UTF-8 decoding errors by
       {!Uchar.rep}. [b] is used as scratch space.  If [last > first]
-      or [first] and [last] are not valid indices of [s] is [""].  *)
+      or [first] and [last] are not valid indices of [s] is [""].
+
+      If [unref] is [false] (defaults to [true]) entity and character
+      references are left literal, as in djot where backslash is the
+      only escape. If [djot_escapes] is [true] (defaults to [false]) a
+      backslash before a space stands for U+00A0. *)
 
   val utf_8_clean_unref :
-    Buffer.t -> string -> first:int -> last:int -> string
+    ?unref:bool -> Buffer.t -> string -> first:int -> last:int -> string
   (** [utf_8_clean_unref b s ~first ~last] is like
       {!utf_8_clean_unesc_unref} but does not unsescape. *)
 
@@ -335,10 +341,12 @@ val setext_heading_underline :
     is the last underline char. *)
 
 val fenced_code_block_start :
-  string -> last:byte_pos -> start:byte_pos -> line_type
+  ?tilde_fences:bool -> string -> last:byte_pos -> start:byte_pos -> line_type
 (** [fenced_code_block_start s ~last ~start] is the start of a fenced
     code block line in the range \[[start];[last]\]. The first span is
-    the fence and the second one is the info string (if any). *)
+    the fence and the second one is the info string (if any). If
+    [tilde_fences] is [false] (defaults to [true]) only backtick fences
+    are recognized. *)
 
 val fenced_code_block_continue :
   fence:char * int -> string -> last:byte_pos -> start:byte_pos ->

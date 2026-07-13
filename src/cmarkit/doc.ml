@@ -19,20 +19,30 @@ let block d = d.block
 let defs d = d.defs
 let of_string
     ?defs ?resolver ?nested_links ?heading_auto_ids ?layout ?locs ?file
-    ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis
+    ?djot ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis
     ?marked_emphasis_delims ?strong_emphasis_width ?extra_inline_containers
     ?block_id ?djot_inline_attributes ?djot_block_attributes
-    ?djot_thematic_break ?djot_symbols ?smart_punctuation ?indented_code
-    ?setext_headings ?div ?wikilink ?jsx_expr ?jsx_element ?callout
-    ?(strict = true) s
+    ?djot_thematic_break ?djot_symbols ?djot_escapes ?smart_punctuation
+    ?indented_code ?setext_headings ?lazy_continuation ?raw_html ?entity_refs
+    ?tilde_code_fences ?block_quote_marker_space
+    ?div ?wikilink ?jsx_expr ?jsx_element ?callout
+    ?strict s
   =
+  (* Djot's tables, footnotes, task lists and math are all cmarkit extensions,
+     so the preset only makes sense non-strict; [strict] can still be forced. *)
+  let strict = match strict with
+  | Some strict -> strict
+  | None -> not (djot = Some true)
+  in
   let p =
     parser ?defs ?resolver ?nested_links ?heading_auto_ids ?layout ?locs
-      ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis ?file
+      ?djot ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis ?file
       ?marked_emphasis_delims ?strong_emphasis_width ?extra_inline_containers
       ?block_id ?djot_inline_attributes ?djot_block_attributes
-      ?djot_thematic_break ?djot_symbols ?smart_punctuation ?indented_code
-      ?setext_headings ?div ?wikilink ?jsx_expr ?jsx_element ?callout ~strict s
+      ?djot_thematic_break ?djot_symbols ?djot_escapes ?smart_punctuation
+      ?indented_code ?setext_headings ?lazy_continuation ?raw_html ?entity_refs
+      ?tilde_code_fences ?block_quote_marker_space
+      ?div ?wikilink ?jsx_expr ?jsx_element ?callout ~strict s
   in
   let nl, doc = Block_struct.parse p in
   let block = block_struct_to_doc p doc in

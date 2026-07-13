@@ -30,6 +30,14 @@
 )
 
 (library
+  (name test_djot_compat)
+  (libraries cmarkit_ cmarkit_commonmark cmarkit_html)
+  (modules test_djot_compat)
+  (inline_tests)
+  (preprocess (pps ppx_expect))
+)
+
+(library
   (name test_smart_punct)
   (libraries cmarkit_ cmarkit_commonmark cmarkit_html cmarkit_latex)
   (modules test_smart_punct)

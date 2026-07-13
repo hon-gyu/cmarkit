@@ -211,6 +211,15 @@ module Extra_inline_container = struct
         ~subscript:Curly_required ~inserted:Curly_required
         ~deleted:Curly_required ()
 
+    (* Djot spells highlight, insert and delete with braces ([ {=x=} ], [ {+x+} ],
+       [ {-x-} ]) because the bare delimiters are too common in prose to claim,
+       but writes superscript and subscript bare ([ ^x^ ], [ ~x~ ]), braces
+       optional. *)
+    let djot =
+      make ~highlight:Curly_required ~superscript:Curly_optional
+        ~subscript:Curly_optional ~inserted:Curly_required
+        ~deleted:Curly_required ()
+
     let syntax t = function
     | Highlight -> t.highlight
     | Superscript -> t.superscript

@@ -197,7 +197,10 @@ let break c b =
   let layout_after = fst (Inline.Break.layout_after b) in
   let before, after = match Inline.Break.type' b with
   | `Soft -> layout_before, layout_after
-  | `Hard -> (if layout_before = "" then "  " else layout_before), layout_after
+  (* With no source layout to reproduce, spell a hard break with a trailing
+     backslash rather than two spaces: both are hard breaks in CommonMark, but
+     djot only reads the backslash one, so this round-trips in either dialect. *)
+  | `Hard -> (if layout_before = "" then "\\" else layout_before), layout_after
   in
   C.string c before; newline c; indent c; C.string c after
 

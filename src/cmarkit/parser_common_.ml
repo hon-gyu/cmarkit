@@ -80,9 +80,15 @@ module Oymarkit_mod = struct
     djot_block_attributes : bool;
     djot_thematic_break : bool;
     djot_symbols : bool;
+    djot_escapes : bool;
     smart_punctuation : bool;
     indented_code : bool;
     setext_headings : bool;
+    lazy_continuation : bool;
+    raw_html : bool;
+    entity_refs : bool;
+    tilde_code_fences : bool;
+    block_quote_marker_space : bool;
     div : bool;
     wikilink : bool;
     jsx_expr : bool;
@@ -113,8 +119,10 @@ module Oymarkit_mod = struct
   let make ~emphasis_delims ~strong_emphasis_delims ~intraword_emphasis
       ~marked_emphasis_delims ~strong_emphasis_width ~extra_inline_containers
       ~block_id ~djot_inline_attributes ~djot_block_attributes
-      ~djot_thematic_break ~djot_symbols ~smart_punctuation ~indented_code
-      ~setext_headings ~div ~wikilink ~jsx_expr ~jsx_element ~callout =
+      ~djot_thematic_break ~djot_symbols ~djot_escapes ~smart_punctuation
+      ~indented_code ~setext_headings ~lazy_continuation ~raw_html ~entity_refs
+      ~tilde_code_fences ~block_quote_marker_space ~div ~wikilink ~jsx_expr
+      ~jsx_element ~callout =
     let emphasis_delims =
       match parse_emph_delims emphasis_delims with
       | Ok delims -> delims
@@ -139,9 +147,15 @@ module Oymarkit_mod = struct
       djot_block_attributes;
       djot_thematic_break;
       djot_symbols;
+      djot_escapes;
       smart_punctuation;
       indented_code;
       setext_headings;
+      lazy_continuation;
+      raw_html;
+      entity_refs;
+      tilde_code_fences;
+      block_quote_marker_space;
       div;
       wikilink;
       jsx_expr;
@@ -215,9 +229,35 @@ module Oymarkit_mod = struct
      indent, so the break simply matches. *)
   let djot_thematic_break t = t.djot_thematic_break
   let djot_symbols t = t.djot_symbols
+
+  (* Djot escapes differ from CommonMark on two points: a hard break is written
+     with a trailing backslash only — two trailing spaces are just spaces — and
+     a backslash before a space produces a non-breaking space, which CommonMark
+     has no syntax for. Backslash before ASCII punctuation is the same in both. *)
+  let djot_escapes t = t.djot_escapes
   let smart_punctuation t = t.smart_punctuation
   let indented_code t = t.indented_code
   let setext_headings t = t.setext_headings
+
+  (* CommonMark lets a paragraph inside a block quote or list item continue on a
+     line that carries neither the [>] marker nor the item indentation. Djot has
+     no such lazy lines: an unmarked line closes the container. *)
+  let lazy_continuation t = t.lazy_continuation
+
+  (* Djot parses no raw HTML, neither the inline form nor HTML blocks: [<div>]
+     is text. Raw output is written with the [=html] raw syntax instead.
+     Autolinks are unaffected — they are their own construct in both. *)
+  let raw_html t = t.raw_html
+
+  (* Djot leaves [&amp;] and [&#38;] literal: backslash is its only escape. *)
+  let entity_refs t = t.entity_refs
+
+  (* Djot code fences are backticks only. *)
+  let tilde_code_fences t = t.tilde_code_fences
+
+  (* Djot's block quote marker is [>] followed by a space or the end of the
+     line, where CommonMark also quotes [>text]. *)
+  let block_quote_marker_space t = t.block_quote_marker_space
   let div t = t.div
   let wikilink t = t.wikilink
   let jsx_expr t = t.jsx_expr
@@ -260,21 +300,28 @@ let parser
     ?(nested_links = false) ?(heading_auto_ids = false) ?(layout = false)
     ?(locs = false) ?(file = Textloc.file_none)
     (* Oymarkit begin *)
-    ?(emphasis_delims = [ '*'; '_' ])
-    ?(strong_emphasis_delims = [ '*'; '_' ])
-    ?(intraword_emphasis = true)
-    ?(marked_emphasis_delims = false)
+    ?(djot = false)
+    ?emphasis_delims
+    ?strong_emphasis_delims
+    ?intraword_emphasis
+    ?marked_emphasis_delims
     ?(strong_emphasis_width = 2)
-    ?(extra_inline_containers = Inline.Extra_inline_container.Config.disabled)
+    ?extra_inline_containers
     ?(block_id = false)
-    ?(djot_inline_attributes = false)
-    ?(djot_block_attributes = false)
-    ?(djot_thematic_break = false)
-    ?(djot_symbols = false)
-    ?(smart_punctuation = false)
-    ?(indented_code = true)
-    ?(setext_headings = true)
-    ?(div = false)
+    ?djot_inline_attributes
+    ?djot_block_attributes
+    ?djot_thematic_break
+    ?djot_symbols
+    ?djot_escapes
+    ?smart_punctuation
+    ?indented_code
+    ?setext_headings
+    ?lazy_continuation
+    ?raw_html
+    ?entity_refs
+    ?tilde_code_fences
+    ?block_quote_marker_space
+    ?div
     ?(wikilink = false)
     ?(jsx_expr = false)
     ?(jsx_element = false)
@@ -282,13 +329,59 @@ let parser
     (* Oymarkit end *)
     ~strict i
   =
+  (* [djot] is a preset: a knob left unspecified takes its djot value instead of
+     its CommonMark one. An explicitly passed knob always wins, so the preset can
+     be used as a base and individual features dialed back. Every knob that has a
+     djot meaning goes through [knob], which is what keeps the preset in sync as
+     knobs are added: a new one is either given a djot value here or is left with
+     no djot meaning at all. *)
+  let knob ~cmark ~djot:djot_value = function
+  | Some v -> v
+  | None -> if djot then djot_value else cmark
+  in
+  let emphasis_delims =
+    knob ~cmark:[ '*'; '_' ] ~djot:[ '*'; '_' ] emphasis_delims
+  in
+  let strong_emphasis_delims =
+    knob ~cmark:[ '*'; '_' ] ~djot:[ '*'; '_' ] strong_emphasis_delims
+  in
+  let intraword_emphasis = knob ~cmark:true ~djot:true intraword_emphasis in
+  let marked_emphasis_delims =
+    knob ~cmark:false ~djot:true marked_emphasis_delims
+  in
+  let extra_inline_containers =
+    let cmark = Inline.Extra_inline_container.Config.disabled in
+    let djot = Inline.Extra_inline_container.Config.djot in
+    knob ~cmark ~djot extra_inline_containers
+  in
+  let djot_inline_attributes =
+    knob ~cmark:false ~djot:true djot_inline_attributes
+  in
+  let djot_block_attributes =
+    knob ~cmark:false ~djot:true djot_block_attributes
+  in
+  let djot_thematic_break = knob ~cmark:false ~djot:true djot_thematic_break in
+  let djot_symbols = knob ~cmark:false ~djot:true djot_symbols in
+  let djot_escapes = knob ~cmark:false ~djot:true djot_escapes in
+  let smart_punctuation = knob ~cmark:false ~djot:true smart_punctuation in
+  let indented_code = knob ~cmark:true ~djot:false indented_code in
+  let setext_headings = knob ~cmark:true ~djot:false setext_headings in
+  let lazy_continuation = knob ~cmark:true ~djot:false lazy_continuation in
+  let raw_html = knob ~cmark:true ~djot:false raw_html in
+  let entity_refs = knob ~cmark:true ~djot:false entity_refs in
+  let tilde_code_fences = knob ~cmark:true ~djot:false tilde_code_fences in
+  let block_quote_marker_space =
+    knob ~cmark:false ~djot:true block_quote_marker_space
+  in
+  let div = knob ~cmark:false ~djot:true div in
   let oymarkit_mod =
     Oymarkit_mod.make ~emphasis_delims ~strong_emphasis_delims
       ~intraword_emphasis ~marked_emphasis_delims ~strong_emphasis_width
       ~extra_inline_containers ~block_id ~djot_inline_attributes
-      ~djot_block_attributes ~djot_thematic_break ~djot_symbols ~smart_punctuation
-      ~indented_code ~setext_headings ~div ~wikilink ~jsx_expr ~jsx_element
-      ~callout
+      ~djot_block_attributes ~djot_thematic_break ~djot_symbols ~djot_escapes
+      ~smart_punctuation ~indented_code ~setext_headings ~lazy_continuation
+      ~raw_html ~entity_refs ~tilde_code_fences ~block_quote_marker_space ~div
+      ~wikilink ~jsx_expr ~jsx_element ~callout
   in
   let nolocs = not locs and nolayout = not layout and exts = not strict in
   { file; i; buf = Buffer.create 512; exts; nolocs; nolayout;
@@ -353,12 +446,17 @@ let clean_raw_span ?pad p span =
   Text.utf_8_clean_raw ?pad p.buf p.i ~first:span.first ~last:span.last,
   meta p (textloc_of_span p span)
 
+let unref p = Oymarkit_mod.entity_refs p.oymarkit_mod
+let djot_escapes p = Oymarkit_mod.djot_escapes p.oymarkit_mod
+
 let clean_unref_span p span =
-  Text.utf_8_clean_unref p.buf p.i ~first:span.first ~last:span.last,
+  Text.utf_8_clean_unref ~unref:(unref p) p.buf p.i ~first:span.first
+    ~last:span.last,
   meta p (textloc_of_span p span)
 
 let clean_unesc_unref_span p span =
-  Text.utf_8_clean_unesc_unref p.buf p.i ~first:span.first ~last:span.last,
+  Text.utf_8_clean_unesc_unref ~unref:(unref p) ~djot_escapes:(djot_escapes p)
+    p.buf p.i ~first:span.first ~last:span.last,
   meta p (textloc_of_span p span)
 
 let layout_clean_raw_span ?pad p span =

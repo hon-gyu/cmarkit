@@ -56,6 +56,12 @@ module Block_struct = struct
       let next = p.current_char + 1 in
       next <= p.current_line_last_char && Ascii.is_blank p.i.[next]
     in
+    let next_is_eol = p.current_char + 1 > p.current_line_last_char in
+    (* Djot's marker is [>] followed by a space or the end of the line; [>text]
+       is then a paragraph rather than a quote. *)
+    if Oymarkit_mod.block_quote_marker_space p.oymarkit_mod
+       && not (next_is_blank || next_is_eol)
+    then Match.Nomatch else
     let count = if next_is_blank then (* we eat a space *) 2 else 1 in
     accept_cols ~count p;
     Match.Block_quote_line marker_span
@@ -450,6 +456,11 @@ module Block_struct = struct
 
   (* Adding lines to blocks *)
 
+  let match_html_block_start p ~last ~start =
+    (* Djot has no HTML blocks: a line starting with a tag is a paragraph. *)
+    if not (Oymarkit_mod.raw_html p.oymarkit_mod) then Match.Nomatch else
+    Match.html_block_start p.i ~last ~start
+
   let match_line_type ~no_setext ~indent p =
     (* Effects on [p]'s column advance *)
     let no_setext =
@@ -503,7 +514,8 @@ module Block_struct = struct
           if r <> Nomatch then r else
           Paragraph_line
       | '~' | '`' ->
-          let r = Match.fenced_code_block_start p.i ~last ~start in
+          let tilde_fences = Oymarkit_mod.tilde_code_fences p.oymarkit_mod in
+          let r = Match.fenced_code_block_start ~tilde_fences p.i ~last ~start in
           if r <> Nomatch then r else
           Paragraph_line
       | ':' when Oymarkit_mod.div p.oymarkit_mod ->
@@ -527,12 +539,12 @@ module Block_struct = struct
               then Ext_jsx_block_line (name_first, name_last, tag_end)
               else Paragraph_line
           | Inline_struct.Jsx_not_tag ->
-              let r = Match.html_block_start p.i ~last ~start in
+              let r = match_html_block_start p ~last ~start in
               if r <> Nomatch then r else
               Paragraph_line
           end
       | '<' ->
-          let r = Match.html_block_start p.i ~last ~start in
+          let r = match_html_block_start p ~last ~start in
           if r <> Nomatch then r else
           Paragraph_line
       | '|' when p.exts ->
@@ -730,6 +742,12 @@ module Block_struct = struct
           Html_block { end_cond = None; html = l :: b.html } :: bs
 
   let rec try_lazy_continuation p ~indent_start = function
+  | _ when not (Oymarkit_mod.lazy_continuation p.oymarkit_mod) ->
+      (* Djot has no lazy lines: a line that does not carry the container's
+         marker or indentation closes it rather than continuing the paragraph
+         inside it. Every lazy path goes through here, so refusing here is all
+         it takes -- the caller falls back to closing the container. *)
+      None
   | Paragraph par :: bs -> Some (add_paragraph_line p ~indent_start par bs)
   | Block_quote (indent, marker, bq) :: bs ->
       begin match try_lazy_continuation p ~indent_start bq with

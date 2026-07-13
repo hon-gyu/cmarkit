@@ -198,7 +198,7 @@ let rec next_line = function
 
 (* Tokenization *)
 
-let newline_token s prev_line newline =
+let newline_token ~djot_escapes s prev_line newline =
   (* https://spec.commonmark.org/current/#softbreak *)
   (* https://spec.commonmark.org/current/#hard-line-breaks *)
   let start (* includes spaces or '\\' on prev line *), break_type =
@@ -206,7 +206,10 @@ let newline_token s prev_line newline =
     let non_space = Match.rev_drop_spaces s ~first ~start:last in
     if non_space = last && s.[non_space] = '\\' then (non_space, `Hard) else
     let start = non_space + 1 in
-    (start, if last - start + 1 >= 2 then `Hard else `Soft)
+    (* In djot's escape rule, a trailing backslash is the only hard break:
+       two trailing spaces are just trailing spaces. *)
+    let two_space_break = (not djot_escapes) && last - start + 1 >= 2 in
+    (start, if two_space_break then `Hard else `Soft)
   in
   Newline { start; break_type; newline }
 
@@ -827,11 +830,15 @@ let tokenize ~p ?oymarkit_mod ~exts s lines =
   (* For inlines this is where we conditionalize for extensions. All code
       paths after that no longer check for p.exts: there just won't be
       extension data to process if [exts] was not [true] here. *)
+  let djot_escapes = match oymarkit_mod with
+  | Some m when is_oymarkit_enabled () -> Oymarkit_mod.djot_escapes m
+  | _ -> false
+  in
   let rec loop ~exts s lines line ~prev_bslash acc k =
     if k > line.last then match lines with
     | [] -> rev_token_list_and_make_closer_index acc
     | newline :: lines ->
-        let t = newline_token s line newline in
+        let t = newline_token ~djot_escapes s line newline in
         loop ~exts s lines newline ~prev_bslash:false (t :: acc) newline.first
     else
     if s.[k] = '\\'
@@ -1187,6 +1194,9 @@ let try_autolink_or_html p toks line ~start =
       let toks = drop_until ~start:(last + 1) toks in
       Some (toks, line, t)
   | None ->
+  (* Autolinks exist in djot too, so only the raw-HTML fallback is dropped: an
+     unclaimed '<' is then plain text. *)
+  if not (Oymarkit_mod.raw_html p.oymarkit_mod) then None else
   match Match.raw_html ~next_line p.i toks ~line ~start with
   | None -> None
   | Some (toks, last_line, spans, last) ->
