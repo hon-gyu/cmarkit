@@ -1349,19 +1349,24 @@ let label_of_rev_spans p ~key rev_spans =
 
 let try_full_reflink_remainder p toks line ~image ~start (* is label's [ *) =
   (* https://spec.commonmark.org/current/#full-reference-link *)
-  match Match.link_label p.buf ~next_line p.i toks ~line ~start with
+  match Match.link_label ~djot:(Oymarkit_mod.djot_links p.oymarkit_mod) p.buf ~next_line p.i toks ~line ~start with
   | None -> None
   | Some (toks, line, rev_spans, last, key) ->
       let ref = label_of_rev_spans p ~key rev_spans in
       let toks = drop_stop_after_right_brack toks in
       match find_def_for_ref p ~image ref with
-      | None -> Some None
       | Some def -> Some (Some (toks, line, `Ref (`Full, ref, def), last))
+      | None when Oymarkit_mod.djot_links p.oymarkit_mod ->
+          (* Djot still makes a link of a reference whose definition is missing;
+             the renderer gives it no [href]. The label stands in for the
+             definition it did not find. *)
+          Some (Some (toks, line, `Ref (`Full, ref, ref), last))
+      | None -> Some None
 
 let try_shortcut_reflink p toks line ~image ~start (* is starting [ or ! *) =
   (* https://spec.commonmark.org/current/#shortcut-reference-link *)
   let start = if image then start + 1 (* [ *) else start in
-  match Match.link_label p.buf ~next_line p.i toks ~line ~start with
+  match Match.link_label ~djot:(Oymarkit_mod.djot_links p.oymarkit_mod) p.buf ~next_line p.i toks ~line ~start with
   | None -> None
   | Some (toks, line, rev_spans, last, key) ->
       let ref = label_of_rev_spans p ~key rev_spans in
@@ -1373,7 +1378,7 @@ let try_shortcut_reflink p toks line ~image ~start (* is starting [ or ! *) =
 let try_collapsed_reflink p toks line ~image ~start (* is starting [ or ! *) =
   (* https://spec.commonmark.org/current/#collapsed-reference-link *)
   let start = if image then start + 1 (* [ *) else start in
-  match Match.link_label p.buf ~next_line p.i toks ~line ~start with
+  match Match.link_label ~djot:(Oymarkit_mod.djot_links p.oymarkit_mod) p.buf ~next_line p.i toks ~line ~start with
   | None -> None
   | Some (toks, line, rev_spans, last, key) ->
       let ref = label_of_rev_spans p ~key rev_spans in
@@ -1381,8 +1386,10 @@ let try_collapsed_reflink p toks line ~image ~start (* is starting [ or ! *) =
       let toks = drop_stop_after_right_brack toks in
       let toks = drop_stop_after_right_brack toks in
       match find_def_for_ref p ~image ref with
-      | None -> None
       | Some def -> Some (toks, line, `Ref (`Collapsed, ref, def), last)
+      | None when Oymarkit_mod.djot_links p.oymarkit_mod ->
+          Some (toks, line, `Ref (`Collapsed, ref, ref), last)
+      | None -> None
 
 (* Djot inline link: everything between the [(] and the matching [)] is the
    destination — there are no titles, so the quoted part of [ (url "title") ] is

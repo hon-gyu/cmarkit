@@ -1013,8 +1013,12 @@ let label_key b s =
   in
   loop false 0
 
-let link_label b ~next_line s lines ~line ~start =
+let link_label ?(djot = false) b ~next_line s lines ~line ~start =
   (* https://spec.commonmark.org/current/#link-label *)
+  (* Djot label keys are case-sensitive: [ [Link][] ] does not find
+     [ [link]: /url ]. A reference may still span lines (the newline collapses to
+     a space); a *definition*'s label may not, which its caller enforces by
+     passing a [next_line] that stops at the line. *)
   let rec loop b ~next_line s lines ~line ~prev_byte start acc count k =
     if k > line.last then match next_line lines with
     | None -> None
@@ -1049,7 +1053,7 @@ let link_label b ~next_line s lines ~line ~start =
         let u = Uchar.utf_decode_uchar d in
         let u = match Uchar.to_int u with 0x0000 -> Uchar.rep | _ -> u in
         let k' = k + Uchar.utf_decode_length d in
-        let () = match Cmarkit_data.unicode_case_fold u with
+        let () = match if djot then None else Cmarkit_data.unicode_case_fold u with
         | None -> Buffer.add_utf_8_uchar b u
         | Some fold -> Buffer.add_string b fold
         in

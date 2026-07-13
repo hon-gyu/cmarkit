@@ -18,9 +18,17 @@ let key_values a = a.key_values
 let source a = a.source
 
 let merge a b =
+  (* A key given on both sides takes [b]'s value: merging is an override, not an
+     accumulation, so [ {title=foo} ] on a reference definition and [ {title=bar} ]
+     on the link that uses it yield one [title], the link's. Classes do
+     accumulate, as they do in HTML. *)
+  let key_values =
+    let overridden (k, _) = List.mem_assoc k b.key_values in
+    List.filter (fun kv -> not (overridden kv)) a.key_values @ b.key_values
+  in
   { id = (match b.id with None -> a.id | Some _ as id -> id);
     classes = a.classes @ b.classes;
-    key_values = a.key_values @ b.key_values;
+    key_values;
     source = None }
 
 let is_name_char = function

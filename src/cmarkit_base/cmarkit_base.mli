@@ -296,6 +296,7 @@ val label_key : Buffer.t -> string -> string
     hand. [b] is used as scratch space. *)
 
 val link_label :
+  ?djot:bool ->
   Buffer.t -> next_line:'a next_line -> string -> 'a -> line:line_span ->
   start:byte_pos -> ('a * line_span * rev_spans * last * string) option
 (** [link_label buf ~next_line s lines ~line ~start] matches a link label

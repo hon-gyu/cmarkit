@@ -47,7 +47,7 @@ let%expect_test "span: fallback -- CommonMark link resolution wins" =
     {|
     <p><span class="c">foo</span></p>
 
-    <p><span class="c"><a href="/url">foo</a></span></p>
+    <p><a href="/url" class="c">foo</a></p>
     |}]
 
 let%expect_test "span: attributes attach to real links/images too" =
@@ -56,9 +56,9 @@ let%expect_test "span: attributes attach to real links/images too" =
   html "[foo][bar]{.c}\n\n[bar]: /b";
   [%expect
     {|
-    <p>See <span class="big"><a href="http://x">this link</a></span>.</p>
+    <p>See <a href="http://x" class="big">this link</a>.</p>
 
-    <p><span class="c"><a href="/b">foo</a></span></p>
+    <p><a href="/b" class="c">foo</a></p>
     |}]
 
 let%expect_test "span: not a span (no adjacent non-empty attribute)" =

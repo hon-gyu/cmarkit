@@ -29,11 +29,11 @@ let html s =
 
 let%expect_test "a definition's attributes merge onto a reference to it" =
   html "{.external}\n[docs]: https://example.org\n\nSee [docs][].\n";
-  [%expect {| <p>See <span class="external"><a href="https://example.org">docs</a></span>.</p> |}]
+  [%expect {| <p>See <a href="https://example.org" class="external">docs</a>.</p> |}]
 
 let%expect_test "they merge onto every reference, and onto shortcut ones" =
   html "{.external}\n[docs]: https://example.org\n\nSee [docs] and [docs][].\n";
-  [%expect {| <p>See <span class="external"><a href="https://example.org">docs</a></span> and <span class="external"><a href="https://example.org">docs</a></span>.</p> |}]
+  [%expect {| <p>See <a href="https://example.org" class="external">docs</a> and <a href="https://example.org" class="external">docs</a>.</p> |}]
 
 let%expect_test "a definition without attributes is unchanged" =
   html "[docs]: https://example.org\n\nSee [docs][].\n";
@@ -45,4 +45,4 @@ let%expect_test "an inline link takes no attributes from any definition" =
 
 let%expect_test "an inline specifier still applies on top" =
   html "{.external}\n[docs]: https://example.org\n\nSee [docs][]{#here}.\n";
-  [%expect {| <p>See <span id="here" class="external"><a href="https://example.org">docs</a></span>.</p> |}]
+  [%expect {| <p>See <a href="https://example.org" id="here" class="external">docs</a>.</p> |}]

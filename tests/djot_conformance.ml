@@ -99,7 +99,7 @@ let skipped t =
 
 let render input =
   (* The whole point of the preset: djot conformance should be one expression. *)
-  Cmarkit_html.of_doc ~safe:false (C.Doc.of_string ~djot:true input)
+  Cmarkit_html.of_doc ~djot:true ~safe:false (C.Doc.of_string ~djot:true input)
 
 let run_file file =
   let tests = parse_tests (Filename.concat corpus_dir file) in

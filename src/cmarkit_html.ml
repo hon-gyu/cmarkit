@@ -14,6 +14,7 @@ module String_set = Set.Make (String)
 type state =
   { safe : bool;
     backend_blocks : bool;
+    djot : bool;
     mutable ids : String_set.t;
     mutable footnote_count : int;
     mutable footnotes :
@@ -23,9 +24,10 @@ type state =
 let state : state C.State.t = C.State.make ()
 let safe c = (C.State.get c state).safe
 let backend_blocks c = (C.State.get c state).backend_blocks
-let init_context ?(backend_blocks = false) ~safe c _ =
+let djot c = (C.State.get c state).djot
+let init_context ?(backend_blocks = false) ?(djot = false) ~safe c _ =
   let ids = String_set.empty and footnotes = Label.Map.empty in
-  let st = { safe; backend_blocks; ids; footnote_count = 0; footnotes } in
+  let st = { safe; backend_blocks; djot; ids; footnote_count = 0; footnotes } in
   C.State.set c state (Some st)
 
 let unique_id c id =
@@ -223,7 +225,7 @@ let link_dest_and_title c ld =
   in
   dest, title
 
-let image ?(close = " >") c i =
+let image ?(close = " >") ?attrs c i =
   match Inline.Link.reference_definition (C.get_defs c) i with
   | Some (Link_definition.Def (ld, _)) ->
       let plain_text c i =
@@ -231,13 +233,23 @@ let image ?(close = " >") c i =
         String.concat "\n" (List.map (String.concat "") lines)
       in
       let link, title = link_dest_and_title c ld in
-      C.string c "<img src=\""; pct_encoded_string c link;
-      C.string c "\" alt=\"";
-      html_escaped_string c (plain_text c (Inline.Link.text i));
-      C.byte c '\"';
+      (* Djot writes [alt] first and closes with [>]; both are cosmetic, but the
+         corpus compares bytes. *)
+      let djot = djot c in
+      let alt c =
+        C.string c " alt=\"";
+        html_escaped_string c (plain_text c (Inline.Link.text i));
+        C.byte c '\"'
+      in
+      let src c =
+        C.string c " src=\""; pct_encoded_string c link; C.byte c '\"'
+      in
+      C.string c "<img";
+      if djot then (alt c; src c) else (src c; alt c);
       if title <> ""
       then (C.string c " title=\""; html_escaped_string c title; C.byte c '\"');
-      C.string c close
+      (match attrs with None -> () | Some a -> attributes c a);
+      C.string c (if djot then ">" else close)
   | Some (Block.Footnote.Def _) -> comment_foonote_image c i
   | None -> comment_undefined_label c i
   | Some _ -> comment_unknown_def_type c i
@@ -260,13 +272,21 @@ let link_footnote c l fn =
     C.string c text; C.string c "</a></sup>"
   end
 
-let link c l = match Inline.Link.reference_definition (C.get_defs c) l with
+let link ?attrs c l = match Inline.Link.reference_definition (C.get_defs c) l with
 | Some (Link_definition.Def (ld, _)) ->
     let link, title = link_dest_and_title c ld in
     C.string c "<a href=\""; pct_encoded_string c link;
     if title <> "" then (C.string c "\" title=\""; html_escaped_string c title);
-    C.string c "\">"; C.inline c (Inline.Link.text l); C.string c "</a>"
+    C.byte c '\"';
+    (match attrs with None -> () | Some a -> attributes c a);
+    C.byte c '>'; C.inline c (Inline.Link.text l); C.string c "</a>"
 | Some (Block.Footnote.Def (fn, _)) -> link_footnote c l fn
+| None when djot c ->
+    (* Djot still makes an anchor of an unresolved reference, just without an
+       [href]. *)
+    C.string c "<a";
+    (match attrs with None -> () | Some a -> attributes c a);
+    C.byte c '>'; C.inline c (Inline.Link.text l); C.string c "</a>"
 | None -> C.inline c (Inline.Link.text l); comment_undefined_label c l
 | Some _ -> C.inline c (Inline.Link.text l); comment_unknown_def_type c l
 
@@ -338,6 +358,8 @@ let inline_attributes c a =
       C.byte c '<'; C.string c tag; attributes c attrs; C.byte c '>';
       C.inline c (Inline.Extra_inline_container.inline ic);
       C.string c "</"; C.string c tag; C.byte c '>'
+  | Inline.Link (l, _) -> link ~attrs c l
+  | Inline.Image (i, _) -> image ~attrs c i
   | inline ->
       C.string c "<span"; attributes c attrs; C.byte c '>';
       C.inline c inline; C.string c "</span>"
@@ -447,6 +469,60 @@ let code_block c cb =
       List.iter line (Block.Code_block.code cb);
       C.string c "</code></pre>\n"
 
+(* Djot identifiers. The base is the heading's text with punctuation and
+   whitespace runs turned into single [-], case preserved (so [Foo bar] is
+   [Foo-bar], not [foo-bar]). Uniqueness is against every id in the document,
+   explicit ones included, by appending [-1], [-2], …; an empty base becomes
+   [s-1]. Djot assigns these while parsing, in document order, which is also the
+   order we render in — so registering ids as we go gives the same answer. *)
+
+let djot_id_base text =
+  let b = Buffer.create 32 in
+  let strip = function
+    | '[' | ']' | '~' | '!' | '@' | '#' | '$' | '%' | '^' | '&' | '*' | '(' | ')'
+    | '{' | '}' | '`' | ',' | '.' | '<' | '>' | '\\' | '|' | '=' | '+' | '/'
+    | '?' -> true
+    | c -> Cmarkit_base.Ascii.is_white c
+  in
+  let flush_sep = ref false in
+  String.iter
+    (fun c ->
+      if strip c then (if Buffer.length b > 0 then flush_sep := true) else begin
+        if !flush_sep then (Buffer.add_char b '-'; flush_sep := false);
+        Buffer.add_char b c
+      end)
+    text;
+  Buffer.contents b
+
+let register_id c id =
+  let st = C.State.get c state in
+  st.ids <- String_set.add id st.ids
+
+let djot_unique_id c base =
+  let st = C.State.get c state in
+  let rec loop i =
+    let id = if i = 0 then base else base ^ "-" ^ Int.to_string i in
+    if id = "" || String_set.mem id st.ids then loop (i + 1) else id
+  in
+  let id = loop (if base = "" then 1 else 0) in
+  let id = if id = "" then "s-1" else id in
+  register_id c id; id
+
+(* The heading's own id, if it was given one explicitly, else a fresh djot one
+   from its text. *)
+let djot_heading_id c ~attrs h =
+  match attrs with
+  | Some a ->
+      (match Attribute.id a with
+       | Some id -> register_id c id; id
+       | None -> djot_unique_id c (djot_id_base (Inline.to_plain_text ~break_on_soft:false (Block.Heading.inline h) |> List.map (String.concat "") |> String.concat " ")))
+  | None ->
+      let text =
+        Inline.to_plain_text ~break_on_soft:false (Block.Heading.inline h)
+        |> List.map (String.concat "") |> String.concat " "
+      in
+      djot_unique_id c (djot_id_base text)
+
 let heading c h =
   let level = string_of_int (Block.Heading.level h) in
   C.string c "<h"; C.string c level;
@@ -460,6 +536,48 @@ let heading c h =
   end;
   C.inline c (Block.Heading.inline h);
   C.string c "</h"; C.string c level; C.string c ">\n"
+
+(* Djot sections. A heading opens a [<section>] that runs until a heading of the
+   same or a higher level; sections therefore nest by level. The id goes on the
+   section, not on the heading. *)
+
+let djot_heading c h =
+  let level = string_of_int (Block.Heading.level h) in
+  C.string c "<h"; C.string c level; C.byte c '>';
+  C.inline c (Block.Heading.inline h);
+  C.string c "</h"; C.string c level; C.string c ">\n"
+
+let heading_of = function
+| Block.Heading (h, _) -> Some (h, None)
+| Block.Ext_attributes (a, _) ->
+    (match Block.Attributes.block a with
+     | Block.Heading (h, _) -> Some (h, Some (Block.Attributes.attributes a))
+     | _ -> None)
+| _ -> None
+
+let rec djot_sections c = function
+| [] -> ()
+| b :: bs ->
+    match heading_of b with
+    | None -> C.block c b; djot_sections c bs
+    | Some (h, attrs) ->
+        let level = Block.Heading.level h in
+        let id = djot_heading_id c ~attrs h in
+        let rec split acc = function
+        | b :: bs as rest ->
+            begin match heading_of b with
+            | Some (h, _) when Block.Heading.level h <= level ->
+                List.rev acc, rest
+            | _ -> split (b :: acc) bs
+            end
+        | [] -> List.rev acc, []
+        in
+        let inside, after = split [] bs in
+        C.string c "<section id=\""; html_escaped_string c id; C.string c "\">\n";
+        djot_heading c h;
+        djot_sections c inside;
+        C.string c "</section>\n";
+        djot_sections c after
 
 let paragraph c p =
   C.string c "<p>"; C.inline c (Block.Paragraph.inline p); C.string c "</p>\n"
@@ -484,6 +602,38 @@ let rec item_block ~tight c = function
     in
     loop c true bs
 | b -> C.byte c '\n'; C.block c b
+
+(* Djot list items. The content always sits on its own lines:
+   [<li>\ncontent\n</li>], tight or loose, and a task marker is an [<input>] line
+   before the content. *)
+
+let ensure_nl c =
+  let b = C.buffer c in
+  let n = Buffer.length b in
+  if n > 0 && Buffer.nth b (n - 1) <> '\n' then C.byte c '\n'
+
+let djot_list_item ~tight c (i, _) =
+  C.string c "<li>\n";
+  begin match Block.List_item.ext_task_marker i with
+  | None -> ()
+  | Some (mark, _) ->
+      let checked = match Block.List_item.task_status_of_task_marker mark with
+      | `Unchecked -> "" | `Checked | `Other _ | `Cancelled -> " checked=\"\""
+      in
+      C.string c "<input disabled=\"\" type=\"checkbox\"";
+      C.string c checked; C.string c "/>\n"
+  end;
+  (* [item_block] prepends a newline before a block child, which would double the
+     one we just wrote after [<li>]. *)
+  begin match Block.List_item.block i with
+  | Block.Blocks (bs, _) ->
+      List.iter
+        (function Block.Blank_line _ -> () | b -> C.block c b; ensure_nl c) bs
+  | Block.Paragraph (p, _) when tight ->
+      C.inline c (Block.Paragraph.inline p); ensure_nl c
+  | b -> C.block c b; ensure_nl c
+  end;
+  C.string c "</li>\n"
 
 let list_item ~tight c (i, _) = match Block.List_item.ext_task_marker i with
 | None ->
@@ -511,6 +661,22 @@ let list_item ~tight c (i, _) = match Block.List_item.ext_task_marker i with
 
 let list c l =
   let tight = Block.List'.tight l in
+  if djot c then begin
+    let items = Block.List'.items l in
+    let is_task (i, _) = Block.List_item.ext_task_marker i <> None in
+    let task_class = if List.exists is_task items then " class=\"task-list\"" else "" in
+    let close = match Block.List'.type' l with
+    | `Unordered _ -> C.string c "<ul"; C.string c task_class; C.string c ">\n"; "</ul>\n"
+    | `Ordered (start, _) | `Ext_ordered (_, _, start) ->
+        C.string c "<ol"; C.string c task_class;
+        if start <> 1
+        then (C.string c " start=\""; C.string c (string_of_int start);
+              C.string c "\"");
+        C.string c ">\n"; "</ol>\n"
+    in
+    List.iter (djot_list_item ~tight c) items;
+    C.string c close
+  end else
   match Block.List'.type' l with
   | `Unordered _ ->
       C.string c "<ul>\n";
@@ -569,13 +735,20 @@ let math_block c cb =
   C.string c "\\]\n"
 
 let table c t =
+  (* Djot writes the alignment as an inline style and does not wrap the table in
+     the scroll region cmarkit adds. *)
+  let djot = djot c in
   let start c align tag =
     C.byte c '<'; C.string c tag;
     match align with
     | None -> C.byte c '>';
-    | Some `Left -> C.string c " class=\"left\">"
-    | Some `Center -> C.string c " class=\"center\">"
-    | Some `Right -> C.string c " class=\"right\">"
+    | Some a ->
+        let a = match a with
+        | `Left -> "left" | `Center -> "center" | `Right -> "right"
+        in
+        if djot then begin
+          C.string c " style=\"text-align: "; C.string c a; C.string c ";\">"
+        end else (C.string c " class=\""; C.string c a; C.string c "\">")
   in
   let close c tag = C.string c "</"; C.string c tag; C.string c ">\n" in
   let rec cols c tag ~align count cs = match align, cs with
@@ -608,7 +781,7 @@ let table c t =
   | ((`Sep align, _), _) :: rs -> rows c col_count ~align rs
   | [] -> ()
   in
-  C.string c "<div role=\"region\"><table>\n";
+  C.string c (if djot then "<table>\n" else "<div role=\"region\"><table>\n");
   begin match Block.Table.caption t with
   | None -> ()
   | Some (caption, _) ->
@@ -618,7 +791,7 @@ let table c t =
       C.string c "</caption>\n"
   end;
   rows c (Block.Table.col_count t) ~align:[] (Block.Table.rows t);
-  C.string c "</table></div>"
+  C.string c (if djot then "</table>\n" else "</table></div>")
 
 let div c d =
   C.string c "<div";
@@ -641,6 +814,11 @@ let jsx_block c j =
 
 let block_attributes c a =
   let attrs = Block.Attributes.attributes a in
+  (* Djot dedupes heading ids against every id in the document, explicit ones
+     included, and assigns them in document order. Registering as we render
+     keeps a later heading from stealing an id an explicit one already took. *)
+  if djot c then
+    (match Attribute.id attrs with None -> () | Some id -> register_id c id);
   match Block.Attributes.block a with
   | Block.Paragraph (p, _) ->
       C.string c "<p"; attributes c attrs; C.byte c '>';
@@ -659,6 +837,7 @@ let block c = function
      | Some co -> callout c co bq
      | None -> block_quote c bq);
     true
+| Block.Blocks (bs, _) when djot c -> djot_sections c bs; true
 | Block.Blocks (bs, _) -> List.iter (C.block c) bs; true
 | Block.Code_block (cb, _) -> code_block c cb; true
 | Block.Heading (h, _) -> heading c h; true
@@ -725,14 +904,14 @@ let doc c d =
 
 (* Renderer *)
 
-let renderer ?backend_blocks ~safe () =
-  let init_context = init_context ?backend_blocks ~safe in
+let renderer ?backend_blocks ?djot ~safe () =
+  let init_context = init_context ?backend_blocks ?djot ~safe in
   Cmarkit_renderer.make ~init_context ~inline ~block ~doc ()
 
-let xhtml_renderer ?backend_blocks ~safe () =
-  let init_context = init_context ?backend_blocks ~safe in
+let xhtml_renderer ?backend_blocks ?djot ~safe () =
+  let init_context = init_context ?backend_blocks ?djot ~safe in
   let inline = xhtml_inline and block = xhtml_block in
   Cmarkit_renderer.make ~init_context ~inline ~block ~doc ()
 
-let of_doc ?backend_blocks ~safe d =
-  Cmarkit_renderer.doc_to_string (renderer ?backend_blocks ~safe ()) d
+let of_doc ?backend_blocks ?djot ~safe d =
+  Cmarkit_renderer.doc_to_string (renderer ?backend_blocks ?djot ~safe ()) d

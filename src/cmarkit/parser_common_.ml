@@ -89,6 +89,8 @@ module Oymarkit_mod = struct
     djot_verbatim_trim : bool;
     djot_headings : bool;
     djot_links : bool;
+    list_marker_interrupts_paragraph : bool;
+    djot_list_indent : bool;
     djot_emphasis : bool;
     smart_punctuation : bool;
     indented_code : bool;
@@ -131,7 +133,8 @@ module Oymarkit_mod = struct
       ~djot_thematic_break ~djot_symbols ~djot_escapes ~djot_raw
       ~djot_ordered_list_styles ~djot_definition_lists ~djot_math
       ~djot_table_captions ~djot_verbatim_trim ~djot_headings ~djot_links
-      ~djot_emphasis ~smart_punctuation
+      ~djot_emphasis ~list_marker_interrupts_paragraph ~djot_list_indent
+      ~smart_punctuation
       ~indented_code ~setext_headings ~lazy_continuation ~raw_html ~entity_refs
       ~tilde_code_fences ~block_quote_marker_space ~div ~wikilink ~jsx_expr
       ~jsx_element ~callout =
@@ -168,6 +171,8 @@ module Oymarkit_mod = struct
       djot_verbatim_trim;
       djot_headings;
       djot_links;
+      list_marker_interrupts_paragraph;
+      djot_list_indent;
       djot_emphasis;
       smart_punctuation;
       indented_code;
@@ -304,6 +309,13 @@ module Oymarkit_mod = struct
      Reference definitions likewise have no titles: the rest of the line is the
      destination. *)
   let djot_links t = t.djot_links
+  (* In djot a list marker does not interrupt a paragraph: a [- x] line under a
+     paragraph is more of that paragraph's text, not a list. *)
+  let list_marker_interrupts_paragraph t = t.list_marker_interrupts_paragraph
+
+  (* Djot's list item content is anything indented past the marker, where
+     CommonMark's must reach the content column. *)
+  let djot_list_indent t = t.djot_list_indent
   let djot_emphasis t = t.djot_emphasis
   let smart_punctuation t = t.smart_punctuation
   let indented_code t = t.indented_code
@@ -392,6 +404,8 @@ let parser
     ?djot_headings
     ?djot_links
     ?djot_emphasis
+    ?list_marker_interrupts_paragraph
+    ?djot_list_indent
     ?smart_punctuation
     ?indented_code
     ?setext_headings
@@ -459,6 +473,10 @@ let parser
   let djot_headings = knob ~cmark:false ~djot:true djot_headings in
   let djot_links = knob ~cmark:false ~djot:true djot_links in
   let djot_emphasis = knob ~cmark:false ~djot:true djot_emphasis in
+  let list_marker_interrupts_paragraph =
+    knob ~cmark:true ~djot:false list_marker_interrupts_paragraph
+  in
+  let djot_list_indent = knob ~cmark:false ~djot:true djot_list_indent in
   let smart_punctuation = knob ~cmark:false ~djot:true smart_punctuation in
   let indented_code = knob ~cmark:true ~djot:false indented_code in
   let setext_headings = knob ~cmark:true ~djot:false setext_headings in
@@ -477,7 +495,8 @@ let parser
       ~djot_block_attributes ~djot_thematic_break ~djot_symbols ~djot_escapes
       ~djot_raw ~djot_ordered_list_styles ~djot_definition_lists ~djot_math
       ~djot_table_captions ~djot_verbatim_trim ~djot_headings ~djot_links
-      ~djot_emphasis ~smart_punctuation ~indented_code ~setext_headings ~lazy_continuation
+      ~djot_emphasis ~list_marker_interrupts_paragraph ~djot_list_indent
+      ~smart_punctuation ~indented_code ~setext_headings ~lazy_continuation
       ~raw_html ~entity_refs ~tilde_code_fences ~block_quote_marker_space ~div
       ~wikilink ~jsx_expr ~jsx_element ~callout
   in

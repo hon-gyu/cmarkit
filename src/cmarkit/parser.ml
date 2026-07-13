@@ -164,7 +164,12 @@ module Block_struct = struct
   | Thematic_break of Layout.indent * line_span (* including trailing blanks *)
   | Ext_table of
       Layout.indent * (line_span * line_span (* trail blanks *)) list *
-      table_caption option
+      table_caption option *
+      (* Blank lines seen after the rows. A djot caption may sit after a blank
+         line, so the table cannot close on one: it holds them until it knows
+         whether a [^] line follows. If none does, they are flushed as blank
+         lines after the table. *)
+      line_span list (* reversed *)
   | Ext_footnote of Layout.indent * (Label.t * Label.t option) * t list
   | Ext_def_list of def_list (* Oymarkit djot definition list *)
 
@@ -297,7 +302,7 @@ module Block_struct = struct
 
   let table p ~indent ~last =
     let row = table_row p ~first:p.current_char ~last in
-    Ext_table (indent, [row], None)
+    Ext_table (indent, [row], None, [])
 
   (* Djot table caption: a [^] followed by a space or the end of the line, on
      the line after a table. Its continuation lines are indented. *)
@@ -314,6 +319,9 @@ module Block_struct = struct
       current_line_span p ~first ~last:p.current_line_last_char
     in
     Some { caption_indent = indent; caption_lines = [line] }
+
+  let flush_table_blanks blanks bs =
+    List.fold_left (fun bs l -> Blank_line (0, l) :: bs) bs (List.rev blanks)
 
   (* Link reference definition parsing
 
@@ -335,9 +343,14 @@ module Block_struct = struct
       let indent = start - line.first in
       let meta_first = { line with first = start } in
       let lines, line, label, start =
-        match Match.link_label p.buf ~next_line p.i lines ~line ~start with
+        (* A djot definition's label lives on one line: [next_line] stops here so
+           that [ [a and\nb]: url ] is not a definition at all. *)
+        let next_line _ = None in
+        match
+          Match.link_label ~djot:true p.buf ~next_line p.i lines ~line ~start
+        with
         | None -> none ()
-        | Some (lines, line, rev_spans, last, key) ->
+        | Some (_, line, rev_spans, last, key) ->
             let colon = last + 1 in
             if colon > line.last || p.i.[colon] <> ':' then none () else
             let label = Inline_struct.label_of_rev_spans p ~key rev_spans in
@@ -362,7 +375,6 @@ module Block_struct = struct
         in
         String.concat "" (List.map seg segs)
       in
-      if dest = "" then none () else
       let meta_last = line in
       let meta = meta_of_spans p ~first:meta_first ~last:meta_last in
       let layout =
@@ -397,7 +409,7 @@ module Block_struct = struct
       let indent = start - line.first in
       let meta_first = { line with first = start } in
       let lines, line, label, start =
-        match Match.link_label p.buf ~next_line p.i lines ~line ~start with
+        match Match.link_label ~djot:(Oymarkit_mod.djot_links p.oymarkit_mod) p.buf ~next_line p.i lines ~line ~start with
         | None -> none ()
         | Some (lines, line, rev_spans, last, key) ->
             let colon = last + 1 in
@@ -564,6 +576,10 @@ module Block_struct = struct
       Html_block { h with end_cond = None } :: bs
 
   let rec end_doc p = function
+  | Ext_table (ind, rows, caption, blanks) :: bs when blanks <> [] ->
+      (* The document ended while the table was still holding blank lines for a
+         caption that never came: they are ordinary blank lines after it. *)
+      flush_table_blanks blanks (Ext_table (ind, rows, caption, []) :: bs)
   | Block_quote (indent, marker, bq) :: bs ->
       Block_quote (indent, marker, end_doc p bq) :: bs
   | Ext_div (fence, children) :: bs ->
@@ -715,7 +731,12 @@ module Block_struct = struct
           Paragraph_line
     end
 
-  let list_marker_can_interrupt_paragraph p = function
+  let rec list_marker_can_interrupt_paragraph p m =
+    if not (Oymarkit_mod.list_marker_interrupts_paragraph p.oymarkit_mod)
+    then false else
+    list_marker_can_interrupt_paragraph_cmark p m
+
+  and list_marker_can_interrupt_paragraph_cmark p = function
   | `Ordered (1, _), marker_last | `Unordered _, marker_last
   | `Ext_ordered (_, _, 1, _), marker_last ->
       let last = p.current_line_last_char and start = marker_last + 1 in
@@ -806,7 +827,20 @@ module Block_struct = struct
             in
             Some (u, current_line_span p ~first:start ~last), 4
     in
-    let min = indent + marker_size + after_marker in
+    (* CommonMark's item content is what lines up with the content column (past
+       the marker and the blanks after it). Djot's is anything indented past the
+       *marker*, which is why
+
+         - one
+          - two
+
+       is one item whose paragraph continues with the text [- two] rather than a
+       second item: the line is inside the item, and there a marker cannot
+       interrupt the open paragraph. *)
+    let min =
+      if Oymarkit_mod.djot_list_indent p.oymarkit_mod then indent + 1
+      else indent + marker_size + after_marker
+    in
     min, { before_marker; marker; after_marker; ext_task_marker;
            blocks = add_open_blocks p [] }
 
@@ -933,18 +967,30 @@ module Block_struct = struct
     let indent = current_indent p in
     accept_cols ~count:indent p;
     let start = p.current_char and last = p.current_line_last_char in
-    let first =
-      (* Strip a leading [#] run and the blank after it, if any. *)
-      let hashes = Match.run_of ~char:'#' p.i ~last ~start in
-      if hashes < start then start else
+    let hashes = Match.run_of ~char:'#' p.i ~last ~start in
+    let marker =
+      (* A [#] run followed by a blank or the end of the line is a heading
+         marker. Only one of the same level continues this heading: a different
+         level is a heading of its own, so [## a] then [### b] is two headings
+         while [# a] then [# b] is one. *)
+      if hashes < start then None else
       let next = hashes + 1 in
-      if next > last then next else
-      if Ascii.is_blank p.i.[next]
-      then Match.first_non_blank p.i ~last ~start:next
-      else start
+      if next <= last && not (Ascii.is_blank p.i.[next]) then None else
+      Some (hashes - start + 1, next)
     in
-    let line = current_line_span p ~first ~last in
-    Heading (`Atx { a with more = line :: a.more }) :: bs
+    match marker with
+    | Some (level, _) when level <> a.level ->
+        (* Close this heading and let the line open its own. *)
+        add_open_blocks p (Heading (`Atx a) :: bs)
+    | _ ->
+        let first = match marker with
+        | None -> start
+        | Some (_, next) ->
+            if next > last then next else
+            Match.first_non_blank p.i ~last ~start:next
+        in
+        let line = current_line_span p ~first ~last in
+        Heading (`Atx { a with more = line :: a.more }) :: bs
 
   let try_add_to_html_block p b bs = match b.end_cond with
   | None -> add_open_blocks p (Html_block { b with end_cond = None} :: bs)
@@ -982,14 +1028,14 @@ module Block_struct = struct
       end
   | _ -> None
 
-  let try_add_to_table p ind rows caption bs =
+  let try_add_to_table p ind rows caption blanks bs =
     let indent_start = p.current_char and indent = current_indent p in
     match caption with
     | Some c ->
-        (* Inside a caption: an indented line continues it, anything else ends
-           the table. *)
-        if only_blanks p || indent <= c.caption_indent then begin
-          let bs = Ext_table (ind, rows, caption) :: bs in
+        (* A caption runs to the blank line that ends it; its continuation lines
+           need no indent. *)
+        if only_blanks p then begin
+          let bs = Ext_table (ind, rows, caption, []) :: bs in
           let ltype = match_line_type ~indent ~no_setext:true p in
           add_open_blocks_with_line_class p ~indent ~indent_start bs ltype
         end else begin
@@ -999,18 +1045,26 @@ module Block_struct = struct
               ~last:p.current_line_last_char
           in
           let c = { c with caption_lines = line :: c.caption_lines } in
-          Ext_table (ind, rows, Some c) :: bs
+          Ext_table (ind, rows, Some c, []) :: bs
         end
     | None ->
+        if only_blanks p then
+          (* Hold the blank line: a caption may still follow it. *)
+          let first = p.current_char and last = p.current_line_last_char in
+          let blank = current_line_span p ~first ~last in
+          Ext_table (ind, rows, None, blank :: blanks) :: bs
+        else
         match match_table_caption p ~indent with
-        | Some c -> Ext_table (ind, rows, Some c) :: bs
+        | Some c -> Ext_table (ind, rows, Some c, []) :: bs
         | None ->
+            (* No caption: the held blank lines belong after the table. *)
             match match_line_type ~indent ~no_setext:true p with
-            | Ext_table_row last ->
+            | Ext_table_row last when blanks = [] ->
                 let row = table_row p ~first:p.current_char ~last in
-                Ext_table (ind, row :: rows, None) :: bs
+                Ext_table (ind, row :: rows, None, []) :: bs
             | ltype ->
-                let bs = Ext_table (ind, rows, None) :: bs in
+                let bs = Ext_table (ind, rows, None, []) :: bs in
+                let bs = flush_table_blanks blanks bs in
                 add_open_blocks_with_line_class p ~indent ~indent_start bs ltype
 
   let rec try_add_to_block_quote p indent_layout bq marker bs =
@@ -1245,8 +1299,8 @@ module Block_struct = struct
   | Ext_div (fence, children) :: bs -> try_add_to_div p fence children bs
   | Ext_jsx_block (o, children) :: bs -> try_add_to_jsx_block p o children bs
   | Html_block html :: bs -> try_add_to_html_block p html bs
-  | Ext_table (ind, rows, caption) :: bs ->
-      try_add_to_table p ind rows caption bs
+  | Ext_table (ind, rows, caption, blanks) :: bs ->
+      try_add_to_table p ind rows caption blanks bs
   | Ext_footnote (i, l, blocks) :: bs -> try_add_to_footnote p i l blocks bs
   | Ext_def_list dl :: bs -> try_add_to_def_list p dl bs
 
@@ -1363,8 +1417,13 @@ let block_struct_to_heading p = function
       meta p (textloc_of_span p { heading with first = after_open - level })
     in
     (* [Inline_struct.parse] takes its lines with the last one at the head, and
-       [more] is already in that order. *)
-    let _layout, inline = Inline_struct.parse p (more @ [heading]) in
+       [more] is already in that order. An empty [#] line contributes no content:
+       dropping it keeps the heading's text from starting with a newline. *)
+    let lines = match more with
+    | _ :: _ when heading.first > heading.last -> more
+    | _ -> more @ [heading]
+    in
+    let _layout, inline = Inline_struct.parse p lines in
     let id = match p.heading_auto_ids with
     | false -> None
     | true -> Some (`Auto (Inline.id ~buf:p.buf inline))
@@ -1588,6 +1647,49 @@ let block_struct_to_thematic_break p indent span =
   let layout, meta = (* not layout because of loc *) clean_raw_span p span in
   Block.Thematic_break ({ indent; layout }, meta)
 
+(* A table separator row, read from the source rather than from the parsed cells.
+
+   [Block.Table.parse_sep_row] inspects the cells' inlines, which only works if
+   nothing rewrote them first: with smart punctuation on, the [---] of [|---:|]
+   has already become an em dash by then, and the row is silently taken for data.
+   The source always says what the row is. *)
+let raw_sep_row p (row : line_span) =
+  let s = p.i in
+  let cell first last (* inclusive, may be empty *) =
+    let first = Match.first_non_blank s ~last ~start:first in
+    let last = Match.last_non_blank s ~first ~start:last in
+    if first > last then None else
+    let first_colon = s.[first] = ':' and last_colon = s.[last] = ':' in
+    let d_first = if first_colon then first + 1 else first in
+    let d_last = if last_colon then last - 1 else last in
+    if d_first > d_last then None else
+    let rec dashes k =
+      if k > d_last then true else if s.[k] <> '-' then false else dashes (k + 1)
+    in
+    if not (dashes d_first) then None else
+    let align = match first_colon, last_colon with
+    | false, false -> None
+    | true, true -> Some `Center
+    | true, false -> Some `Left
+    | false, true -> Some `Right
+    in
+    let count = d_last - d_first + 1 in
+    let meta = meta p (textloc_of_span p { row with first; last }) in
+    Some ((align, count), meta)
+  in
+  let rec loop acc first k =
+    if k > row.last then (if first > row.last then Some (List.rev acc) else None)
+    else if s.[k] = '|' && (k = row.first || s.[k - 1] <> '\\') then
+      match cell first (k - 1) with
+      | None -> None
+      | Some sep -> loop (sep :: acc) (k + 1) (k + 1)
+    else loop acc first (k + 1)
+  in
+  if row.first > row.last then None else
+  match loop [] row.first row.first with
+  | Some (_ :: _ as seps) -> Some seps
+  | Some [] | None -> None
+
 let block_struct_to_table p indent rows caption =
   let rec loop p col_count last_was_sep acc = function
   | (row, blanks) :: rs ->
@@ -1595,7 +1697,7 @@ let block_struct_to_table p indent rows caption =
       let row' = { row with first = row.first + 1; last = row.last } in
       let cols = Inline_struct.parse_table_row p row' in
       let col_count = Int.max col_count (List.length cols) in
-      let r, last_was_sep = match Block.Table.parse_sep_row cols with
+      let r, last_was_sep = match raw_sep_row p row' with
       | Some seps -> ((`Sep seps), meta), true
       | None ->
           ((if last_was_sep then `Header cols else `Data cols), meta), false
@@ -1854,7 +1956,7 @@ and block_struct_to_block p = function
 | Block_struct.Attribute_specs specs ->
     Block.Ext_attributes
       (Block.Attributes.make ~specs Block.empty, Meta.none)
-| Block_struct.Ext_table (i, rows, caption) ->
+| Block_struct.Ext_table (i, rows, caption, _) ->
     block_struct_to_table p i rows caption
 | Block_struct.Ext_div (fence, bs) -> block_struct_to_div p fence bs
 | Block_struct.Ext_jsx_block (o, bs) -> block_struct_to_jsx_block p o bs

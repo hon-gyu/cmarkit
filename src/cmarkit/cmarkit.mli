@@ -1963,7 +1963,8 @@ module Doc : sig
     ?djot_ordered_list_styles:bool -> ?djot_definition_lists:bool ->
     ?djot_math:bool -> ?djot_table_captions:bool ->
     ?djot_verbatim_trim:bool -> ?djot_headings:bool -> ?djot_links:bool ->
-    ?djot_emphasis:bool -> ?smart_punctuation:bool ->
+    ?djot_emphasis:bool -> ?list_marker_interrupts_paragraph:bool ->
+    ?djot_list_indent:bool -> ?smart_punctuation:bool ->
     ?indented_code:bool -> ?setext_headings:bool ->
     ?lazy_continuation:bool -> ?raw_html:bool -> ?entity_refs:bool ->
     ?tilde_code_fences:bool -> ?block_quote_marker_space:bool ->

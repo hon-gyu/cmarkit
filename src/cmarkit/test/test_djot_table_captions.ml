@@ -94,7 +94,8 @@ let%expect_test "on: an unindented line ends the table" =
     (table ^ "^ The caption.\nA new paragraph.\n");
   [%expect {|
     <div role="region"><table>
-    <caption>The caption.</caption>
+    <caption>The caption.
+    A new paragraph.</caption>
     <tr>
     <th>a</th>
     <th>b</th>
@@ -103,7 +104,7 @@ let%expect_test "on: an unindented line ends the table" =
     <td>1</td>
     <td>2</td>
     </tr>
-    </table></div><p>A new paragraph.</p>
+    </table></div>
     |}]
 
 let%expect_test "on: the marker needs a space or the end of the line" =
