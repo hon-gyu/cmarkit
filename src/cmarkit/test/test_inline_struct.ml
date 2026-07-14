@@ -85,6 +85,15 @@ module Inline_struct = struct
   }
   [@@deriving sexp_of]
 
+  type quoted_marks = Inline_struct_.quoted_marks = {
+    start : byte_pos;
+    char : char;
+    curly : bool;
+    may_open : bool;
+    may_close : bool;
+  }
+  [@@deriving sexp_of]
+
   type attribute_spec = Inline_struct_.attribute_spec = {
     start : byte_pos;
     attribute : Attribute.t;
@@ -107,6 +116,7 @@ module Inline_struct = struct
     | Backticks of { start : byte_pos; count : int; escaped : bool }
     | Emphasis_marks of emphasis_marks
     | Extra_inline_container_marks of extra_inline_container_marks
+    | Quoted_marks of quoted_marks
     | Inline of {
         start : byte_pos;
         inline : inline;

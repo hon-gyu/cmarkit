@@ -50,6 +50,13 @@ type math_span_marks =
     may_open : bool;
     may_close : bool; }
 
+type quoted_marks =
+  { start : byte_pos; (* the quote, or the '{' of an opener marker *)
+    char : char;
+    curly : bool; (* written with an explicit '{' / '}' marker *)
+    may_open : bool;
+    may_close : bool }
+
 type attribute_spec =
   { start : byte_pos;
     attribute : Attribute.t;
@@ -65,6 +72,7 @@ type token =
       escaped : bool }
 | Emphasis_marks of emphasis_marks
 | Extra_inline_container_marks of extra_inline_container_marks
+| Quoted_marks of quoted_marks
 | Inline of
     { start : byte_pos;
       inline : Inline.t;
@@ -98,6 +106,7 @@ type token =
 let token_start = function
 | Attribute_spec { start } | Autolink_or_html_start { start } | Backticks { start }
 | Emphasis_marks { start } | Extra_inline_container_marks { start }
+| Quoted_marks { start }
 | Inline { start } -> start |  Link_start { start }
 | Newline { start } | Right_brack { start } -> start
 | Right_paren { start } -> start
@@ -132,6 +141,12 @@ let has_extra_inline_container_closer ~char ~curly ~after cidx =
   Closer_index.closer_exists
     (Closer.Extra_inline_container_marks (char, curly)) ~after cidx
 
+let quoted_closer_pos ~char ~curly ~after cidx =
+  Closer_index.closer_pos (Closer.Quoted_marks (char, curly)) ~after cidx
+
+let has_quoted_closer ~char ~curly ~after cidx =
+  Closer_index.closer_exists (Closer.Quoted_marks (char, curly)) ~after cidx
+
 let has_strikethrough_closer ~after cidx =
   Closer_index.closer_exists Closer.Strikethrough_marks ~after cidx
 
@@ -158,6 +173,9 @@ let rev_token_list_and_make_closer_index toks =
         Closer_index.add
           (Closer.Extra_inline_container_marks (char, curly)) start cidx
       in
+      loop cidx (t :: acc) toks
+  | Quoted_marks { start; char; curly; may_close = true; _ } as t :: toks ->
+      let cidx = Closer_index.add (Closer.Quoted_marks (char, curly)) start cidx in
       loop cidx (t :: acc) toks
   | Strikethrough_marks { start; may_close = true } as t :: toks ->
       let cidx = Closer_index.add Closer.Strikethrough_marks start cidx in
@@ -709,21 +727,72 @@ let try_add_jsx_element_token oymarkit_mod acc s line ~start =
                 tag_end + 1)
       | _ -> None
 
-(* Smart punctuation. Like symbols below, these resolve outright into [Inline]
-   tokens: a quote's direction is decided from its immediate neighbours (the
-   same flanking test emphasis uses), and dash and period runs are decided by
-   their own length, so nothing needs matching up in a later pass.
+(* Smart punctuation. Dashes, ellipses and symbols resolve outright into
+   [Inline] tokens: a run's reading is a function of its own length, so nothing
+   needs matching up in a later pass.
 
-   A quote is a closer exactly when it is right-flanking. That single rule
-   covers the apostrophes too: in [don't] and [Socrates'] the quote is both
-   left- and right-flanking, and taking the closer gives the right curl. An
-   explicit [{"] or ["}] marker overrides the test, as in djot. *)
+   Quotes do not. A quote is a delimiter, and its direction is a consequence of
+   whether it pairs with another quote, which is not knowable from its
+   neighbours: in [ 'tis the season to be 'jolly' ] the first quote and the one
+   before [jolly] have the same neighbourhood, yet one is an apostrophe and the
+   other an opener — the difference is only that [jolly]'s finds a closer. So a
+   quote is tokenized as [Quoted_marks] and left to the pass that resolves
+   emphasis, which is where djot resolves it too.
+
+   What survives that pass unmatched is where a quote's fallback direction is
+   decided, in [quoted_fallback_token] below. *)
+
+(* Djot's [\ ], a non-breaking space. It is claimed here, as a node, rather than
+   left to text cleaning to turn into a U+00A0: a literal U+00A0 in the source is
+   ordinary text, and once both are the same byte in a [Text] a render back to
+   djot cannot tell which was written. Djot keeps them apart the same way. *)
+let rec blank_to_eol s line ~start =
+  if start > line.last then true
+  else match s.[start] with
+  | ' ' | '\t' -> blank_to_eol s line ~start:(start + 1)
+  | _ -> false
+
+let ext_nbsp_token p ~first ~last ~line =
+  let textloc = textloc_of_span p { line with first; last } in
+  let inline = Inline.Ext_nbsp (Inline.Nbsp.make (), meta p textloc) in
+  Inline { start = first; inline; endline = line; next = last + 1 }
 
 let smart_punct_token p ~kind ~marker ~first ~last ~line =
   let textloc = textloc_of_span p { line with first; last } in
   let sp = Inline.Smart_punct.make ~marker kind in
   let inline = Inline.Ext_smart_punct (sp, meta p textloc) in
   Inline { start = first; inline; endline = line; next = last + 1 }
+
+(* A quote may open when a non-whitespace follows it, and, for a ['], only where
+   an opening quote can plausibly start: at the start of the line or after one of
+   a small set of characters. This is djot's [canOpen]. It is what keeps the
+   quote of [Jane's] off the opener stack, and what makes the quote after a [)]
+   or a []] an apostrophe. A quote may close when a non-whitespace precedes it.
+
+   An explicit [{'] or ['}] marker forces the role, as in djot. Marked and
+   unmarked quotes do not pair with each other: they are two delimiter stacks
+   (the [curly] field), exactly as for the extra inline containers. *)
+let quote_may_open s line ~char ~qpos =
+  let next_uchar = Match.next_uchar s ~last:line.last ~after:qpos in
+  if Cmarkit_data.is_unicode_whitespace next_uchar then false else
+  if char = '"' then true else
+  if qpos = line.first then true else
+  match s.[qpos - 1] with
+  | ' ' | '\t' | '\r' | '\n' | '"' | '\'' | '-' | '(' | '[' -> true
+  | _ -> false
+
+let quote_may_close s line ~qpos =
+  let prev_uchar = Match.prev_uchar s ~first:line.first ~before:qpos in
+  not (Cmarkit_data.is_unicode_whitespace prev_uchar)
+
+(* The character an unmatched quote falls back to: a single quote is an
+   apostrophe and a double quote a left double quote, unless a marker forced the
+   other role. This is djot's [defaultmatch], markers included. *)
+let quote_fallback_kind ~char ~open_marker ~close_marker =
+  let open Inline.Smart_punct in
+  match char with
+  | '"' -> if close_marker then Right_double_quote else Left_double_quote
+  | _ -> if open_marker then Left_single_quote else Right_single_quote
 
 (* [start] is the quote, or the '{' of an opener marker. *)
 let try_add_smart_quote_token p oymarkit_mod acc s line ~start =
@@ -736,32 +805,29 @@ let try_add_smart_quote_token p oymarkit_mod acc s line ~start =
       let close_marker =
         (not open_marker) && qpos < line.last && s.[qpos + 1] = '}'
       in
+      let curly = open_marker || close_marker in
+      let may_open, may_close = match open_marker, close_marker with
+      | true, _ -> true, false
+      | _, true -> false, true
+      | _ ->
+          quote_may_open s line ~char ~qpos, quote_may_close s line ~qpos
+      in
       (* The span runs [start]..[last]. An opener marker widens it to the left
          (the '{' is [start]), a closer marker to the right (the '}'). *)
       let last = if close_marker then qpos + 1 else qpos in
-      let closer = match open_marker, close_marker with
-      | true, _ -> false
-      | _, true -> true
-      | _ ->
-          let prev_uchar = Match.prev_uchar s ~first:line.first ~before:qpos in
-          let next_uchar = Match.next_uchar s ~last:line.last ~after:qpos in
-          let prev_white = Cmarkit_data.is_unicode_whitespace prev_uchar in
-          let next_white = Cmarkit_data.is_unicode_whitespace next_uchar in
-          let prev_punct = Cmarkit_data.is_unicode_punctuation prev_uchar in
-          let next_punct = Cmarkit_data.is_unicode_punctuation next_uchar in
-          not prev_white && ((not prev_punct) || next_white || next_punct)
-      in
-      let kind =
-        let open Inline.Smart_punct in
-        match char, closer with
-        | '"', false -> Left_double_quote
-        | '"', true -> Right_double_quote
-        | _, false -> Left_single_quote
-        | _, true -> Right_single_quote
-      in
-      let marker = open_marker || close_marker in
-      let t = smart_punct_token p ~kind ~marker ~first:start ~last ~line in
-      Some (t :: acc, last + 1)
+      if may_open || may_close
+      then
+        let t = Quoted_marks { start; char; curly; may_open; may_close } in
+        Some (t :: acc, last + 1)
+      else
+        (* A quote that can neither open nor close, one surrounded by spaces,
+           never reaches the matching pass; it is its fallback character
+           already. *)
+        let kind = quote_fallback_kind ~char ~open_marker ~close_marker in
+        let t =
+          smart_punct_token p ~kind ~marker:curly ~first:start ~last ~line
+        in
+        Some (t :: acc, last + 1)
   | _ -> None
 
 (* A run of hyphens becomes em- and en-dashes; a run of periods becomes one
@@ -868,6 +934,14 @@ let tokenize ~p ?oymarkit_mod ~exts s lines =
     let jumped = ref None in
     let acc, next = match s.[k] with
     | '`' -> add_backtick_token acc s line ~prev_bslash ~start:k
+    | ' ' when prev_bslash && djot_escapes && not (blank_to_eol s line ~start:k)
+      ->
+        (* Only a backslash-space with something after it on the line is a
+           non-breaking space: a backslash followed by blanks to the end of the
+           line is the hard break, and [newline_token] claims it. Djot tests the
+           line end first for the same reason. *)
+        let t = ext_nbsp_token p ~first:(k - 1) ~last:k ~line in
+        t :: acc, k + 1
     | c when prev_bslash ->
         (* For backticks we need to treat backslash specially. Because
             if we are in a code span backslashes are always treated literally.
@@ -1122,6 +1196,27 @@ let ext_extra_inline_container_token p ~kind ~first ~last ~first_line ~last_line
   let c = Inline.Extra_inline_container.make kind i in
   let inline = Inline.Ext_extra_inline_container (c, meta p textloc) in
   Inline { start = first; inline; endline = last_line; next = last + 1 }
+
+let ext_quoted_token
+    p ~kind ~open_marker ~close_marker ~first ~last ~first_line ~last_line i
+  =
+  let textloc = textloc_of_lines p ~first ~last ~first_line ~last_line in
+  let q = Inline.Quoted.make ~open_marker ~close_marker kind i in
+  let inline = Inline.Ext_quoted (q, meta p textloc) in
+  Inline { start = first; inline; endline = last_line; next = last + 1 }
+
+(* A quote the matching pass leaves unmatched is not a container: it becomes the
+   single character it falls back to, which is where [ 'tis ] gets its
+   apostrophe. *)
+let quoted_fallback_token p (marks : quoted_marks) line =
+  let open_marker = marks.curly && marks.may_open in
+  let close_marker = marks.curly && marks.may_close in
+  let kind = quote_fallback_kind ~char:marks.char ~open_marker ~close_marker in
+  let first = marks.start in
+  (* A marked quote spans two characters either way: '{' and the quote, or the
+     quote and '}'. *)
+  let last = if marks.curly then first + 1 else first in
+  smart_punct_token p ~kind ~marker:marks.curly ~first ~last ~line
 
 let ext_math_span_token p ~count ~first ~last ~first_line ~last_line rspans =
   let textloc = textloc_of_lines p ~first ~last ~first_line ~last_line in
@@ -1930,7 +2025,8 @@ and try_strikethrough p start_toks start_line ~opener =
       in
       Either.Right (toks, line)
 
-and find_extra_inline_container_text p toks start_line ~opener =
+and find_extra_inline_container_text p toks start_line
+    ~(opener : extra_inline_container_marks) =
   let closer_pos =
     match
       extra_inline_container_closer_pos ~char:opener.char ~curly:opener.curly
@@ -1969,7 +2065,8 @@ and find_extra_inline_container_text p toks start_line ~opener =
   in
   loop p toks start_line []
 
-and try_extra_inline_container p start_toks start_line ~opener =
+and try_extra_inline_container p start_toks start_line
+    ~(opener : extra_inline_container_marks) =
   let start = opener.start in
   if
     not
@@ -2005,6 +2102,88 @@ and try_extra_inline_container p start_toks start_line ~opener =
       in
       Either.Right (toks, line)
 
+(* Quote pairing. The shape is [find_extra_inline_container_text] /
+   [try_extra_inline_container]: a quote pairs only with a quote of the same
+   character and the same marked-ness, and an inner pair that closes before this
+   one's closer is resolved first, so quotes nest.
+
+   The one rule quotes add is that an empty pair does not match: in [ ''hi'' ]
+   the second quote cannot close the first, it goes on the stack instead, and the
+   two closers then pair with the two openers from the inside out. This is djot's
+   "exclude empty emph" test. *)
+and quoted_quote_pos (marks : quoted_marks) =
+  (* [start] is the '{' when the marker opens; the quote is what pairs. *)
+  if marks.curly && marks.may_open then marks.start + 1 else marks.start
+
+and find_quoted_text p toks start_line ~(opener : quoted_marks) =
+  let opener_quote = quoted_quote_pos opener in
+  let rec loop p toks line acc = match toks with
+  | [] -> Either.Left (List.rev acc)
+  | Quoted_marks marks :: toks ->
+      let closes =
+        marks.may_close && marks.char = opener.char
+        && marks.curly = opener.curly
+        && quoted_quote_pos marks > opener_quote + 1 (* not an empty pair *)
+      in
+      if closes then
+        let to_last = marks.start - 1 in
+        let acc = rev_tokens_and_shorten_last_line ~to_last [] acc in
+        Either.Right (toks, line, acc, marks)
+      else if marks.may_open then
+        (* A closer binds to the nearest opener before it, so an opener met
+           inside this one is resolved first, unconditionally: whatever closer it
+           finds is a closer this one could not have had anyway. Unresolved, it
+           stays a mark and the inner pass turns it into its fallback
+           character. *)
+        begin match try_quoted p toks line ~opener:marks with
+        | Either.Left toks -> loop p toks line (Quoted_marks marks :: acc)
+        | Either.Right (toks, line) -> loop p toks line acc
+        end
+      else loop p toks line (Quoted_marks marks :: acc)
+  | Newline { newline = l } as t :: toks -> loop p toks l (t :: acc)
+  | Inline { endline = l } as t :: toks -> loop p toks l (t :: acc)
+  | t :: toks -> loop p toks line (t :: acc)
+  in
+  loop p toks start_line []
+
+and try_quoted p start_toks start_line ~(opener : quoted_marks) =
+  let start = opener.start in
+  if
+    not
+      (has_quoted_closer ~char:opener.char ~curly:opener.curly ~after:start
+         p.cidx)
+  then Either.Left start_toks else
+  match find_quoted_text p start_toks start_line ~opener with
+  | Either.Left _ as r -> r
+  | Either.Right (toks, line, contained_toks, closer) ->
+      let first_line = start_line and last_line = line in
+      let text =
+        let first = quoted_quote_pos opener + 1 in
+        let last = closer.start - 1 in
+        let text_start =
+          let last =
+            if start_line.line_pos = line.line_pos then last
+            else start_line.last
+          in
+          { start_line with first; last }
+        in
+        let contained_toks = second_pass p contained_toks text_start in
+        let text = last_pass p contained_toks text_start in
+        inlines_inline p text ~first ~last ~first_line ~last_line
+      in
+      let toks =
+        let kind =
+          if opener.char = '"' then Inline.Quoted.Double
+          else Inline.Quoted.Single
+        in
+        let last = closer.start + (if closer.curly then 1 else 0) in
+        ext_quoted_token p ~kind ~open_marker:opener.curly
+          ~close_marker:closer.curly ~first:start ~last ~first_line ~last_line
+          text
+        :: toks
+      in
+      Either.Right (toks, line)
+
 and second_pass p toks line =
   let rec loop p toks line acc = match toks with
   | [] -> List.rev acc
@@ -2025,6 +2204,15 @@ and second_pass p toks line =
       if not may_open then loop p toks line acc else
       begin match try_extra_inline_container p toks line ~opener with
       | Either.Left toks -> loop p toks line acc
+      | Either.Right (toks, line) -> loop p toks line acc
+      end
+  | Quoted_marks ({ may_open; _ } as opener) :: toks ->
+      (* Unlike the other delimiters, a quote that fails to pair does not fall
+         back to its literal source character but to a smart one. *)
+      let fallback () = quoted_fallback_token p opener line in
+      if not may_open then loop p toks line (fallback () :: acc) else
+      begin match try_quoted p toks line ~opener with
+      | Either.Left toks -> loop p toks line (fallback () :: acc)
       | Either.Right (toks, line) -> loop p toks line acc
       end
   | Newline { newline } as t :: toks -> loop p toks newline (t :: acc)
@@ -2120,7 +2308,7 @@ and last_pass p toks start_line =
       end
   | (Backticks _ | Autolink_or_html_start _ | Link_start _ | Right_brack _
     | Emphasis_marks _ | Right_paren _ | Strikethrough_marks _
-    | Extra_inline_container_marks _ | Math_span_marks _
+    | Extra_inline_container_marks _ | Quoted_marks _ | Math_span_marks _
     | Wikilink_start _ | Jsx_expr_start _ | Jsx_element_start _ | Jsx_open _ | Jsx_close _) :: _ ->
       assert false
   in
@@ -2265,7 +2453,7 @@ let rec finish_col p line blanks_before is toks k = match toks with
     end
 | (Attribute_spec _ | Backticks _ | Autolink_or_html_start _ | Link_start _ | Right_brack _
   | Emphasis_marks _ | Right_paren _ | Strikethrough_marks _
-  | Extra_inline_container_marks _ | Math_span_marks _ | Newline _
+  | Extra_inline_container_marks _ | Quoted_marks _ | Math_span_marks _ | Newline _
   | Wikilink_start _ | Jsx_expr_start _ | Jsx_element_start _ | Jsx_open _ | Jsx_close _ ) :: _ ->
     assert false
 
@@ -2286,7 +2474,7 @@ let rec parse_cols p line acc toks k = match toks with
     end
 | (Attribute_spec _ | Backticks _ | Autolink_or_html_start _ | Link_start _ | Right_brack _
   | Emphasis_marks _ | Right_paren _ | Strikethrough_marks _
-  | Extra_inline_container_marks _ | Math_span_marks _ | Newline _
+  | Extra_inline_container_marks _ | Quoted_marks _ | Math_span_marks _ | Newline _
   | Wikilink_start _ | Jsx_expr_start _ | Jsx_element_start _ | Jsx_open _ | Jsx_close _ ) :: _ ->
     assert false
 

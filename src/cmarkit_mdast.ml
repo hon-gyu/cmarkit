@@ -269,6 +269,12 @@ let rec inline defs (i : Inline.t) : json list =
           ~children:(inline defs (Inline.Extra_inline_container.inline ic))
           (extra_inline_tag ic);
       ]
+  | Inline.Ext_quoted (q, meta) ->
+      (* Resolved text: mdast has no quoted span, so the curly quotes surround
+         the children as text, which is what a consumer would render anyway. *)
+      let open', close = Inline.Quoted.utf_8_delims (Inline.Quoted.kind q) in
+      let text s = node ~meta "text" [ ("value", Str s) ] in
+      (text open' :: inline defs (Inline.Quoted.inline q)) @ [ text close ]
   | Inline.Ext_attributes (a, meta) ->
       let props = hproperties_of_attributes (Inline.Attributes.attributes a) in
       inline_with_attributes defs ~meta ~props (Inline.Attributes.inline a)
@@ -283,6 +289,10 @@ let rec inline defs (i : Inline.t) : json list =
           ~children:[ node ~meta "text" [ ("value", Str tex) ] ]
           "span";
       ]
+  | Inline.Ext_nbsp (n, meta) ->
+      (* Resolved text, as for smart punctuation: the node is a djot parsing
+         distinction, mdast consumers want the character. *)
+      [ node ~meta "text" [ ("value", Str (Inline.Nbsp.to_utf_8 n)) ] ]
   | Inline.Ext_smart_punct (sp, meta) ->
       (* Resolved text: mdast consumers expect the curly character, not [--]. *)
       [ node ~meta "text" [ ("value", Str (Inline.Smart_punct.to_utf_8 sp)) ] ]

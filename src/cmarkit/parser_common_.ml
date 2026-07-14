@@ -32,6 +32,7 @@ module Closer = struct
   | Right_paren (* Only for ruling out pathological cases. *)
   | Emphasis_marks of char
   | Extra_inline_container_marks of char * bool
+  | Quoted_marks of char * bool
   | Strikethrough_marks
   | Math_span_marks of int (* run length *)
 

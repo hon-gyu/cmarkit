@@ -100,6 +100,18 @@ let sexp_of_inline_core : inline_sexp =
       in
       m, Sexp.List [ Atom "Extra_inline_container"; Atom kind;
                      recurse (Inline.Extra_inline_container.inline c) ]
+    | Inline.Ext_quoted (q, m) ->
+      let kind = match Inline.Quoted.kind q with
+        | Inline.Quoted.Single -> "single" | Inline.Quoted.Double -> "double"
+      in
+      let marker name = function true -> [ Sexp.Atom name ] | false -> [] in
+      let markers =
+        marker "open_marker" (Inline.Quoted.open_marker q)
+        @ marker "close_marker" (Inline.Quoted.close_marker q)
+      in
+      m, Sexp.List (Sexp.Atom "Quoted" :: Sexp.Atom kind :: markers
+                    @ [ recurse (Inline.Quoted.inline q) ])
+    | Inline.Ext_nbsp (_, m) -> m, Sexp.List [ Atom "Nbsp" ]
     | Inline.Ext_attributes (a, m) ->
       let attrs = Attribute.to_string (Inline.Attributes.attributes a) in
       m, Sexp.List [ Atom "Attributes"; Atom attrs;

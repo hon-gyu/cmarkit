@@ -943,6 +943,71 @@ module Inline : sig
     (** [inline c] is [c]'s contained inline. *)
   end
 
+  (** Djot quoted spans. *)
+  module Quoted : sig
+    type inline := t
+
+    type kind = Single | Double
+    (** The kind of quote a span is delimited by: a single or a double one. *)
+
+    type t
+    (** The type for
+        {{:https://htmlpreview.github.io/?https://github.com/jgm/djot/blob/master/doc/syntax.html#smart-punctuation}quoted spans}.
+
+        A quote is a delimiter, not a character whose direction is decided from
+        its neighbours: an opener is paired with a closer by the same matching
+        pass that resolves emphasis, and the pair becomes this container. A
+        quote that pass leaves unmatched is not a container, it degrades to a
+        single {!Inline.Smart_punct} character — a lone ['] is an apostrophe, a
+        lone double quote a left double quote. *)
+
+    val make : ?open_marker:bool -> ?close_marker:bool -> kind -> inline -> t
+    (** [make kind i] is [i] quoted with [kind]. [open_marker] and
+        [close_marker] indicate an explicit brace override on the respective
+        delimiter, [{'] and ['}], which forces its role regardless of context;
+        both default to [false]. *)
+
+    val kind : t -> kind
+    (** [kind q] is [q]'s quote kind. *)
+
+    val inline : t -> inline
+    (** [inline q] is [q]'s quoted inline. *)
+
+    val open_marker : t -> bool
+    (** [open_marker q] is [true] if [q]'s opening quote was written with a
+        brace override. *)
+
+    val close_marker : t -> bool
+    (** [close_marker q] is [true] if [q]'s closing quote was written with a
+        brace override. *)
+
+    val quote_char : kind -> char
+    (** [quote_char kind] is the source character of [kind]. *)
+
+    val utf_8_delims : kind -> string * string
+    (** [utf_8_delims kind] are the UTF-8 encoded curly quotes [kind] resolves
+        to, opening and closing. *)
+  end
+
+  (** Djot non-breaking space. *)
+  module Nbsp : sig
+    type t
+    (** The type for djot's escaped space [\ ], a non-breaking space.
+
+        This is a node rather than a U+00A0 in the text because a literal
+        U+00A0 in the source {e is} ordinary text: without the distinction a
+        render back to djot could not tell which of the two was written. *)
+
+    val make : unit -> t
+    (** [make ()] is a non-breaking space. *)
+
+    val to_source : t -> string
+    (** [to_source n] is [n] in source form, ["\\ "]. *)
+
+    val to_utf_8 : t -> string
+    (** [to_utf_8 n] is [n] as UTF-8, ["\u{00A0}"]. *)
+  end
+
   module Attributes : sig
     type inline := t
     type t
@@ -1167,8 +1232,10 @@ module Inline : sig
   type t +=
   | Ext_strikethrough of Strikethrough.t node
   | Ext_extra_inline_container of Extra_inline_container.t node
+  | Ext_quoted of Quoted.t node (** djot {{!Inline.Quoted}quoted span} *)
   | Ext_attributes of Attributes.t node
   | Ext_math_span of Math_span.t node
+  | Ext_nbsp of Nbsp.t node (** djot {{!Inline.Nbsp}non-breaking space} *)
   | Ext_raw_inline of Raw_inline.t node (** djot {{!Inline.Raw_inline}raw inline} *)
   | Ext_smart_punct of Smart_punct.t node
     (** djot {{!Inline.Smart_punct}smart punctuation} *)

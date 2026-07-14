@@ -164,7 +164,7 @@ let%expect_test "commonmark: backslash-space is a literal backslash" =
 
 let%expect_test "djot: backslash-space is a non-breaking space" =
   html ~djot_escapes:true "a\\ b";
-  [%expect {| <p>a b</p> |}]
+  [%expect {| <p>a&nbsp;b</p> |}]
 
 let%expect_test "djot: backslash before punctuation is unchanged" =
   html ~djot_escapes:true "\\*x\\* \\\\ \\a";

@@ -120,20 +120,11 @@ let html_escaped_string c s = buffer_add_html_escaped_string (C.buffer c) s
 (* Djot writes a non-breaking space as an entity: as a raw U+00A0 it would be
    indistinguishable from a space in the output. It leaves the double quote
    alone: text is not an attribute value, so nothing needs escaping there. *)
+(* Djot leaves the double quote alone in text, and a literal U+00A0 is ordinary
+   text: only [\ ] is a non-breaking space, and that is an {!Inline.Ext_nbsp}
+   node by the time we get here. *)
 let djot_escaped_string c s =
-  let b = C.buffer c in
-  let escaped b s = buffer_add_escaped_string ~quot:false b s in
-  let len = String.length s in
-  let rec loop start i =
-    if i >= len then
-      (if start < len then escaped b (String.sub s start (len - start)))
-    else if i + 1 < len && s.[i] = '\xc2' && s.[i + 1] = '\xa0' then begin
-      if start < i then escaped b (String.sub s start (i - start));
-      Buffer.add_string b "&nbsp;";
-      loop (i + 2) (i + 2)
-    end else loop start (i + 1)
-  in
-  loop 0 0
+  buffer_add_escaped_string ~quot:false (C.buffer c) s
 
 let text_string c s =
   if djot c then djot_escaped_string c s else html_escaped_string c s
@@ -386,6 +377,12 @@ let math_span c ms =
   C.string c (if display then "\\]" else "\\)");
   if djot then C.string c "</span>"
 
+let quoted c q =
+  let open', close = Inline.Quoted.utf_8_delims (Inline.Quoted.kind q) in
+  C.string c open';
+  C.inline c (Inline.Quoted.inline q);
+  C.string c close
+
 let extra_inline_container c ic =
   let tag =
     match Inline.Extra_inline_container.kind ic with
@@ -468,8 +465,10 @@ let inline c = function
 | Inline.Text (t, _) -> text_string c t; true
 | Inline.Ext_strikethrough (s, _) -> strikethrough c s; true
 | Inline.Ext_extra_inline_container (ic, _) -> extra_inline_container c ic; true
+| Inline.Ext_quoted (q, _) -> quoted c q; true
 | Inline.Ext_attributes (a, _) -> inline_attributes c a; true
 | Inline.Ext_math_span (ms, _) -> math_span c ms; true
+| Inline.Ext_nbsp (_, _) -> C.string c "&nbsp;"; true
 | Inline.Ext_raw_inline (r, _) -> raw_inline c r; true
 | Inline.Ext_smart_punct (sp, _) ->
     C.string c (Inline.Smart_punct.to_utf_8 sp); true

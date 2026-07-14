@@ -10,10 +10,12 @@ open Common_
    Two inline typing rules earn their keep here, both of them cases where the
    parser cannot recover the split the AST intended:
 
-   - [marked_smart_quotes]. A quote's direction is inferred from its neighbours,
-     so a bare [Right_double_quote] alone in a paragraph renders a lone straight
-     quote with nothing to its left, and comes back as a *left* quote. The brace
-     markers state the direction outright.
+   - [no_bare_smart_quotes]. A quote is a delimiter, not a character: the parser
+     pairs openers with closers, and a bare quote node is only what a quote that
+     fails to pair falls back to. Two in a paragraph pair up and come back as one
+     [Ext_quoted]; a lone [Right_double_quote] renders a straight quote with
+     nothing to pair with, which falls back to a *left* one. Quoted spans are
+     generated as [Ext_quoted] containers instead.
    - [no_adjacent_smart_dashes]. A hyphen run is divided by its total length
      alone: [En_dash] then [Em_dash] renders five hyphens, which divide back
      em-first, flipping the order. Uniform runs are no safer — three [En_dash]

@@ -283,6 +283,15 @@ let inline c = function
 | Inline.Ext_attributes (a, _) -> inline_attributes c a; true
 | Inline.Ext_math_span (ms, _) -> math_span c ms; true
 | Inline.Ext_raw_inline (r, _) -> raw_inline c r; true
+| Inline.Ext_quoted (q, _) ->
+    (* TeX's own quote spellings, as for the smart punctuation below. *)
+    let open', close = match Inline.Quoted.kind q with
+    | Inline.Quoted.Single -> "`", "'"
+    | Inline.Quoted.Double -> "``", "''"
+    in
+    C.string c open'; C.inline c (Inline.Quoted.inline q); C.string c close;
+    true
+| Inline.Ext_nbsp (_, _) -> C.string c "~"; true
 | Inline.Ext_smart_punct (sp, _) ->
     (* TeX's own spellings rather than the Unicode characters, which would need
        a Unicode-aware engine or inputenc to typeset. *)

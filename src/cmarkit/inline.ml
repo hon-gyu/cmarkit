@@ -261,6 +261,56 @@ module Extra_inline_container = struct
   let inline c = c.inline
 end
 
+module Quoted = struct
+  (* Djot quotes. A quote is a delimiter, not a character decided in place: an
+     opener is paired with a closer by the same matching pass emphasis uses, and
+     the pair becomes this container. A quote left unmatched by that pass is not
+     a container at all, it degrades to an {!Smart_punct} character — a lone [']
+     is an apostrophe, a lone double quote a left double quote.
+
+     [open_marker] and [close_marker] record an explicit brace override ([{'] /
+     ['}]), which forces a quote's role regardless of its neighbours; they let
+     the CommonMark renderer put the braces back. *)
+
+  type inline = t
+  type kind = Single | Double
+
+  type t =
+    { kind : kind;
+      inline : inline;
+      open_marker : bool;
+      close_marker : bool }
+
+  let make ?(open_marker = false) ?(close_marker = false) kind inline =
+    { kind; inline; open_marker; close_marker }
+
+  let kind q = q.kind
+  let inline q = q.inline
+  let open_marker q = q.open_marker
+  let close_marker q = q.close_marker
+
+  let quote_char = function Single -> '\'' | Double -> '"'
+
+  (* The characters the pair resolves to in output. *)
+  let utf_8_delims = function
+    | Single -> ("\xE2\x80\x98" (* U+2018 *), "\xE2\x80\x99" (* U+2019 *))
+    | Double -> ("\xE2\x80\x9C" (* U+201C *), "\xE2\x80\x9D" (* U+201D *))
+end
+
+module Nbsp = struct
+  (* Djot's escaped space [\ ], a non-breaking space. It is a node of its own
+     rather than a U+00A0 in the text because a literal U+00A0 in the source is
+     ordinary text: without the distinction a render back to djot could not tell
+     which of the two the author wrote. Djot has the same node
+     ([non_breaking_space] in its AST). *)
+
+  type t = unit
+
+  let make () = ()
+  let to_source () = "\\ "
+  let to_utf_8 () = "\xC2\xA0" (* U+00A0 *)
+end
+
 module Attributes = struct
   type inline = t
   type t =
@@ -507,8 +557,10 @@ type t +=
 | Ext_raw_inline of Raw_inline.t node
 | Ext_strikethrough of Strikethrough.t node
 | Ext_extra_inline_container of Extra_inline_container.t node
+| Ext_quoted of Quoted.t node
 | Ext_attributes of Attributes.t node
 | Ext_math_span of Math_span.t node
+| Ext_nbsp of Nbsp.t node
 | Ext_smart_punct of Smart_punct.t node
 | Ext_symbol of Symbol.t node
 | Ext_wikilink of Wikilink.t node
@@ -526,8 +578,10 @@ let meta ?(ext = ext_none) = function
 | Image (_, m) | Inlines (_, m) | Link (_, m) | Raw_html (_, m)
 | Strong_emphasis (_, m)  | Text (_, m) -> m
 | Ext_strikethrough (_, m) | Ext_extra_inline_container (_, m) -> m
+| Ext_quoted (_, m) -> m
 | Ext_attributes (_, m) -> m
 | Ext_math_span (_, m) -> m
+| Ext_nbsp (_, m) -> m
 | Ext_raw_inline (_, m) -> m
 | Ext_smart_punct (_, m) -> m
 | Ext_symbol (_, m) -> m
@@ -538,7 +592,8 @@ let meta ?(ext = ext_none) = function
 
 let rec normalize ?(ext = ext_none) = function
 | Autolink _ | Break _ | Code_span _ | Raw_html _ | Text _
-| Inlines ([], _) | Ext_math_span _ | Ext_raw_inline _ | Ext_smart_punct _ | Ext_symbol _
+| Inlines ([], _) | Ext_math_span _ | Ext_nbsp _ | Ext_raw_inline _
+| Ext_smart_punct _ | Ext_symbol _
 | Ext_wikilink _ | Ext_jsx_expr _ as i -> i
 | Ext_jsx_element (e, m) ->
     (match Jsx_element.children e with
@@ -594,6 +649,13 @@ let rec normalize ?(ext = ext_none) = function
     let inline = normalize ~ext (Extra_inline_container.inline c) in
     let c = Extra_inline_container.make (Extra_inline_container.kind c) inline in
     Ext_extra_inline_container (c, m)
+| Ext_quoted (q, m) ->
+    let inline = normalize ~ext (Quoted.inline q) in
+    let q =
+      Quoted.make ~open_marker:(Quoted.open_marker q)
+        ~close_marker:(Quoted.close_marker q) (Quoted.kind q) inline
+    in
+    Ext_quoted (q, m)
 | Ext_attributes (a, m) ->
     Ext_attributes (Attributes.make ~specs:a.specs (normalize ~ext a.inline), m)
 | i -> ext i
@@ -627,10 +689,17 @@ let to_plain_text ?(ext = ext_none) ~break_on_soft i =
       loop ~break_on_soft acc (i :: is)
   | Ext_extra_inline_container (c, _) :: is ->
       loop ~break_on_soft acc (Extra_inline_container.inline c :: is)
+  | Ext_quoted (q, _) :: is ->
+      let open', close = Quoted.utf_8_delims (Quoted.kind q) in
+      let text s = Text (s, Meta.none) in
+      loop ~break_on_soft acc
+        (text open' :: Quoted.inline q :: text close :: is)
   | Ext_attributes (a, _) :: is ->
       loop ~break_on_soft acc (Attributes.inline a :: is)
   | Ext_math_span (m, _) :: is ->
       loop ~break_on_soft (push (Math_span.tex m) acc) is
+  | Ext_nbsp (n, _) :: is ->
+      loop ~break_on_soft (push (Nbsp.to_utf_8 n) acc) is
   | Ext_raw_inline (r, _) :: is ->
       loop ~break_on_soft (push (Raw_inline.code r) acc) is
   | Ext_smart_punct (sp, _) :: is ->

@@ -102,16 +102,38 @@ let symbol_egs : Inline.t list =
 let mk_smart_punct ?(marker = false) kind =
   Inline.(Ext_smart_punct (Smart_punct.make ~marker kind, Meta.none))
 
-(* [marked] puts braces on every quote ([{"]…["}]), for the same reason
-   [marked_emphasis] does on emphasis: a quote's direction is *inferred from its
-   neighbours*, so a bare quote reparsed in a different neighbourhood can curl
-   the other way. The marker states the direction outright. Requires the
-   parser's [smart_punctuation]. *)
-let smart_quote_egs ~marked : Inline.t list =
-  Inline.Smart_punct.
-    [ Left_double_quote; Right_double_quote;
-      Left_single_quote; Right_single_quote ]
-  |> List.map (mk_smart_punct ~marker:marked)
+(* Quoted spans. A quote is a delimiter: the parser pairs an opener with a closer
+   and the pair becomes [Ext_quoted]; only a quote that fails to pair is left as
+   a bare [Smart_punct] character. So the *container* is what the generator can
+   place, and a bare quote character is what it cannot — see [no_bare_smart_quotes].
+
+   [marked] puts braces on the delimiters ([{"]…["}]), for the same reason
+   [marked_emphasis] does on emphasis, and it buys the same two things.
+
+   It disambiguates nesting: bare [ "jia"jia"" ] is a quoted span holding a
+   quoted span at its end, but the parser pairs the first closer it meets with
+   the opener on top of the stack, and reads the pair the other way round.
+   Marked delimiters pair only with marked delimiters ([{"] with ["}]), so the
+   boundary is explicit.
+
+   It also lifts djot's [canOpen] restriction on a [Single] opener, which
+   otherwise only opens at the start of a line or after one of a small set of
+   characters (space, [-], [(], [[], a quote). Unmarked, whether a single-quoted
+   span roundtrips depends on the *rendered text to its left* — [ 'x' ] after a
+   word renders [ jia'x' ], whose quotes open nothing and come back two
+   apostrophes — and that is a property of the whole prefix, not of the node or
+   its neighbour, which the generator has no local way to state. So unmarked,
+   only [Double] is generated; marked, both kinds are. *)
+let mk_quoted_egs ~marked i =
+  let kinds =
+    if marked then Inline.Quoted.[ Single; Double ] else [ Inline.Quoted.Double ]
+  in
+  kinds
+  |> List.map (fun kind ->
+         Inline.(
+           Ext_quoted
+             ( Quoted.make ~open_marker:marked ~close_marker:marked kind i,
+               Meta.none )))
 
 (* An ellipsis needs no rule: [...] flush against [...] is six periods, which
    divides back into exactly two ellipses. Dashes are the hazard — see
@@ -205,6 +227,9 @@ module Iconfig = struct
     w_link : int;
     w_image : int;
     w_symbol : int;
+    w_quoted : int;
+        (** Weight of an {!Inline.Ext_quoted} span. Requires the parser's
+            [smart_punctuation]. *)
         (** Djot symbols. Defaults to 0: the node only has a witness when the
             parser's [djot_symbols] is on, so a consumer must opt in on both
             sides. *)
@@ -243,12 +268,27 @@ module Iconfig = struct
             [-----] and comes back em-then-en (the order flips), and three
             [En_dash] render six hyphens, which come back as two [Em_dash]. Even
             uniform runs are unsafe, and there is no marker escape. *)
-    marked_smart_quotes : bool;
-        (** Put braces on every smart quote ([{"]…["}]). A quote's direction is
-            inferred from its neighbours, so a bare quote can curl the other way
-            when reparsed in a different neighbourhood; the marker states the
-            direction outright. Pairs with the parser's [smart_punctuation],
-            exactly as [marked_emphasis] pairs with [marked_emphasis_delims]. *)
+    marked_quotes : bool;
+        (** Put braces on every quoted span's delimiters ([{"]…["}]). Quotes
+            pair like emphasis, so they have emphasis's nesting ambiguity —
+            [ "a"b"" ] is read with the boundary in the wrong place — and marked
+            delimiters pair only with marked ones, which states it. It also
+            frees a single-quoted span from djot's [canOpen] restriction, which
+            otherwise makes its roundtrip depend on the text rendered to its
+            left. Pairs with the parser's [smart_punctuation]. *)
+    no_bare_smart_quotes : bool;
+        (** Never generate a bare quote character ([Left_double_quote] and the
+            three other quote kinds of [Smart_punct]). A quote is a delimiter,
+            not a character: the parser pairs openers with closers, and a bare
+            quote node is only what is *left over* when a quote fails to pair.
+            So a bare quote is not compositionally placeable — two of them in a
+            paragraph pair up and come back as one [Ext_quoted], and a lone
+            [Right_double_quote] renders a quote that has nothing to pair with
+            and comes back a *left* one (an unmatched double quote falls back to
+            the opening direction, an unmatched single one to an apostrophe).
+
+            Quoted spans are generated as [Ext_quoted] containers instead, which
+            do roundtrip; see [w_quoted]. *)
   }
 
   let default =
@@ -265,6 +305,7 @@ module Iconfig = struct
       w_image = 1;
       w_symbol = 0;
       w_smart_punct = 0;
+      w_quoted = 0;
       no_empty_inlines = false;
       no_empty_emphasis = false;
       no_html_block_start = false;
@@ -273,7 +314,8 @@ module Iconfig = struct
       marked_emphasis = false;
       no_adjacent_code_spans = false;
       no_adjacent_smart_dashes = false;
-      marked_smart_quotes = false;
+      marked_quotes = false;
+      no_bare_smart_quotes = false;
     }
 
   let typed =
@@ -285,14 +327,15 @@ module Iconfig = struct
       marked_emphasis = true;
       no_adjacent_code_spans = true;
       no_adjacent_smart_dashes = true;
-      marked_smart_quotes = true;
+      marked_quotes = true;
+      no_bare_smart_quotes = true;
     }
 
   (** {!typed} with the djot inline extensions switched on. Kept separate
       because the nodes only have a witness when the parser is given
       [djot_symbols] and [smart_punctuation]; reparsing without those knobs
       turns the rendered source back into plain text. *)
-  let typed_djot = { typed with w_symbol = 1; w_smart_punct = 1 }
+  let typed_djot = { typed with w_symbol = 1; w_smart_punct = 1; w_quoted = 1 }
 end
 
 (**
@@ -305,8 +348,15 @@ end
  *)
 let gen_leaf (ic : Iconfig.t) =
   let smart_punct_egs =
-    smart_quote_egs ~marked:ic.marked_smart_quotes
-    @ smart_dash_egs @ smart_ellipsis_egs
+    let quotes =
+      if ic.no_bare_smart_quotes then []
+      else
+        Inline.Smart_punct.
+          [ Left_double_quote; Right_double_quote;
+            Left_single_quote; Right_single_quote ]
+        |> List.map (fun k -> mk_smart_punct k)
+    in
+    quotes @ smart_dash_egs @ smart_ellipsis_egs
   in
   [
     (ic.w_text, G.oneof_list text_egs);
@@ -392,6 +442,13 @@ let gen_inline (ic : Iconfig.t) : Inline.t G.t =
             in
             map inlines_of_is gen_is );
           (ic.w_emphasis, emph_gen);
+          (* An empty span is not a span: [ "" ] is an empty pair, which djot
+             does not match (it is the rule that lets [ ''hi'' ] nest), so the
+             two quotes come back as bare characters. *)
+          ( ic.w_quoted,
+            bind
+              (child emphasis_ic (n - 1))
+              (fun i -> oneof_list @@ mk_quoted_egs ~marked:ic.marked_quotes i) );
           (ic.w_strong_emphasis, strong_emph_gen);
           (ic.w_link, map mk_link (child link_ic (n - 1)));
           (ic.w_image, map mk_image (child ic (n - 1)));

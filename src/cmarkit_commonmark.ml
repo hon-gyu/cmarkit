@@ -283,6 +283,16 @@ let strikethrough c s =
   let i = Inline.Strikethrough.inline s in
   C.string c "~~"; C.inline c i; C.string c "~~"
 
+(* Back to source, markers included: a bare quote may pair differently when
+   re-parsed, and the markers are what pin its role. *)
+let quoted c q =
+  let quote = Inline.Quoted.quote_char (Inline.Quoted.kind q) in
+  if Inline.Quoted.open_marker q then C.byte c '{';
+  C.byte c quote;
+  C.inline c (Inline.Quoted.inline q);
+  C.byte c quote;
+  if Inline.Quoted.close_marker q then C.byte c '}'
+
 let extra_inline_container c ic =
   let delim =
     match Inline.Extra_inline_container.kind ic with
@@ -340,6 +350,8 @@ let inline c = function
 | Inline.Ext_attributes (a, _) -> inline_attributes c a; true
 | Inline.Ext_math_span (m, _) -> math_span c m; true
 | Inline.Ext_raw_inline (r, _) -> raw_inline c r; true
+| Inline.Ext_quoted (q, _) -> quoted c q; true
+| Inline.Ext_nbsp (n, _) -> C.string c (Inline.Nbsp.to_source n); true
 | Inline.Ext_smart_punct (sp, _) ->
     (* Back to source, markers included: a bare quote could curl the other way
        when re-parsed, since direction is inferred from context. *)

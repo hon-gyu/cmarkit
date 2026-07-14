@@ -18,10 +18,13 @@
     to do with these nodes and would mask them.
 
     The rules, and the counterexample each one rules out:
-    - [marked_smart_quotes]: a quote's direction is inferred from its
-      neighbours, so a bare [Right_double_quote] alone in a paragraph renders a
-      lone straight quote with nothing to its left and comes back a {e left}
-      quote. The brace markers state the direction outright.
+    - [no_bare_smart_quotes]: a quote is a delimiter, not a character. The
+      parser pairs openers with closers, and a bare quote node is only what is
+      left when a quote fails to pair — so bare quotes are not compositionally
+      placeable. Two in a paragraph pair up and come back as one [Ext_quoted],
+      and a lone [Right_double_quote] renders a straight quote with nothing to
+      pair with, which falls back to a {e left} one. Quoted spans are generated
+      as [Ext_quoted] containers instead.
     - [no_adjacent_smart_dashes]: a hyphen run is divided by its total length
       alone, so the split the AST intended is unrecoverable. [En_dash] then
       [Em_dash] renders five hyphens, which divide back em-first: the order
@@ -62,9 +65,9 @@ let () =
   @@ QCheck_base_runner.run_tests ~colors:false ~rand
        [
          test ~negative:false "all rules on: roundtrip holds" base;
-         test ~negative:true "marked_smart_quotes off: roundtrip breaks"
+         test ~negative:true "no_bare_smart_quotes off: roundtrip breaks"
            (with_inline base (fun ic ->
-                { ic with Iconfig.marked_smart_quotes = false }));
+                { ic with Iconfig.no_bare_smart_quotes = false }));
          test ~negative:true "no_adjacent_smart_dashes off: roundtrip breaks"
            (with_inline base (fun ic ->
                 { ic with Iconfig.no_adjacent_smart_dashes = false }));

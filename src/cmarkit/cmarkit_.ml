@@ -123,6 +123,14 @@ module Mapper = struct
           let kind = Inline.Extra_inline_container.kind c in
           let* inline = map_inline m (Inline.Extra_inline_container.inline c) in
           Some (Ext_extra_inline_container (Inline.Extra_inline_container.make kind inline, meta))
+      | Ext_quoted (q, meta) ->
+          let open Inline.Quoted in
+          let* inline = map_inline m (inline q) in
+          let q =
+            make ~open_marker:(open_marker q) ~close_marker:(close_marker q)
+              (kind q) inline
+          in
+          Some (Ext_quoted (q, meta))
       | Ext_attributes (a, meta) ->
           let* inline = map_inline m (Inline.Attributes.inline a) in
           Some (Ext_attributes (Inline.Attributes.make ~specs:(Inline.Attributes.specs a) inline, meta))
@@ -269,6 +277,7 @@ module Folder = struct
       | Ext_strikethrough (inline, _) -> fold_inline f acc inline
       | Ext_extra_inline_container (c, _) ->
           fold_inline f acc (Inline.Extra_inline_container.inline c)
+      | Ext_quoted (q, _) -> fold_inline f acc (Inline.Quoted.inline q)
       | Ext_attributes (a, _) ->
           fold_inline f acc (Inline.Attributes.inline a)
   | ext -> f.inline_ext_default f acc ext
