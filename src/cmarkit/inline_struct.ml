@@ -286,6 +286,16 @@ let try_add_wikilink_token oymarkit_mod acc s line ~embed ~start =
   | None -> None
   | Some close -> Some (Wikilink_start { start; embed } :: acc, close + 2)
 
+(* Djot's notion of a space, for the delimiter tests, is ASCII only ([ ], [\t],
+   [\r], [\n] — its [pattNonspace]). A non-breaking space is therefore *not* a
+   space and does not block a delimiter: [ *<U+00A0>a<U+00A0>* ] is strong. This
+   is the class the flanking tests are fed; the punctuation class stays
+   Unicode. *)
+let is_delim_white ~djot u =
+  if not djot then Cmarkit_data.is_unicode_whitespace u else
+  Uchar.is_char u &&
+  match Uchar.to_char u with ' ' | '\t' | '\r' | '\n' -> true | _ -> false
+
 let try_add_emphasis_token
     ?oymarkit_mod ?(open_marker = false) ?(close_marker = false) acc s line
     ~start
@@ -298,8 +308,12 @@ let try_add_emphasis_token
   let marker_last = if close_marker then run_last + 1 else run_last in
   let prev_uchar = Match.prev_uchar s ~first ~before:start in
   let next_uchar = Match.next_uchar s ~last ~after:marker_last in
-  let prev_white = Cmarkit_data.is_unicode_whitespace prev_uchar in
-  let next_white = Cmarkit_data.is_unicode_whitespace next_uchar in
+  let djot_white = match oymarkit_mod with
+  | Some m when is_oymarkit_enabled () -> Oymarkit_mod.djot_emphasis m
+  | _ -> false
+  in
+  let prev_white = is_delim_white ~djot:djot_white prev_uchar in
+  let next_white = is_delim_white ~djot:djot_white next_uchar in
   let prev_punct = Cmarkit_data.is_unicode_punctuation prev_uchar in
   let next_punct = Cmarkit_data.is_unicode_punctuation next_uchar in
   let is_left_flanking =
@@ -774,7 +788,7 @@ let smart_punct_token p ~kind ~marker ~first ~last ~line =
    (the [curly] field), exactly as for the extra inline containers. *)
 let quote_may_open s line ~char ~qpos =
   let next_uchar = Match.next_uchar s ~last:line.last ~after:qpos in
-  if Cmarkit_data.is_unicode_whitespace next_uchar then false else
+  if is_delim_white ~djot:true next_uchar then false else
   if char = '"' then true else
   if qpos = line.first then true else
   match s.[qpos - 1] with
@@ -783,7 +797,7 @@ let quote_may_open s line ~char ~qpos =
 
 let quote_may_close s line ~qpos =
   let prev_uchar = Match.prev_uchar s ~first:line.first ~before:qpos in
-  not (Cmarkit_data.is_unicode_whitespace prev_uchar)
+  not (is_delim_white ~djot:true prev_uchar)
 
 (* The character an unmatched quote falls back to: a single quote is an
    apostrophe and a double quote a left double quote, unless a marker forced the
@@ -1127,9 +1141,16 @@ let break_inline p line ~start ~break_type:type' ~newline =
   let layout_after = layout_clean_raw_span p layout_after in
   Inline.Break ({ layout_before; type'; layout_after }, m)
 
-let try_add_text_inline p line ~first ~last acc =
+(* [line_start] says the span begins a physical source line, which is the only
+   place leading blanks are layout (a paragraph's continuation indent) rather
+   than text. A container's content span is synthesized as
+   [{ start_line with first = <after the delimiter> }], so its [first] equals
+   [line.first] without being a line start at all; stripping there ate the space
+   of [ [ a](u) ] and of [ {_ a_} ]. Mirror of the trailing-blank fix in
+   [last_pass]. *)
+let try_add_text_inline p line ~line_start ~first ~last acc =
   if first > last then acc else
-  let first = match first = line.first with
+  let first = match line_start && first = line.first with
   | true -> first_non_blank_in_span p line (* strip leading blanks *)
   | false -> first
   in
@@ -1794,7 +1815,8 @@ let rec try_link p start_toks start_line ~image ~start =
           in
           { start_line with first; last }
         in
-        parse_tokens p text_toks text_start
+        (* The link text span starts after the '[', not at a line start. *)
+        parse_tokens ~line_start:false p text_toks text_start
       in
       if had_link && not image
       then None (* Could try to keep render *) else
@@ -1879,6 +1901,13 @@ and first_pass p toks line =
 and find_emphasis_text p toks line ~(opener : emphasis_marks) =
   let marks_match ~(marks : emphasis_marks) ~(opener : emphasis_marks) =
     (opener.char = marks.char) &&
+    (* Marked and bare delimiters are two stacks, not one: a marked closer
+       ([_}]) pairs only with a marked opener ([{_]), which is what leaves the
+       trailing [_x_}] of [ {_ x_ _} _x_} ] literal. Djot keys its opener stack
+       by the marker for the same reason, and quotes do the same (see
+       [find_quoted_text]). Without markers both sides are [false] and this is
+       vacuous, so the CommonMark path is unchanged. *)
+    (opener.open_marker = marks.close_marker) &&
     (not (marks.may_open || opener.may_close) ||
       marks.count mod 3 = 0 || (opener.count + marks.count) mod 3 != 0)
   in
@@ -1953,7 +1982,7 @@ and try_emphasis p start_toks start_line ~opener =
         in
         (* No need to redo first pass *)
         let emph_toks = second_pass p emph_toks text_start in
-        let text = last_pass p emph_toks text_start in
+        let text = last_pass ~line_start:false p emph_toks text_start in
         inlines_inline p text ~first ~last:text_last ~first_line ~last_line
       in
       let toks =
@@ -2015,7 +2044,7 @@ and try_strikethrough p start_toks start_line ~opener =
         in
         (* No need to redo first pass *)
         let emph_toks = second_pass p stroken_toks text_start in
-        let text = last_pass p emph_toks text_start in
+        let text = last_pass ~line_start:false p emph_toks text_start in
         inlines_inline p text ~first ~last ~first_line ~last_line
       in
       let toks =
@@ -2090,7 +2119,7 @@ and try_extra_inline_container p start_toks start_line
           { start_line with first; last }
         in
         let contained_toks = second_pass p contained_toks text_start in
-        let text = last_pass p contained_toks text_start in
+        let text = last_pass ~line_start:false p contained_toks text_start in
         inlines_inline p text ~first ~last ~first_line ~last_line
       in
       let toks =
@@ -2168,7 +2197,7 @@ and try_quoted p start_toks start_line ~(opener : quoted_marks) =
           { start_line with first; last }
         in
         let contained_toks = second_pass p contained_toks text_start in
-        let text = last_pass p contained_toks text_start in
+        let text = last_pass ~line_start:false p contained_toks text_start in
         inlines_inline p text ~first ~last ~first_line ~last_line
       in
       let toks =
@@ -2223,11 +2252,17 @@ and second_pass p toks line =
 
 (* Last pass *)
 
-and last_pass p toks start_line =
+and last_pass ?(line_start = true) p toks start_line =
   (* Only [Inline] and [Newline] tokens remain. We fold over them to
       convert them to [inline] values and [Break]s. [Text] inlines
-      are created for data between them. *)
-  let rec loop toks line acc k = match toks with
+      are created for data between them.
+
+      [line_start] is [false] when [start_line] is a container's synthesized
+      content span rather than a real source line; every line after a [Newline]
+      is a real one either way. *)
+  let rec loop ?(line_start = true) toks line acc k =
+    let try_add_text_inline p line = try_add_text_inline p line ~line_start in
+    match toks with
   | [] ->
       (* OYMARKIT CHANGE: bound the trailing text to the text span, not to the
          whole physical line. [line.last] is the end of the current source
@@ -2312,7 +2347,7 @@ and last_pass p toks start_line =
     | Wikilink_start _ | Jsx_expr_start _ | Jsx_element_start _ | Jsx_open _ | Jsx_close _) :: _ ->
       assert false
   in
-  loop toks start_line [] start_line.first
+  loop ~line_start toks start_line [] start_line.first
 
 and try_jsx_container p toks line ~start ~name_first ~name_last ~tag_end =
   (* [start] points at the '<' of an opening JSX tag [ <Tag ...> ] whose
@@ -2352,10 +2387,10 @@ and try_jsx_container p toks line ~start ~name_first ~name_last ~tag_end =
       let t = ext_jsx_element_token p ~first:start ~last:ctag_end ~line e in
       Some (rest, line, t)
 
-and parse_tokens p toks first_line =
+and parse_tokens ?(line_start = true) p toks first_line =
   let toks, had_link = first_pass p toks first_line in
   let toks = second_pass p toks first_line in
-  last_pass p toks first_line, had_link
+  last_pass ~line_start p toks first_line, had_link
 
 let strip_paragraph p lines =
   (* Remove initial and final blanks. Initial blank removal on
