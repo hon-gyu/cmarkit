@@ -86,9 +86,10 @@ module Oymarkit_mod = struct
     djot_definition_lists : bool;
     djot_math : bool;
     djot_table_captions : bool;
-    djot_verbatim_trim : bool;
+    djot_verbatim : bool;
     djot_headings : bool;
     djot_links : bool;
+    blocks_interrupt_paragraph : bool;
     list_marker_interrupts_paragraph : bool;
     djot_list_indent : bool;
     djot_list_tightness : bool;
@@ -133,8 +134,9 @@ module Oymarkit_mod = struct
       ~block_id ~djot_inline_attributes ~djot_block_attributes
       ~djot_thematic_break ~djot_symbols ~djot_escapes ~djot_raw
       ~djot_ordered_list_styles ~djot_definition_lists ~djot_math
-      ~djot_table_captions ~djot_verbatim_trim ~djot_headings ~djot_links
-      ~djot_emphasis ~list_marker_interrupts_paragraph ~djot_list_indent
+      ~djot_table_captions ~djot_verbatim ~djot_headings ~djot_links
+      ~djot_emphasis ~blocks_interrupt_paragraph
+      ~list_marker_interrupts_paragraph ~djot_list_indent
       ~djot_list_tightness ~smart_punctuation
       ~indented_code ~setext_headings ~lazy_continuation ~raw_html ~entity_refs
       ~tilde_code_fences ~block_quote_marker_space ~div ~wikilink ~jsx_expr
@@ -169,9 +171,10 @@ module Oymarkit_mod = struct
       djot_definition_lists;
       djot_math;
       djot_table_captions;
-      djot_verbatim_trim;
+      djot_verbatim;
       djot_headings;
       djot_links;
+      blocks_interrupt_paragraph;
       list_marker_interrupts_paragraph;
       djot_list_indent;
       djot_list_tightness;
@@ -300,7 +303,7 @@ module Oymarkit_mod = struct
   (* Djot strips a padding space of a verbatim span only where it is what lets
      the content start or end with a backtick; CommonMark strips one from both
      ends whenever both are there. See [Inline.Code_span.code]. *)
-  let djot_verbatim_trim t = t.djot_verbatim_trim
+  let djot_verbatim t = t.djot_verbatim
 
   (* A djot heading runs until a blank line: the lines after the [#] line
      continue its inline content, whether or not they repeat the [#]. *)
@@ -311,6 +314,18 @@ module Oymarkit_mod = struct
      Reference definitions likewise have no titles: the rest of the line is the
      destination. *)
   let djot_links t = t.djot_links
+
+  (* In djot no block start interrupts a paragraph at all: only a blank line ends
+     one. A [# h] or [```] line under a paragraph is more of that paragraph's
+     text. (djot.js block.ts: block starts are only tried when the last matched
+     container takes block content, and an open paragraph takes inline content.)
+
+     This subsumes [list_marker_interrupts_paragraph] when off, but the two are
+     kept apart: forbidding only lists is a useful CommonMark-side knob on its
+     own. A block interrupts a paragraph only if this is on and, for a list
+     marker, that one is too. *)
+  let blocks_interrupt_paragraph t = t.blocks_interrupt_paragraph
+
   (* In djot a list marker does not interrupt a paragraph: a [- x] line under a
      paragraph is more of that paragraph's text, not a list. *)
   let list_marker_interrupts_paragraph t = t.list_marker_interrupts_paragraph
@@ -342,7 +357,9 @@ module Oymarkit_mod = struct
   (* Djot leaves [&amp;] and [&#38;] literal: backslash is its only escape. *)
   let entity_refs t = t.entity_refs
 
-  (* Djot code fences are backticks only. *)
+  (* Djot fences with tildes as well as backticks, so the preset leaves this on;
+     the knob stays because forbidding one of two spellings is useful on its
+     own. *)
   let tilde_code_fences t = t.tilde_code_fences
 
   (* Djot's block quote marker is [>] followed by a space or the end of the
@@ -408,10 +425,11 @@ let parser
     ?djot_definition_lists
     ?djot_math
     ?djot_table_captions
-    ?djot_verbatim_trim
+    ?djot_verbatim
     ?djot_headings
     ?djot_links
     ?djot_emphasis
+    ?blocks_interrupt_paragraph
     ?list_marker_interrupts_paragraph
     ?djot_list_indent
     ?djot_list_tightness
@@ -478,10 +496,13 @@ let parser
   let djot_table_captions =
     knob ~cmark:false ~djot:true djot_table_captions
   in
-  let djot_verbatim_trim = knob ~cmark:false ~djot:true djot_verbatim_trim in
+  let djot_verbatim = knob ~cmark:false ~djot:true djot_verbatim in
   let djot_headings = knob ~cmark:false ~djot:true djot_headings in
   let djot_links = knob ~cmark:false ~djot:true djot_links in
   let djot_emphasis = knob ~cmark:false ~djot:true djot_emphasis in
+  let blocks_interrupt_paragraph =
+    knob ~cmark:true ~djot:false blocks_interrupt_paragraph
+  in
   let list_marker_interrupts_paragraph =
     knob ~cmark:true ~djot:false list_marker_interrupts_paragraph
   in
@@ -499,7 +520,7 @@ let parser
   let lazy_continuation = knob ~cmark:true ~djot:true lazy_continuation in
   let raw_html = knob ~cmark:true ~djot:false raw_html in
   let entity_refs = knob ~cmark:true ~djot:false entity_refs in
-  let tilde_code_fences = knob ~cmark:true ~djot:false tilde_code_fences in
+  let tilde_code_fences = knob ~cmark:true ~djot:true tilde_code_fences in
   let block_quote_marker_space =
     knob ~cmark:false ~djot:true block_quote_marker_space
   in
@@ -510,8 +531,9 @@ let parser
       ~extra_inline_containers ~block_id ~djot_inline_attributes
       ~djot_block_attributes ~djot_thematic_break ~djot_symbols ~djot_escapes
       ~djot_raw ~djot_ordered_list_styles ~djot_definition_lists ~djot_math
-      ~djot_table_captions ~djot_verbatim_trim ~djot_headings ~djot_links
-      ~djot_emphasis ~list_marker_interrupts_paragraph ~djot_list_indent
+      ~djot_table_captions ~djot_verbatim ~djot_headings ~djot_links
+      ~djot_emphasis ~blocks_interrupt_paragraph
+      ~list_marker_interrupts_paragraph ~djot_list_indent
       ~djot_list_tightness ~smart_punctuation ~indented_code ~setext_headings ~lazy_continuation
       ~raw_html ~entity_refs ~tilde_code_fences ~block_quote_marker_space ~div
       ~wikilink ~jsx_expr ~jsx_element ~callout

@@ -648,7 +648,10 @@ module Block_struct = struct
           if r <> Nomatch then r else
           Paragraph_line
       | '#' ->
-          let r = Match.atx_heading p.i ~last ~start in
+          let closing_sequence =
+            not (Oymarkit_mod.djot_headings p.oymarkit_mod)
+          in
+          let r = Match.atx_heading ~closing_sequence p.i ~last ~start in
           if r <> Nomatch then r else
           Paragraph_line
       | '+' | '*' | '0' .. '9' ->
@@ -965,6 +968,11 @@ module Block_struct = struct
         add_paragraph_line p ~indent_start par bs
     | Blank_line ->
         blank_line p :: close_paragraph p par bs
+    (* Djot: nothing but a blank line ends a paragraph. A line that would open a
+       block elsewhere is just more text here. Container fences ([:::], [>]) are
+       matched before we get here, so they still close what they close. *)
+    | _ when not (Oymarkit_mod.blocks_interrupt_paragraph p.oymarkit_mod) ->
+        add_paragraph_line p ~indent_start par bs
     | Block_quote_line marker ->
         Block_quote (indent, marker, add_open_blocks p [])
         :: (close_paragraph p par bs)
@@ -2195,11 +2203,10 @@ let block_struct_to_doc p (doc, meta) =
       when is_empty (Block.Attributes.block a) ->
         loop (pending @ Block.Attributes.specs a) acc bs
     | Block.Blank_line _ as blank :: bs when pending <> [] ->
-        (* Djot: attributes must come right before a block, so a blank line
-           drops them. Otherwise they are kept as an empty [Ext_attributes] so
-           that the source can be rendered back. *)
-        if Oymarkit_mod.djot_block_attributes p.oymarkit_mod
-        then loop [] (blank :: acc) bs else
+        (* Attributes must come right before a block, so a blank line detaches
+           them. They are still kept as an empty [Ext_attributes] so that the
+           source can be rendered back; renderers give such a target-less block
+           no output. *)
         let marker =
           Block.Ext_attributes
             (Block.Attributes.make ~specs:pending Block.empty, Meta.none)

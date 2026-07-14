@@ -1119,8 +1119,10 @@ let thematic_break s ~last ~start =
   | '-' | '_' | '*' -> loop s last 1 start (start + 1)
   | _ -> Nomatch
 
-let atx_heading s ~last ~start =
+let atx_heading ?(closing_sequence = true) s ~last ~start =
   (* https://spec.commonmark.org/current/#atx-headings *)
+  (* Djot has no closing sequence: the trailing [##] of [ ## heading ## ] is part
+     of the heading's text. *)
   let rec skip_hashes s last k =
     if k > last then k else
     if s.[k] = '#' then skip_hashes s last (k + 1) else k
@@ -1135,6 +1137,7 @@ let atx_heading s ~last ~start =
     after_blank - 1 (* this could be the beginning of the end, trigger again *)
   in
   let rec content s last k =
+    if not closing_sequence then last else
     if k > last then k - 1 else
     if not (s.[k] = ' ' || s.[k] = '\t') then content s last (k + 1) else
     let end' = find_end s last k in
@@ -1150,6 +1153,7 @@ let atx_heading s ~last ~start =
     then Atx_heading_line (acc, k, last + 1, last) (* empty cases *) else
     if first = k then Nomatch (* need a blank *) else
     let last =
+      if not closing_sequence then last else
       if s.[first] <> '#' then content s last (first + 1) else
       let end' = find_end s last (first - 1 (* start on blank *)) in
       if end' > last then first - 1 else content s last end'

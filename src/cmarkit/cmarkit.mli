@@ -693,17 +693,17 @@ module Inline : sig
           {{:https://spec.commonmark.org/0.31.2/#code-spans}code spans}. *)
 
     val make :
-      ?djot_trim:bool -> backtick_count:Layout.count ->
+      ?djot:bool -> backtick_count:Layout.count ->
       Block_line.tight list -> t
     (** [make ~backtick_count code_layout] is a code span with given
-        parameters. [djot_trim] (defaults to [false]) selects djot's rule for
+        parameters. [djot] (defaults to [false]) selects djot's rule for
         stripping the span's padding spaces, see {!code}.
 
         {b Warning.} Nothing is made to ensure correctness of the
         data, use {!of_string} to compute the right amount of
         backticks. *)
 
-    val of_string : ?meta:Meta.t -> ?djot_trim:bool -> string -> t
+    val of_string : ?meta:Meta.t -> ?djot:bool -> string -> t
     (** [of_string s] is a code span for [s]. [s] can start with or
         include backticks; the appropriate minimal backtick count and
         possible needed leading and trailing space are computed
@@ -720,12 +720,12 @@ module Inline : sig
         A padding space is stripped from each end when both are present and the
         content is not all spaces
         ({{:https://spec.commonmark.org/0.31.2/#code-spans}CommonMark}), or, if
-        {!djot_trim} is [true], only where the space is what lets the content
+        {!djot} is [true], only where the space is what lets the content
         start or end with a backtick (djot). So [ ` a ` ] is ["a"] under the
         first rule and [" a "] under the second. *)
 
-    val djot_trim : t -> bool
-    (** [djot_trim cs] is [true] if [cs] strips its padding spaces with djot's
+    val djot : t -> bool
+    (** [djot cs] is [true] if [cs] strips its padding spaces with djot's
         rule, see {!code}. *)
 
     val code_layout : t -> Block_line.tight list
@@ -1962,8 +1962,9 @@ module Doc : sig
     ?djot_symbols:bool -> ?djot_escapes:bool -> ?djot_raw:bool ->
     ?djot_ordered_list_styles:bool -> ?djot_definition_lists:bool ->
     ?djot_math:bool -> ?djot_table_captions:bool ->
-    ?djot_verbatim_trim:bool -> ?djot_headings:bool -> ?djot_links:bool ->
-    ?djot_emphasis:bool -> ?list_marker_interrupts_paragraph:bool ->
+    ?djot_verbatim:bool -> ?djot_headings:bool -> ?djot_links:bool ->
+    ?djot_emphasis:bool -> ?blocks_interrupt_paragraph:bool ->
+    ?list_marker_interrupts_paragraph:bool ->
     ?djot_list_indent:bool -> ?djot_list_tightness:bool ->
     ?smart_punctuation:bool ->
     ?indented_code:bool -> ?setext_headings:bool ->
@@ -2091,8 +2092,9 @@ module Doc : sig
       list item is not continued by a
       {{:https://spec.commonmark.org/0.31.2/#lazy-continuation-line}lazy line}:
       a line that carries neither the [>] marker nor the item's indentation
-      closes the container instead of continuing the paragraph in it. Djot has
-      no lazy lines. The default is [true], which preserves CommonMark
+      closes the container instead of continuing the paragraph in it. Djot,
+      despite what its prose suggests, does have lazy lines, so the [djot] preset
+      leaves this on. The default is [true], which preserves CommonMark
       behavior.}
    {- If [raw_html] is [false], neither
       {{:https://spec.commonmark.org/0.31.2/#raw-html}inline raw HTML} nor
@@ -2107,10 +2109,9 @@ module Doc : sig
       [true], which preserves CommonMark behavior.}
    {- If [tilde_code_fences] is [false], a
       {{:https://spec.commonmark.org/0.31.2/#fenced-code-blocks}code fence} can
-      only be written with backticks: [~~~] is ordinary text. Djot has no tilde
-      fences. Djot's other fence rule — no backtick inside the info string — is
-      CommonMark's rule too and needs no knob. The default is [true], which
-      preserves CommonMark behavior.}
+      only be written with backticks: [~~~] is ordinary text. Djot fences with
+      tildes too, so the [djot] preset leaves this on. The default is [true],
+      which preserves CommonMark behavior.}
    {- If [block_quote_marker_space] is [true], a
       {{:https://spec.commonmark.org/0.31.2/#block-quote-marker}block quote
       marker} must be a [>] followed by a space or the end of the line, so
@@ -2130,6 +2131,13 @@ module Doc : sig
       orthogonal: it is what keeps [snake_case] intact, which CommonMark folds
       into its [_] rules. The default is [false], which preserves CommonMark
       behavior.}
+   {- If [blocks_interrupt_paragraph] is [false], no block start interrupts a
+      paragraph: only a blank line ends one, so a [#], [```] or [>] line under a
+      paragraph is more of that paragraph's text rather than the start of a
+      heading, code block or quote. Djot ends a paragraph only at a blank line.
+      This subsumes [list_marker_interrupts_paragraph], which stays available for
+      forbidding only lists. The default is [true], which preserves CommonMark
+      behavior.}
    {- If [djot_links] is [true], links have no titles: everything between the
       [(] and the matching [)] is the destination, so the quoted trailer of
       [ [a](url "title") ] is just more URL, and the destination may be split
@@ -2143,7 +2151,7 @@ module Doc : sig
       part needs [heading_auto_ids], which computes the id the link points at,
       and an explicit link reference definition of the same label wins. The
       default is [false], which preserves CommonMark behavior.}
-   {- If [djot_verbatim_trim] is [true], a verbatim span strips a padding space
+   {- If [djot_verbatim] is [true], a verbatim span strips a padding space
       only where the space is what lets its content start or end with a
       backtick, rather than stripping one from each end whenever both are
       present. So [ ` a ` ] holds [" a "] rather than ["a"]. This is djot's

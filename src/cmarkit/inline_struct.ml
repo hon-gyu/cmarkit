@@ -224,10 +224,13 @@ let newline_token ~djot_escapes s prev_line newline =
       (back (non_blank - 1), `Hard)
     end else
     if non_space = last && s.[non_space] = '\\' then (non_space, `Hard) else
+    (* In djot's escape rule, a trailing backslash is the only hard break: two
+       trailing spaces are neither a break nor layout, they are text, and they
+       survive into the rendered output. CommonMark instead drops them, and reads
+       two of them as a hard break. *)
+    if djot_escapes then (last + 1, `Soft) else
     let start = non_space + 1 in
-    (* In djot's escape rule, a trailing backslash is the only hard break:
-       two trailing spaces are just trailing spaces. *)
-    let two_space_break = (not djot_escapes) && last - start + 1 >= 2 in
+    let two_space_break = last - start + 1 >= 2 in
     (start, if two_space_break then `Hard else `Soft)
   in
   Newline { start; break_type; newline }
@@ -1068,9 +1071,9 @@ let code_span_token p ~count ~first ~last ~first_line ~last_line rev_spans =
   let textloc = textloc_of_lines p ~first ~last ~first_line ~last_line in
   let code_layout = raw_tight_block_lines p ~rev_spans in
   let meta = meta p textloc in
-  let djot_trim = Oymarkit_mod.djot_verbatim_trim p.oymarkit_mod in
+  let djot = Oymarkit_mod.djot_verbatim p.oymarkit_mod in
   let cs =
-    Inline.Code_span ({ backtick_count = count; code_layout; djot_trim }, meta)
+    Inline.Code_span ({ backtick_count = count; code_layout; djot }, meta)
   in
   Inline { start = first; inline = cs; endline = last_line; next = last + 1 }
 
@@ -1156,8 +1159,22 @@ let try_code_span p toks start_line ~start:cstart ~count ~escaped =
   let count = if escaped then count - 1 else count in
   if count <= 0 then None else
   let cstart = if escaped then cstart + 1 else cstart in
-  if not (has_backticks ~count ~after:cstart p.cidx) then None else
+  (* In djot an opening backtick run always opens a verbatim span: with no
+     closing run the span simply runs to the end of the block. CommonMark instead
+     leaves an unmatched run as literal text, so it can rule the span out up
+     front. *)
+  let djot = Oymarkit_mod.djot_verbatim p.oymarkit_mod in
+  if not djot && not (has_backticks ~count ~after:cstart p.cidx) then None else
   let rec match_backticks toks line ~count spans k = match toks with
+  | [] when djot ->
+      (* End of the block with no closing run: the span ends here. *)
+      let spans = (line.first, { line with first = k }) :: spans in
+      let first = cstart and last = line.last in
+      let t =
+        code_span_token p ~count ~first ~last ~first_line:start_line
+          ~last_line:line spans
+      in
+      Some ([], line, t)
   | [] -> None
   | Backticks { start; count = c; _ } :: toks ->
       if c <> count then match_backticks toks line ~count spans k else
@@ -1391,8 +1408,13 @@ let try_shortcut_reflink p toks line ~image ~start (* is starting [ or ! *) =
       let ref = label_of_rev_spans p ~key rev_spans in
       let toks = drop_stop_after_right_brack toks in
       match find_def_for_ref p ~image ref with
-      | None -> None
       | Some def -> Some (toks, line, `Ref (`Shortcut, ref, def), last)
+      | None when Oymarkit_mod.djot_links p.oymarkit_mod
+                  && String.length key > 0 && key.[0] = '^' ->
+          (* A footnote reference is a footnote reference whether or not the note
+             exists: djot lists the missing one as an empty note. *)
+          Some (toks, line, `Ref (`Shortcut, ref, ref), last)
+      | None -> None
 
 let try_collapsed_reflink p toks line ~image ~start (* is starting [ or ! *) =
   (* https://spec.commonmark.org/current/#collapsed-reference-link *)

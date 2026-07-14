@@ -227,6 +227,8 @@ let%expect_test "preset: lazy lines stay, no HTML, no entities, djot escapes" =
      swallows the unmarked line. *)
   html ~djot:true "> quoted\nlazy\n";
   html ~djot:true "<b>text</b> &amp;";
+  (* Two trailing spaces are not a hard break in djot, and they are not layout
+     either: they are text, and they survive into the output. *)
   html ~djot:true "one  \ntwo";
   [%expect {|
     <blockquote>
@@ -240,10 +242,16 @@ let%expect_test "preset: lazy lines stay, no HTML, no entities, djot escapes" =
 
 let%expect_test "preset: no indented code, no setext heading, no _ break" =
   html ~djot:true "    not code";
+  (* No block start interrupts a paragraph, so the [---] is neither a setext
+     underline nor a thematic break: it is text, and smart punctuation reads it
+     as an em dash. A blank line above it is what lets it be a break. *)
   html ~djot:true "heading?\n---\n";
+  html ~djot:true "heading?\n\n---\n";
   html ~djot:true "___";
   [%expect {|
     <p>not code</p>
+    <p>heading?
+    —</p>
     <p>heading?</p>
     <hr>
     <p>___</p>

@@ -44,18 +44,37 @@ let footnote_id label =
   let make_label l = String.map (function ' ' | '\t' -> '-' | c -> c) l in
   "fn-" ^ (make_label (String.sub label 1 (String.length label - 1)))
 
+(* Djot names a note by the order in which it is first referenced, not by its
+   label: [fn1] and [fnref1]. *)
+let djot_footnote_id n = "fn" ^ Int.to_string n
+let djot_footnote_ref_id n = "fnref" ^ Int.to_string n
+
 let footnote_ref_id fnid c = String.concat "-" ["ref"; Int.to_string c; fnid]
 
 let make_footnote_ref_ids c label fn =
   let st = C.State.get c state in
+  let djot = st.djot in
   match Label.Map.find_opt label st.footnotes with
-  | Some (text, id, refc, _) -> incr refc; (text, id, footnote_ref_id id !refc)
+  | Some (text, id, refc, _) ->
+      incr refc;
+      let ref_id =
+        if djot then "" (* only the first reference carries an id *)
+        else footnote_ref_id id !refc
+      in
+      (text, id, ref_id)
   | None ->
       st.footnote_count <- st.footnote_count + 1;
-      let text = String.concat "" ["["; Int.to_string st.footnote_count;"]"] in
-      let id = footnote_id label in
+      let n = st.footnote_count in
+      let text =
+        if djot then Int.to_string n
+        else String.concat "" ["["; Int.to_string n; "]"]
+      in
+      let id = if djot then djot_footnote_id n else footnote_id label in
       st.footnotes <- Label.Map.add label (text, id, ref 1, fn) st.footnotes;
-      text, id, footnote_ref_id id 1
+      let ref_id =
+        if djot then djot_footnote_ref_id n else footnote_ref_id id 1
+      in
+      text, id, ref_id
 
 (* Escaping *)
 
@@ -70,7 +89,10 @@ let buffer_add_html_escaped_uchar b u = match Uchar.to_int u with
 
 let html_escaped_uchar c s = buffer_add_html_escaped_uchar (C.buffer c) s
 
-let buffer_add_html_escaped_string b s =
+(* [quot] escapes the double quote. It has to be escaped inside an attribute
+   value, which is what delimits one; in text it is unambiguous, and djot leaves
+   it alone there. *)
+let buffer_add_escaped_string ?(quot = true) b s =
   let string = Buffer.add_string in
   let len = String.length s in
   let max_idx = len - 1 in
@@ -87,25 +109,26 @@ let buffer_add_html_escaped_string b s =
     | '<' -> flush b start i; string b "&lt;"; loop next next
     | '>' -> flush b start i; string b "&gt;"; loop next next
 (*    | '\'' -> flush c start i; string c "&apos;"; loop next next *)
-    | '\"' -> flush b start i; string b "&quot;"; loop next next
+    | '\"' when quot -> flush b start i; string b "&quot;"; loop next next
     | c -> loop start next
   in
   loop 0 0
 
+let buffer_add_html_escaped_string b s = buffer_add_escaped_string b s
 let html_escaped_string c s = buffer_add_html_escaped_string (C.buffer c) s
 
 (* Djot writes a non-breaking space as an entity: as a raw U+00A0 it would be
-   indistinguishable from a space in the output. *)
+   indistinguishable from a space in the output. It leaves the double quote
+   alone: text is not an attribute value, so nothing needs escaping there. *)
 let djot_escaped_string c s =
   let b = C.buffer c in
+  let escaped b s = buffer_add_escaped_string ~quot:false b s in
   let len = String.length s in
   let rec loop start i =
     if i >= len then
-      (if start < len then buffer_add_html_escaped_string b
-         (String.sub s start (len - start)))
+      (if start < len then escaped b (String.sub s start (len - start)))
     else if i + 1 < len && s.[i] = '\xc2' && s.[i + 1] = '\xa0' then begin
-      if start < i then
-        buffer_add_html_escaped_string b (String.sub s start (i - start));
+      if start < i then escaped b (String.sub s start (i - start));
       Buffer.add_string b "&nbsp;";
       loop (i + 2) (i + 2)
     end else loop start (i + 1)
@@ -224,7 +247,12 @@ let raw_inline c r =
 let raw_block c r =
   if Block.Raw_block.format r <> "html" then () else
   if safe c then (comment c "raw HTML block omitted"; C.byte c '\n') else
-  block_lines c (Block.Code_block.code (Block.Raw_block.code_block r))
+  match Block.Code_block.code (Block.Raw_block.code_block r) with
+  | [] -> ()
+  | lines ->
+      (* [block_lines] separates lines, it does not terminate them; a raw block
+         stands on its own, so it ends with a newline like any other block. *)
+      block_lines c lines; C.byte c '\n'
 
 let emphasis c e =
   C.string c "<em>"; C.inline c (Inline.Emphasis.inline e); C.string c "</em>"
@@ -278,6 +306,14 @@ let image ?(close = " >") ?attrs c i =
 let link_footnote c l fn =
   let key = Label.key (Option.get (Inline.Link.referenced_label l)) in
   let text, label, ref = make_footnote_ref_ids c key fn in
+  if djot c then begin
+    C.string c "<a";
+    if ref <> "" then
+      (C.string c " id=\""; html_escaped_string c ref; C.byte c '"');
+    C.string c " href=\"#"; pct_encoded_string c label;
+    C.string c "\" role=\"doc-noteref\"><sup>";
+    C.string c text; C.string c "</sup></a>"
+  end else
   let is_full_ref = match Inline.Link.reference l with
   | `Ref (`Full, _, _) -> true | _ -> false
   in
@@ -302,6 +338,11 @@ let link ?attrs c l = match Inline.Link.reference_definition (C.get_defs c) l wi
     (match attrs with None -> () | Some a -> attributes c a);
     C.byte c '>'; C.inline c (Inline.Link.text l); C.string c "</a>"
 | Some (Block.Footnote.Def (fn, _)) -> link_footnote c l fn
+| None when djot c && (match Inline.Link.referenced_label l with
+                       | Some d -> Label.key d <> "" && (Label.key d).[0] = '^'
+                       | None -> false) ->
+    let label = Option.get (Inline.Link.referenced_label l) in
+    link_footnote c l (Block.Footnote.make label Block.empty)
 | None when djot c ->
     (* Djot still makes an anchor of an unresolved reference, just without an
        [href]. *)
@@ -533,12 +574,13 @@ let register_id c id =
 
 let djot_unique_id c base =
   let st = C.State.get c state in
+  (* An empty base becomes [s-1], [s-2], … — djot's fallback name. *)
+  let base' = if base = "" then "s" else base in
   let rec loop i =
-    let id = if i = 0 then base else base ^ "-" ^ Int.to_string i in
+    let id = if i = 0 then base else base' ^ "-" ^ Int.to_string i in
     if id = "" || String_set.mem id st.ids then loop (i + 1) else id
   in
   let id = loop (if base = "" then 1 else 0) in
-  let id = if id = "" then "s-1" else id in
   register_id c id; id
 
 (* The heading's own id, if it was given one explicitly, else a fresh djot one
@@ -879,6 +921,9 @@ let block_attributes c a =
   if djot c then
     (match Attribute.id attrs with None -> () | Some id -> register_id c id);
   match Block.Attributes.block a with
+  (* Attributes detached from their block by a blank line. They are in the AST
+     for round-tripping only: there is no element to put them on. *)
+  | Block.Blocks ([], _) -> ()
   | Block.Paragraph (p, _) ->
       C.string c "<p"; attributes c attrs; C.byte c '>';
       C.inline c (Block.Paragraph.inline p); C.string c "</p>\n"
@@ -892,6 +937,9 @@ let block_attributes c a =
   (* A div already is the element the attributes belong on: wrapping it in
      another one would nest two divs. *)
   | Block.Ext_div (d, _) -> div ~attrs c d
+  (* Raw content is passed through as-is; there is no element to hang the
+     attributes on, and djot drops them rather than inventing a wrapper. *)
+  | Block.Ext_raw_block (r, _) -> raw_block c r
   | block ->
       C.string c "<div"; attributes c attrs; C.string c ">\n";
       C.block c block; C.string c "</div>\n"
@@ -938,9 +986,57 @@ let xhtml_inline c = function
 
 (* Document rendering *)
 
+(* Djot's endnotes. The notes are listed in the order they were first referenced
+   (which is the order [footnote_count] assigned their ids), and the backlink is
+   tucked into the note's last paragraph rather than appended after it — so we
+   render the note, then reopen its final [</p>]. A note with no paragraph to end
+   on (or no content at all, for a reference whose definition is missing) gets a
+   paragraph of its own for the backlink. *)
+let djot_footnotes c fns =
+  let fns = Label.Map.fold (fun _ fn acc -> fn :: acc) fns [] in
+  let number id =
+    (* [fnN] *)
+    match int_of_string_opt (String.sub id 2 (String.length id - 2)) with
+    | Some n -> n | None -> 0
+  in
+  let fns = List.sort (fun (_, a, _, _) (_, b, _, _) ->
+      Int.compare (number a) (number b)) fns
+  in
+  let footnote c (_, id, _, fn) =
+    C.string c "<li id=\""; html_escaped_string c id; C.string c "\">\n";
+    let backlink =
+      let n = number id in
+      String.concat ""
+        [ "<a href=\"#"; djot_footnote_ref_id n;
+          "\" role=\"doc-backlink\">\xe2\x86\xa9\xef\xb8\x8e</a>" ]
+    in
+    let b = C.buffer c in
+    let start = Buffer.length b in
+    C.block c (Block.Footnote.block fn);
+    let content = Buffer.sub b start (Buffer.length b - start) in
+    Buffer.truncate b start;
+    let close = "</p>\n" in
+    let ends_with_p =
+      let n = String.length content and m = String.length close in
+      n >= m && String.equal (String.sub content (n - m) m) close
+    in
+    if ends_with_p then begin
+      C.string c (String.sub content 0 (String.length content - String.length close));
+      C.string c backlink; C.string c close
+    end else begin
+      C.string c content;
+      C.string c "<p>"; C.string c backlink; C.string c "</p>\n"
+    end;
+    C.string c "</li>\n"
+  in
+  C.string c "<section role=\"doc-endnotes\">\n<hr>\n<ol>\n";
+  List.iter (footnote c) fns;
+  C.string c "</ol>\n</section>\n"
+
 let footnotes c fns =
   (* XXX we could do something about recursive footnotes and footnotes in
      footnotes here. *)
+  if djot c then djot_footnotes c fns else
   let fns = Label.Map.fold (fun _ fn acc -> fn :: acc) fns [] in
   let fns = List.sort Stdlib.compare fns in
   let footnote c (_, id, refc, fn) =

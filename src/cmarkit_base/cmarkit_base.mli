@@ -356,6 +356,7 @@ val thematic_break : string -> last:byte_pos -> start:byte_pos -> line_type
     non-blank. *)
 
 val atx_heading :
+  ?closing_sequence:bool ->
   string -> last:byte_pos -> start:byte_pos -> line_type
 (** [atx_heading s ~first ~last] is an ATX heading in the range
     \[[start];[last]\]. *)

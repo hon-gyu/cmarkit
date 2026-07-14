@@ -40,17 +40,18 @@ module Break = struct
 end
 
 module Code_span = struct
-  (* [djot_trim] selects djot's rule for stripping the padding spaces of a
-     verbatim span, see [code] below. It is a property of the span rather than a
-     renderer option because it is decided by how the document was parsed, and
-     every renderer that reads the content must strip it the same way. *)
+  (* [djot] selects djot's rules for reading the content of a verbatim span: how
+     its padding spaces are stripped and how its line endings are joined, see
+     [code] below. It is a property of the span rather than a renderer option
+     because it is decided by how the document was parsed, and every renderer
+     that reads the content must read it the same way. *)
   type t =
     { backtick_count : Layout.count;
       code_layout : Block_line.tight list;
-      djot_trim : bool }
+      djot : bool }
 
-  let make ?(djot_trim = false) ~backtick_count code_layout =
-    { backtick_count; code_layout; djot_trim }
+  let make ?(djot = false) ~backtick_count code_layout =
+    { backtick_count; code_layout; djot }
 
   let min_backtick_count ~min counts =
     let rec loop min = function
@@ -58,8 +59,8 @@ module Code_span = struct
     in
     loop min (List.sort Int.compare counts)
 
-  let of_string ?(meta = Meta.none) ?(djot_trim = false) = function
-  | "" -> { backtick_count = 1 ; code_layout = ["", ("", meta)]; djot_trim }
+  let of_string ?(meta = Meta.none) ?(djot = false) = function
+  | "" -> { backtick_count = 1 ; code_layout = ["", ("", meta)]; djot }
   | s ->
       (* This finds out the needed backtick count, whether spaces are needed,
           and treats blanks after newline as layout *)
@@ -89,11 +90,11 @@ module Code_span = struct
         loop [] [] max 0 0 0
       in
       let backtick_count = min_backtick_count ~min:1 backtick_counts in
-      { backtick_count; code_layout; djot_trim }
+      { backtick_count; code_layout; djot }
 
   let backtick_count cs = cs.backtick_count
   let code_layout cs = cs.code_layout
-  let djot_trim cs = cs.djot_trim
+  let djot cs = cs.djot
 
   (* Djot strips a padding space only where it is doing work, i.e. only where it
      is what lets the content start or end with a backtick. CommonMark strips one
@@ -114,9 +115,11 @@ module Code_span = struct
     (* Extract code, see https://spec.commonmark.org/0.31.2/#code-spans *)
     let sp c = Char.equal c ' ' in
     let s = List.map Block_line.tight_to_string cs.code_layout in
-    let s = String.concat " " s in
+    (* CommonMark turns a line ending inside a code span into a space; djot keeps
+       the newline. *)
+    let s = String.concat (if cs.djot then "\n" else " ") s in
     if s = "" then "" else
-    if cs.djot_trim then djot_code s else
+    if cs.djot then djot_code s else
     if s.[0] = ' ' && s.[String.length s - 1] = ' ' &&
         not (String.for_all sp s)
     then String.sub s 1 (String.length s - 2) else s
