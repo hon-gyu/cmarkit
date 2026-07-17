@@ -992,7 +992,7 @@ let link_title ~next_line s lines ~line ~start =
    this incrementally while it scans; this is the same normalization for a
    string that is already in hand (a djot heading's text, say), so that a
    heading and a reference to it agree on their key. *)
-let label_key b s =
+let label_key ?(djot = false) b s =
   Buffer.reset b;
   let max = String.length s - 1 in
   let rec loop pending_white k =
@@ -1005,13 +1005,38 @@ let label_key b s =
     let d = String.get_utf_8_uchar s k in
     let u = Uchar.utf_decode_uchar d in
     let u = match Uchar.to_int u with 0x0000 -> Uchar.rep | _ -> u in
-    let () = match Cmarkit_data.unicode_case_fold u with
+    (* Djot label keys are case-sensitive; [link_label ~djot] keeps case the
+       same way, and a heading registered as a target must match. *)
+    let () = match if djot then None else Cmarkit_data.unicode_case_fold u with
     | None -> Buffer.add_utf_8_uchar b u
     | Some fold -> Buffer.add_string b fold
     in
     loop false (k + Uchar.utf_decode_length d)
   in
   loop false 0
+
+(* Djot auto-identifier for a heading, from its plain text: a run of
+   non-stripped bytes with internal whitespace/stripped punctuation collapsed to
+   a single '-'. Case is preserved (unlike the CommonMark [Inline.id]). Shared
+   so the parser (registering a heading as a link target) and the HTML renderer
+   (emitting the section id) derive byte-identical ids. *)
+let djot_id_base text =
+  let b = Buffer.create 32 in
+  let strip = function
+    | '[' | ']' | '~' | '!' | '@' | '#' | '$' | '%' | '^' | '&' | '*' | '(' | ')'
+    | '{' | '}' | '`' | ',' | '.' | '<' | '>' | '\\' | '|' | '=' | '+' | '/'
+    | '?' -> true
+    | c -> Ascii.is_white c
+  in
+  let flush_sep = ref false in
+  String.iter
+    (fun c ->
+      if strip c then (if Buffer.length b > 0 then flush_sep := true) else begin
+        if !flush_sep then (Buffer.add_char b '-'; flush_sep := false);
+        Buffer.add_char b c
+      end)
+    text;
+  Buffer.contents b
 
 let link_label ?(djot = false) b ~next_line s lines ~line ~start =
   (* https://spec.commonmark.org/current/#link-label *)

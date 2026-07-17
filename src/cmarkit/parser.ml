@@ -2122,33 +2122,53 @@ and block_struct_to_block p = function
    and we do not overwrite it. *)
 let register_heading_labels p (doc : Block_struct.t list) =
   if not (Oymarkit_mod.djot_headings p.oymarkit_mod) then () else
-  let register lines =
+  let djot_links = Oymarkit_mod.djot_links p.oymarkit_mod in
+  let register ?attr_id lines =
     let _layout, inline = Inline_struct.parse p lines in
     let text = Inline.to_plain_text ~break_on_soft:false inline in
     let text = String.concat " " (List.map (String.concat "") text) in
-    let key = Match.label_key p.buf text in
+    let key = Match.label_key ~djot:djot_links p.buf text in
     if key = "" || Label.Map.mem key p.defs then () else
-    let id = Inline.id ~buf:p.buf inline in
+    (* The dest must equal the id the HTML renderer puts on the heading's
+       section: an explicit [ {#id} ] attribute if present, else djot's
+       case-preserving [djot_id_base] (not the case-folding CommonMark
+       [Inline.id]). *)
+    let id = match attr_id with
+    | Some id -> id
+    | None -> Match.djot_id_base text
+    in
     let label = Label.make ~key [ "", (text, Meta.none) ] in
     let dest = ("#" ^ id, Meta.none) in
     let ld = Link_definition.make ~defined_label:(Some label) ~dest () in
     set_label_def p label (Link_definition.Def (ld, Meta.none))
   in
-  let rec block (b : Block_struct.t) = match b with
-  | Heading (`Atx { heading; more; _ }) -> register (more @ [heading])
-  | Heading (`Setext { heading_lines; _ }) -> register heading_lines
+  let heading_lines = function
+  | `Atx { Block_struct.heading; more; _ } -> more @ [heading]
+  | `Setext { Block_struct.heading_lines; _ } -> heading_lines
+  in
+  let attr_id specs =
+    Attribute.id (List.fold_left Attribute.merge Attribute.empty specs)
+  in
+  (* Reverse document order, so an attribute line that *precedes* a heading in
+     the source follows it here (as for [attach_ref_def_attributes]). *)
+  let rec blocks (bs : Block_struct.t list) = match bs with
+  | Heading h :: (Attribute_specs specs :: _ as bs) ->
+      register ?attr_id:(attr_id specs) (heading_lines h); blocks bs
+  | b :: bs -> block b; blocks bs
+  | [] -> ()
+  and block (b : Block_struct.t) = match b with
+  | Heading h -> register (heading_lines h)
   | Block_quote (_, _, bs) | Ext_div (_, bs) | Ext_jsx_block (_, bs)
-  | Ext_footnote (_, _, bs) -> List.iter block bs
+  | Ext_footnote (_, _, bs) -> blocks bs
   | List l ->
-      List.iter (fun (i : Block_struct.list_item) -> List.iter block i.blocks)
-        l.items
+      List.iter (fun (i : Block_struct.list_item) -> blocks i.blocks) l.items
   | Ext_def_list dl ->
-      List.iter (fun (i : Block_struct.def_item) -> List.iter block i.blocks)
+      List.iter (fun (i : Block_struct.def_item) -> blocks i.blocks)
         dl.def_items
   | Blank_line _ | Code_block _ | Html_block _ | Linkref_def _
   | Attribute_specs _ | Paragraph _ | Thematic_break _ | Ext_table _ -> ()
   in
-  List.iter block doc
+  blocks doc
 
 (* Djot attributes written above a reference definition merge onto every link
    that references it. They must reach the definition in [p.defs] before any

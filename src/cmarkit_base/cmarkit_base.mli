@@ -288,7 +288,13 @@ val link_title :
     order, [last] is on the closing delimiter and guaranteed to be on
     [last_line]. *)
 
-val label_key : Buffer.t -> string -> string
+val djot_id_base : string -> string
+(** [djot_id_base text] is djot's auto-identifier for a heading with plain text
+    [text]: non-stripped bytes with internal whitespace and stripped punctuation
+    collapsed to a single ['-'], case preserved. Shared by the parser and the
+    HTML renderer so a registered heading target matches its rendered id. *)
+
+val label_key : ?djot:bool -> Buffer.t -> string -> string
 (** [label_key b s] is the {{:https://spec.commonmark.org/0.31.2/#link-label}link
     label} key of [s]: case-folded, with runs of whitespace collapsed to a
     single space and leading and trailing whitespace dropped. This is the

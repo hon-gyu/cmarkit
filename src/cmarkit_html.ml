@@ -549,23 +549,7 @@ let code_block ?attrs c cb =
    [s-1]. Djot assigns these while parsing, in document order, which is also the
    order we render in — so registering ids as we go gives the same answer. *)
 
-let djot_id_base text =
-  let b = Buffer.create 32 in
-  let strip = function
-    | '[' | ']' | '~' | '!' | '@' | '#' | '$' | '%' | '^' | '&' | '*' | '(' | ')'
-    | '{' | '}' | '`' | ',' | '.' | '<' | '>' | '\\' | '|' | '=' | '+' | '/'
-    | '?' -> true
-    | c -> Cmarkit_base.Ascii.is_white c
-  in
-  let flush_sep = ref false in
-  String.iter
-    (fun c ->
-      if strip c then (if Buffer.length b > 0 then flush_sep := true) else begin
-        if !flush_sep then (Buffer.add_char b '-'; flush_sep := false);
-        Buffer.add_char b c
-      end)
-    text;
-  Buffer.contents b
+let djot_id_base = Cmarkit_base.djot_id_base
 
 let register_id c id =
   let st = C.State.get c state in
