@@ -1788,6 +1788,56 @@ let try_span p ~start ~start_line ~toks ~line ~text_last ~image text =
       Some (rest, endline, t, false)
   | _ -> None
 
+(* Djot destination guard. When djot resolves links on the shared delimiter
+   stack ([second_pass]), a delimiter that sits inside a link *destination* --
+   the [_] of [ (a_b) ] -- must not pair as emphasis: djot scans a destination
+   as literal URL. But emphasis is resolved before the link, so we cannot rely on
+   link resolution to have consumed the destination first. Instead, at
+   [first_pass] time, when a [ ] ] is followed by a destination,
+   [djot_destination_close] finds its closing ')' and [neutralize_dest_delimiters]
+   drops the delimiter markers inside -- leaving them inert (the source gap
+   renders them literally) while [try_link] reads the URL straight from the
+   source. This is the counterpart to [clearOpeners], which the left-to-right
+   stack order already gives us for delimiters in link *text*.
+
+   Close position of a djot destination opening at [start] (the '('), or [None].
+   Mirrors the scan in [try_djot_inline_link_remainder] but keeps only the
+   closing ')' position; [byte_pos] is a global index, so a caller can bound a
+   span with it across line breaks. *)
+let djot_destination_close p toks start_line ~start =
+  if not (has_right_paren ~after:start p.cidx) then None else
+  let rec scan toks line k =
+    if k > line.last then
+      match next_line toks with
+      | None -> None
+      | Some (toks, newline) ->
+          scan toks newline (first_non_blank_in_span p newline)
+    else match p.i.[k] with
+    | '\\' -> scan toks line (k + 2)
+    | ')' -> Some k
+    | _ -> scan toks line (k + 1)
+  in
+  scan toks start_line (start + 1)
+
+(* Drop the emphasis-family and bracket marker tokens strictly inside [ (lo, hi) ]
+   so they cannot pair as delimiters. Tokens are in increasing position order, so
+   we walk only the destination prefix (up to [hi]) and splice the rest of the
+   stream back untouched -- O(destination), not O(stream). *)
+let neutralize_dest_delimiters ~lo ~hi toks =
+  let is_marker = function
+  | Emphasis_marks _ | Strikethrough_marks _ | Quoted_marks _
+  | Extra_inline_container_marks _ | Math_span_marks _
+  | Link_start _ | Right_brack _ -> true
+  | _ -> false
+  in
+  let rec loop acc = function
+  | t :: toks when token_start t < hi ->
+      let acc = if is_marker t && token_start t > lo then acc else t :: acc in
+      loop acc toks
+  | toks -> List.rev_append acc toks
+  in
+  loop [] toks
+
 (* The following sequence of mutually recursive functions define
     inline parsing. We have three passes over a paragraph's token
     list see the [parse_tokens] function below. *)
@@ -1851,6 +1901,12 @@ and first_pass p toks line =
       | None -> loop p toks line ~had_link acc
       | Some (toks, line, t) -> loop p toks line ~had_link (t :: acc)
       end
+  | Link_start _ as t :: toks when Oymarkit_mod.djot_links p.oymarkit_mod ->
+      (* Djot resolves links on the shared delimiter stack in [second_pass], so
+         that brackets and emphasis compete in one left-to-right sweep (djot's
+         [clearOpeners]). Defer: keep the marker -- and its [Right_brack] below
+         -- for that pass instead of resolving the link here. *)
+      loop p toks line ~had_link (t :: acc)
   | Link_start { start; image } :: toks ->
       begin match try_link p toks line ~image ~start with
       | None -> loop p toks line ~had_link acc
@@ -1890,6 +1946,23 @@ and first_pass p toks line =
       | Some (toks, line, t) -> loop p toks line ~had_link (t :: acc)
       | None -> loop p toks line ~had_link acc
       end
+  | Right_brack { start = k } as t :: toks
+    when Oymarkit_mod.djot_links p.oymarkit_mod ->
+      (* Deferred with its [Link_start]; [second_pass] consumes the matched one
+         via [try_link] and drops any unmatched [ ] ]. If a destination [ (...) ]
+         opens here, neutralize its delimiters first (the guard above). *)
+      let toks =
+        if k + 1 <= line.last && p.i.[k + 1] = '(' then
+          match djot_destination_close p toks line ~start:(k + 1) with
+          | Some close -> neutralize_dest_delimiters ~lo:k ~hi:close toks
+          | None ->
+              (* No closing ')': not a destination at all, so its contents are
+                 ordinary text whose delimiters pair normally (djot renders
+                 [ [unclosed](a *b* ] with the emphasis intact). Leave them. *)
+              toks
+        else toks
+      in
+      loop p toks line ~had_link (t :: acc)
   | Right_brack start :: toks -> loop p toks line ~had_link acc
   | Newline { newline = l } as t :: toks -> loop p toks l ~had_link (t :: acc)
   | t :: toks -> loop p toks line ~had_link (t :: acc)
@@ -2244,6 +2317,23 @@ and second_pass p toks line =
       | Either.Left toks -> loop p toks line (fallback () :: acc)
       | Either.Right (toks, line) -> loop p toks line acc
       end
+  | Link_start { start; image } :: toks
+    when Oymarkit_mod.djot_links p.oymarkit_mod ->
+      (* Djot links live on this stack alongside emphasis. Because openers are
+         tried left-to-right, an emphasis run that opens before this [ and
+         closes inside it will already have swept this marker into its span (it
+         is resolved via [second_pass] there and finds no matching [ ] ]), so
+         emphasis wins the [-vs-* conflict -- djot's [clearOpeners], for free.
+         Delimiters inside the destination were already neutralized in
+         [first_pass], so they never reach here to be mispaired. *)
+      begin match try_link p toks line ~image ~start with
+      | Some (toks, line, t, _had_link) -> loop p toks line (t :: acc)
+      | None -> loop p toks line acc (* leave '[' literal via the source gap *)
+      end
+  | Right_brack _ :: toks when Oymarkit_mod.djot_links p.oymarkit_mod ->
+      (* Unmatched ']': matched ones were consumed by [try_link]; drop the rest
+         so they render literally rather than tripping [last_pass]. *)
+      loop p toks line acc
   | Newline { newline } as t :: toks -> loop p toks newline (t :: acc)
   | Inline { endline } as t :: toks -> loop p toks endline (t :: acc)
   | t :: toks -> loop p toks line (t :: acc)
