@@ -7,7 +7,7 @@ emphasis.test             35/35
 escapes.test               6/6  
 fenced_divs.test           8/8  
 footnotes.test             3/4  
-headings.test             16/17 
+headings.test             17/17 
 insert_delete_mark.test    4/4  
 links_and_images.test     29/32 
 lists.test                30/31 
@@ -23,4 +23,4 @@ tables.test                9/9
 task_lists.test            3/3  
 thematic_breaks.test       4/4  
 verbatim.test              8/8  
-TOTAL                    248/265  (6 skipped)
+TOTAL                    249/265  (6 skipped)

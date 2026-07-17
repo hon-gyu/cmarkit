@@ -661,7 +661,8 @@ let rec normalize ?(ext = ext_none) = function
 | i -> ext i
 
 let ext_none ~break_on_soft = ext_none
-let to_plain_text ?(ext = ext_none) ~break_on_soft i =
+let to_plain_text ?(ext = ext_none) ?(skip_link = fun _ -> false)
+    ~break_on_soft i =
   let push s acc = (s :: List.hd acc) :: List.tl acc in
   let newline acc = [] :: (List.rev (List.hd acc)) :: List.tl acc in
   let rec loop ~break_on_soft acc = function
@@ -679,7 +680,10 @@ let to_plain_text ?(ext = ext_none) ~break_on_soft i =
       loop ~break_on_soft acc (inline :: is)
   | Inlines (is', _) :: is ->
       loop ~break_on_soft acc (List.rev_append (List.rev is') is)
-  | Link (l, _) :: is | Image (l, _) :: is ->
+  | Link (l, _) :: is ->
+      if skip_link l then loop ~break_on_soft acc is
+      else loop ~break_on_soft acc (l.text :: is)
+  | Image (l, _) :: is ->
       loop ~break_on_soft acc (l.text :: is)
   | Raw_html _ :: is ->
       loop ~break_on_soft acc is
@@ -721,6 +725,13 @@ let to_plain_text ?(ext = ext_none) ~break_on_soft i =
       List.rev ((List.rev (List.hd acc)) :: List.tl acc)
   in
   loop ~break_on_soft ([] :: []) [i]
+
+(* A djot footnote reference is a link whose referenced label key starts with
+   ['^'] (whether or not the note is defined). Used as a [skip_link] so footnote
+   references contribute nothing to a heading's identifier, as djot specifies. *)
+let is_footnote_reference l = match Link.referenced_label l with
+| Some d -> let k = Label.key d in k <> "" && k.[0] = '^'
+| None -> false
 
 let id ?buf ?ext i =
   let text = to_plain_text ?ext ~break_on_soft:false i in

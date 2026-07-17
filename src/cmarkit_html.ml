@@ -569,17 +569,19 @@ let djot_unique_id c base =
 (* The heading's own id, if it was given one explicitly, else a fresh djot one
    from its text. *)
 let djot_heading_id c ~attrs h =
+  let heading_text h =
+    (* Footnote references contribute nothing to a heading's id, matching djot
+       and [register_heading_labels]. *)
+    Inline.to_plain_text ~skip_link:Inline.is_footnote_reference
+      ~break_on_soft:false (Block.Heading.inline h)
+    |> List.map (String.concat "") |> String.concat " "
+  in
   match attrs with
   | Some a ->
       (match Attribute.id a with
        | Some id -> register_id c id; id
-       | None -> djot_unique_id c (djot_id_base (Inline.to_plain_text ~break_on_soft:false (Block.Heading.inline h) |> List.map (String.concat "") |> String.concat " ")))
-  | None ->
-      let text =
-        Inline.to_plain_text ~break_on_soft:false (Block.Heading.inline h)
-        |> List.map (String.concat "") |> String.concat " "
-      in
-      djot_unique_id c (djot_id_base text)
+       | None -> djot_unique_id c (djot_id_base (heading_text h)))
+  | None -> djot_unique_id c (djot_id_base (heading_text h))
 
 let heading c h =
   let level = string_of_int (Block.Heading.level h) in

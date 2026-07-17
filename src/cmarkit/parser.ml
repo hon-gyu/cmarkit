@@ -2125,7 +2125,12 @@ let register_heading_labels p (doc : Block_struct.t list) =
   let djot_links = Oymarkit_mod.djot_links p.oymarkit_mod in
   let register ?attr_id lines =
     let _layout, inline = Inline_struct.parse p lines in
-    let text = Inline.to_plain_text ~break_on_soft:false inline in
+    (* Footnote references contribute nothing to the id (djot), so the target
+       registered here matches the section id the renderer derives. *)
+    let text =
+      Inline.to_plain_text ~skip_link:Inline.is_footnote_reference
+        ~break_on_soft:false inline
+    in
     let text = String.concat " " (List.map (String.concat "") text) in
     let key = Match.label_key ~djot:djot_links p.buf text in
     if key = "" || Label.Map.mem key p.defs then () else

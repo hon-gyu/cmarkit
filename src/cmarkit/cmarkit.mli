@@ -1275,9 +1275,13 @@ module Inline : sig
       [ext] is called on cases not defined in this module. The default
       raises [Invalid_argument].  *)
 
+  val is_footnote_reference : Link.t -> bool
+  (** [is_footnote_reference l] is [true] if [l] is a djot footnote reference,
+      i.e. a link whose referenced label key starts with ['^']. *)
+
   val to_plain_text :
-    ?ext:(break_on_soft:bool -> t -> t) -> break_on_soft:bool ->
-    t -> string list list
+    ?ext:(break_on_soft:bool -> t -> t) -> ?skip_link:(Link.t -> bool) ->
+    break_on_soft:bool -> t -> string list list
     (** [to_plain_text ~ext ~break_on_soft i] has the plain text of [i]
         as a sequence of lines represented by a list of strings to be
         concatenated. If [break_on_soft] is [true] soft line breaks
