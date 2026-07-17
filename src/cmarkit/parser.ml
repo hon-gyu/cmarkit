@@ -1499,6 +1499,20 @@ let block_struct_to_code_block p = function
         then Block.Ext_math_block (cb, meta)
         else Block.Code_block (cb, meta)
 
+(* A heading's auto identifier. Djot's is case-preserving ([djot_id_base]) and
+   ignores footnote references; CommonMark's is [Inline.id]. Both the id put on
+   the heading (or its section) and the target [register_heading_labels]
+   registers must use this, so a [ [Heading][] ] link resolves to a live anchor. *)
+let heading_auto_id p inline =
+  if Oymarkit_mod.djot_headings p.oymarkit_mod then
+    let text =
+      Inline.to_plain_text ~skip_link:Inline.is_footnote_reference
+        ~break_on_soft:false inline
+      |> List.map (String.concat "") |> String.concat " "
+    in
+    Match.djot_id_base text
+  else Inline.id ~buf:p.buf inline
+
 let block_struct_to_heading p = function
 | `Atx { Block_struct.indent; level; after_open; heading; layout_after; more } ->
     let after_opening =
@@ -1520,7 +1534,7 @@ let block_struct_to_heading p = function
     let _layout, inline = Inline_struct.parse p lines in
     let id = match p.heading_auto_ids with
     | false -> None
-    | true -> Some (`Auto (Inline.id ~buf:p.buf inline))
+    | true -> Some (`Auto (heading_auto_id p inline))
     in
     Block.Heading ({layout; level; inline; id}, meta)
 | `Setext { Block_struct.level; heading_lines; underline } ->
@@ -1541,7 +1555,7 @@ let block_struct_to_heading p = function
     in
     let id = match p.heading_auto_ids with
     | false -> None
-    | true -> Some (`Auto (Inline.id ~buf:p.buf inline))
+    | true -> Some (`Auto (heading_auto_id p inline))
     in
     Block.Heading ({ layout = `Setext layout; level; inline; id }, meta)
 
@@ -2140,7 +2154,7 @@ let register_heading_labels p (doc : Block_struct.t list) =
        [Inline.id]). *)
     let id = match attr_id with
     | Some id -> id
-    | None -> Match.djot_id_base text
+    | None -> heading_auto_id p inline
     in
     let label = Label.make ~key [ "", (text, Meta.none) ] in
     let dest = ("#" ^ id, Meta.none) in

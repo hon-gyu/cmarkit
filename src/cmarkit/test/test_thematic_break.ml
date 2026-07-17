@@ -54,9 +54,12 @@ let%expect_test "djot: spaces and tabs between markers are allowed" =
     <hr>
     |}]
 
-let%expect_test "djot: markers may not be mixed" =
+let%expect_test "djot: markers may be mixed" =
+  (* djot.js's [pattThematicBreak] is [-*] runs mixed freely -- three or more
+     of [*] / [-] with optional spaces -- so [*-*] is a thematic break, not
+     emphasis. *)
   html ~djot_thematic_break:true "*-*";
-  [%expect {| <p><em>-</em></p> |}]
+  [%expect {| <hr> |}]
 
 (* Indentation, via [indented_code]
    ================================ *)

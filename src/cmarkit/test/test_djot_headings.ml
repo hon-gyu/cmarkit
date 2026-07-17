@@ -30,21 +30,21 @@ let%expect_test "commonmark: a heading is exactly one line" =
 let%expect_test "djot: the heading runs until a blank line" =
   html ~djot_headings:true "# A heading that\ntakes up two lines\n";
   [%expect {|
-    <h1 id="a-heading-that-takes-up-two-lines"><a class="anchor" aria-hidden="true" href="#a-heading-that-takes-up-two-lines"></a>A heading that
+    <h1 id="A-heading-that-takes-up-two-lines"><a class="anchor" aria-hidden="true" href="#A-heading-that-takes-up-two-lines"></a>A heading that
     takes up two lines</h1>
     |}]
 
 let%expect_test "djot: continuation lines may repeat the [#]" =
   html ~djot_headings:true "# A heading that\n# takes up two lines\n";
   [%expect {|
-    <h1 id="a-heading-that-takes-up-two-lines"><a class="anchor" aria-hidden="true" href="#a-heading-that-takes-up-two-lines"></a>A heading that
+    <h1 id="A-heading-that-takes-up-two-lines"><a class="anchor" aria-hidden="true" href="#A-heading-that-takes-up-two-lines"></a>A heading that
     takes up two lines</h1>
     |}]
 
 let%expect_test "djot: a blank line ends the heading" =
   html ~djot_headings:true "# A heading\n\nA paragraph.\n";
   [%expect {|
-    <h1 id="a-heading"><a class="anchor" aria-hidden="true" href="#a-heading"></a>A heading</h1>
+    <h1 id="A-heading"><a class="anchor" aria-hidden="true" href="#A-heading"></a>A heading</h1>
     <p>A paragraph.</p>
     |}]
 
@@ -61,35 +61,35 @@ let%expect_test "commonmark: a heading defines no label" =
 let%expect_test "djot: a heading is an implicit link target" =
   html ~djot_headings:true "# Some Heading\n\nSee [Some Heading][].\n";
   [%expect {|
-    <h1 id="some-heading"><a class="anchor" aria-hidden="true" href="#some-heading"></a>Some Heading</h1>
-    <p>See <a href="#some-heading">Some Heading</a>.</p>
+    <h1 id="Some-Heading"><a class="anchor" aria-hidden="true" href="#Some-Heading"></a>Some Heading</h1>
+    <p>See <a href="#Some-Heading">Some Heading</a>.</p>
     |}]
 
 let%expect_test "djot: the reference may come before the heading" =
   html ~djot_headings:true "See [Some Heading][].\n\n# Some Heading\n";
   [%expect {|
-    <p>See <a href="#some-heading">Some Heading</a>.</p>
-    <h1 id="some-heading"><a class="anchor" aria-hidden="true" href="#some-heading"></a>Some Heading</h1>
+    <p>See <a href="#Some-Heading">Some Heading</a>.</p>
+    <h1 id="Some-Heading"><a class="anchor" aria-hidden="true" href="#Some-Heading"></a>Some Heading</h1>
     |}]
 
 let%expect_test "djot: the label matches case-insensitively, like any label" =
   html ~djot_headings:true "# Some Heading\n\nSee [some heading][].\n";
   [%expect {|
-    <h1 id="some-heading"><a class="anchor" aria-hidden="true" href="#some-heading"></a>Some Heading</h1>
-    <p>See <a href="#some-heading">some heading</a>.</p>
+    <h1 id="Some-Heading"><a class="anchor" aria-hidden="true" href="#Some-Heading"></a>Some Heading</h1>
+    <p>See <a href="#Some-Heading">some heading</a>.</p>
     |}]
 
 let%expect_test "djot: an explicit definition of the same label wins" =
   html ~djot_headings:true
     "[Some Heading]: https://example.org\n\n# Some Heading\n\nSee [Some Heading][].\n";
   [%expect {|
-    <h1 id="some-heading"><a class="anchor" aria-hidden="true" href="#some-heading"></a>Some Heading</h1>
+    <h1 id="Some-Heading"><a class="anchor" aria-hidden="true" href="#Some-Heading"></a>Some Heading</h1>
     <p>See <a href="https://example.org">Some Heading</a>.</p>
     |}]
 
 let%expect_test "djot: an unrelated reference is still undefined" =
   html ~djot_headings:true "# Some Heading\n\nSee [Other][].\n";
   [%expect {|
-    <h1 id="some-heading"><a class="anchor" aria-hidden="true" href="#some-heading"></a>Some Heading</h1>
+    <h1 id="Some-Heading"><a class="anchor" aria-hidden="true" href="#Some-Heading"></a>Some Heading</h1>
     <p>See [Other][].</p>
     |}]
