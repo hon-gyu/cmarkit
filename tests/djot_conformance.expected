@@ -14,7 +14,7 @@ lists.test                31/31
 math.test                  8/8  
 para.test                  1/1  
 raw.test                   4/4  
-regression.test            4/5    (1 skipped)
+regression.test            5/5    (1 skipped)
 smart.test                18/18 
 spans.test                 3/3  
 sourcepos.test             0/0    (1 skipped)
@@ -23,4 +23,4 @@ tables.test                9/9
 task_lists.test            3/3  
 thematic_breaks.test       4/4  
 verbatim.test              8/8  
-TOTAL                    264/265  (6 skipped)
+TOTAL                    265/265  (6 skipped)

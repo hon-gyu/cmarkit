@@ -420,9 +420,12 @@ val html_block_end :
 (** [html_block ~end_code s ~last ~start] is [true] if the HTML block
     end with [end_code] in the the range \[[start];[last]\] *)
 
-val ext_table_row : string -> last:byte_pos -> start:byte_pos -> line_type
+val ext_table_row :
+  ?djot_verbatim:bool -> string -> last:byte_pos -> start:byte_pos -> line_type
 (** [ext_table s ~last ~start] matches a table row in the range
-    \[[start];[last]\]. The returned position is the rightmost [|]. *)
+    \[[start];[last]\]. The returned position is the rightmost [|]. With
+    [djot_verbatim] an unmatched backtick run owns that rightmost pipe, so the
+    line is not a table row. *)
 
 val ext_footnote_label :
   Buffer.t -> string -> line_pos:Textloc.line_pos -> last:byte_pos ->

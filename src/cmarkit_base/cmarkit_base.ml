@@ -1441,14 +1441,39 @@ let html_block_end ~end_cond s ~last ~start = match end_cond with
 | `End_cond_1 -> html_block_end_cond_1 s ~last ~start
 | `End_blank | `End_blank_7 -> first_non_blank s ~last ~start = last + 1
 
-let ext_table_row s ~last ~start =
+let ext_table_row ?(djot_verbatim = false) s ~last ~start =
   if start > last || s.[start] <> '|' then Nomatch else
   let first = start + 1 in
   let last_nb = last_non_blank s ~first ~start:last in
   let before = last_nb - 1 in
   if last_nb < first || s.[last_nb] <> '|' ||
      (before >= first && s.[before] = '\\')
-  then Nomatch else Ext_table_row last_nb
+  then Nomatch else
+  let closing_pipe_is_verbatim_content =
+    let backtick_run k =
+      let rec loop n k =
+        if k < last_nb && s.[k] = '`' then loop (n + 1) (k + 1) else n, k
+      in
+      loop 0 k
+    in
+    let rec outside k =
+      if k >= last_nb then false else
+      match s.[k] with
+      | '\\' -> outside (k + 2)
+      | '`' ->
+          let count, next = backtick_run k in
+          inside count next
+      | _ -> outside (k + 1)
+    and inside count k =
+      if k >= last_nb then true else
+      if s.[k] <> '`' then inside count (k + 1) else
+      let close_count, next = backtick_run k in
+      if close_count = count then outside next else inside count next
+    in
+    outside first
+  in
+  if djot_verbatim && closing_pipe_is_verbatim_content then Nomatch
+  else Ext_table_row last_nb
 
 let ext_footnote_label buf s ~line_pos ~last ~start =
   if start + 1 > last || s.[start] <> '[' || s.[start + 1] <> '^'

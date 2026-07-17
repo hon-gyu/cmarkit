@@ -736,7 +736,8 @@ module Block_struct = struct
           if r <> Nomatch then r else
           Paragraph_line
       | '|' when p.exts ->
-          let r = Match.ext_table_row p.i ~last ~start in
+          let djot_verbatim = Oymarkit_mod.djot_verbatim p.oymarkit_mod in
+          let r = Match.ext_table_row ~djot_verbatim p.i ~last ~start in
           if r <> Nomatch then r else
           Paragraph_line
       | '[' when p.exts ->

@@ -96,3 +96,14 @@ let%expect_test "both: a blank line still ends the block, and so the span" =
     <p>a <code>b</code></p>
     <p>c</p>
     |}]
+
+let%expect_test "an unmatched verbatim opener owns an apparent table pipe" =
+  html "|`|";
+  html ~djot_verbatim:true "|`|";
+  [%expect {|
+    <div role="region"><table>
+    <tr>
+    <td>`</td>
+    </tr>
+    </table></div><p>|<code>|</code></p>
+    |}]
