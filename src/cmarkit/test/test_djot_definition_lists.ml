@@ -14,7 +14,9 @@ open Cmarkit_
 
     The definition's indent is {e not} fixed by the marker the way a list item's
     is: djot lets the definition sit at any indent past the colon. So the first
-    line of a definition fixes the indent and every later line must reach it.
+    line indented at least two columns fixes the definition indent and every
+    later line must reach it. A line indented only one column continues the
+    term instead.
     Tightness follows the same rule as list items: a blank line between two
     blocks of a definition makes the list loose, a trailing one does not. *)
 
@@ -78,12 +80,36 @@ let%expect_test "on: a div fence is still a div, not a term" =
 (* The definition's indent
    ====================== *)
 
-let%expect_test "on: any indent past the colon opens the definition" =
+let%expect_test "on: a deeper indent opens the definition" =
   html ~djot_definition_lists:true ": apple\n    A deeply indented fruit.\n";
   [%expect {|
     <dl>
     <dt>apple</dt>
     <dd>A deeply indented fruit.</dd>
+    </dl>
+    |}]
+
+let%expect_test "on: one-column indentation continues the term" =
+  html ~djot_definition_lists:true ": apple\n fruit\n\n  A definition.\n";
+  [%expect {|
+    <dl>
+    <dt>apple
+    fruit</dt>
+    <dd>
+    <p>A definition.</p>
+    </dd>
+    </dl>
+    |}]
+
+let%expect_test "on: a fence on the marker line starts the definition" =
+  html ~djot_definition_lists:true ": ```\n  code\n  ```\n";
+  [%expect {|
+    <dl>
+    <dt></dt>
+    <dd>
+    <pre><code>code
+    </code></pre>
+    </dd>
     </dl>
     |}]
 
@@ -115,9 +141,11 @@ let%expect_test "on: a definition may be empty" =
   [%expect {|
     <dl>
     <dt>apple</dt>
-    <dd></dd>
+    <dd>
+    </dd>
     <dt>onion</dt>
-    <dd></dd>
+    <dd>
+    </dd>
     </dl>
     |}]
 
@@ -147,6 +175,17 @@ let%expect_test "on: a blank line between items makes the list loose" =
     <dt>onion</dt>
     <dd>
     <p>A vegetable.</p>
+    </dd>
+    </dl>
+    |}]
+
+let%expect_test "on: a blank line between term and definition is loose" =
+  html ~djot_definition_lists:true ": apple\n\n  A fruit.\n";
+  [%expect {|
+    <dl>
+    <dt>apple</dt>
+    <dd>
+    <p>A fruit.</p>
     </dd>
     </dl>
     |}]

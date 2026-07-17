@@ -181,7 +181,8 @@ module Block_struct = struct
    { before_marker : Layout.indent;
      marker : line_span (* the ':' *);
      after_marker : Layout.indent;
-     term : line_span (* the rest of the marker line *);
+     term : line_span list (* reversed, starting on the marker line *);
+     blank_after_term : bool;
      blocks : t list (* the definition, reversed *) }
 
   and def_list =
@@ -912,12 +913,18 @@ module Block_struct = struct
     let before_marker = indent in
     let marker = current_line_span p ~first:p.current_char ~last in
     let after_marker = accept_list_marker_and_indent p ~marker_size:1 ~last in
-    (* The rest of the marker line is the term, taken as a span: it is inline
-       content, not blocks, so it is not dispatched like a list item's line. *)
-    let term =
-      current_line_span p ~first:p.current_char ~last:p.current_line_last_char
+    let first = p.current_char in
+    let tilde_fences = Oymarkit_mod.tilde_code_fences p.oymarkit_mod in
+    let djot = Oymarkit_mod.djot_code_fences p.oymarkit_mod in
+    let starts_fence =
+      Match.fenced_code_block_start ~tilde_fences ~djot p.i
+        ~last:p.current_line_last_char ~start:first <> Match.Nomatch
     in
-    { before_marker; marker; after_marker; term; blocks = [] }
+    let term_last = if starts_fence then first - 1 else p.current_line_last_char in
+    let term = current_line_span p ~first ~last:term_last in
+    let blocks = if starts_fence then add_open_blocks p [] else [] in
+    { before_marker; marker; after_marker; term = [term]; blank_after_term = false;
+      blocks }
 
   and def_list ~indent p ~last bs =
     let item = def_item ~indent p ~last in
@@ -1248,13 +1255,29 @@ module Block_struct = struct
     let indent_start = p.current_char and indent = current_indent p in
     if only_blanks p then begin
       let item = List.hd dl.def_items in
-      let item = { item with blocks = add_line p item.blocks } in
+      let blank_after_term = item.blank_after_term || item.blocks = [] in
+      let item =
+        { item with blocks = add_line p item.blocks; blank_after_term }
+      in
       let def_items = item :: List.tl dl.def_items in
       Ext_def_list { dl with last_blank = true; def_items } :: bs
     end else
+    let term_continuation =
+      dl.def_indent = None && indent = dl.colon_indent + 1
+    in
+    if term_continuation then begin
+      accept_cols ~count:indent p;
+      let line =
+        current_line_span p ~first:p.current_char ~last:p.current_line_last_char
+      in
+      let item = List.hd dl.def_items in
+      let item = { item with term = line :: item.term } in
+      let def_items = item :: List.tl dl.def_items in
+      Ext_def_list { dl with last_blank = false; def_items } :: bs
+    end else
     let in_definition = match dl.def_indent with
     | Some def_indent -> indent >= def_indent
-    | None -> indent > dl.colon_indent
+    | None -> indent > dl.colon_indent + 1
     in
     if in_definition then begin
       let def_indent = match dl.def_indent with
@@ -2067,7 +2090,7 @@ and block_struct_to_def_item p (i : Block_struct.def_item) =
   | [] -> tight, acc
   in
   let marker = (* not layout to get loc *) clean_raw_span p i.marker in
-  let _term_layout, term = Inline_struct.parse p [i.term] in
+  let _term_layout, term = Inline_struct.parse p i.term in
   let last_meta, (tight, blocks) = match i.blocks with
   | [] -> snd marker, (true, [])
   | [Block_struct.Blank_line _ as blank] ->
@@ -2092,7 +2115,7 @@ and block_struct_to_def_item p (i : Block_struct.def_item) =
     { Block.Definition_list.before_marker = i.before_marker; marker;
       after_marker = i.after_marker; term; definition }
   in
-  (item, meta), tight
+  (item, meta), tight && not i.blank_after_term
 
 and block_struct_to_def_list p (dl : Block_struct.def_list) =
   let rec loop tight acc = function

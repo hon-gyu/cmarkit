@@ -792,13 +792,20 @@ let list ?attrs c l =
 
 let definition_list c d =
   let tight = Block.Definition_list.tight d in
+  let rec empty_definition = function
+  | Block.Blank_line _ -> true
+  | Block.Blocks (blocks, _) -> List.for_all empty_definition blocks
+  | _ -> false
+  in
   let item (i, _) =
     C.string c "<dt>";
     C.inline c (Block.Definition_list.item_term i);
     C.string c "</dt>\n<dd>";
     (* A tight definition drops the paragraph wrapper around its content, as a
        tight list item does. *)
-    item_block ~tight c (Block.Definition_list.item_definition i);
+    let definition = Block.Definition_list.item_definition i in
+    if empty_definition definition then C.byte c '\n'
+    else item_block ~tight c definition;
     C.string c "</dd>\n"
   in
   C.string c "<dl>\n";
