@@ -17,16 +17,17 @@ open Cmarkit_
     - [entity_refs]: djot's only escape is the backslash;
     - [djot_escapes]: backslash-newline is the only hard break, and
       backslash-space is a non-breaking space;
-    - [tilde_code_fences]: djot fences with backticks only;
+    - [djot_code_fences]: fence info strings cannot contain whitespace;
     - [block_quote_marker_space]: djot's [>] wants a space after it. *)
 
 let html ?djot ?lazy_continuation ?raw_html ?entity_refs ?djot_escapes
-    ?indented_code ?tilde_code_fences ?block_quote_marker_space s
+    ?indented_code ?tilde_code_fences ?djot_code_fences ?djot_verbatim
+    ?block_quote_marker_space s
   =
   let doc =
     Doc.of_string ~strict:false ?djot ?lazy_continuation ?raw_html ?entity_refs
-      ?djot_escapes ?indented_code ?tilde_code_fences ?block_quote_marker_space
-      s
+      ?djot_escapes ?indented_code ?tilde_code_fences ?djot_code_fences
+      ?djot_verbatim ?block_quote_marker_space s
   in
   print_string (Cmarkit_html.of_doc ~safe:false doc)
 
@@ -193,6 +194,14 @@ let%expect_test "djot: only backticks fence, a tilde run is text" =
     code
     ~~~</p>
     |}]
+
+let%expect_test "commonmark: fence info may contain whitespace" =
+  html "``` not a code block";
+  [%expect {| <pre><code class="language-not"></code></pre> |}]
+
+let%expect_test "djot: fence info may not contain whitespace" =
+  html ~djot_code_fences:true ~djot_verbatim:true "``` not a code block";
+  [%expect {| <p><code> not a code block</code></p> |}]
 
 (* Block quote marker
    ================== *)

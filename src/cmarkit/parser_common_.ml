@@ -102,6 +102,7 @@ module Oymarkit_mod = struct
     raw_html : bool;
     entity_refs : bool;
     tilde_code_fences : bool;
+    djot_code_fences : bool;
     block_quote_marker_space : bool;
     div : bool;
     wikilink : bool;
@@ -140,7 +141,7 @@ module Oymarkit_mod = struct
       ~list_marker_interrupts_paragraph ~djot_list_indent
       ~djot_list_tightness ~smart_punctuation
       ~indented_code ~setext_headings ~lazy_continuation ~raw_html ~entity_refs
-      ~tilde_code_fences ~block_quote_marker_space ~div ~wikilink ~jsx_expr
+      ~tilde_code_fences ~djot_code_fences ~block_quote_marker_space ~div ~wikilink ~jsx_expr
       ~jsx_element ~callout =
     let emphasis_delims =
       match parse_emph_delims emphasis_delims with
@@ -187,6 +188,7 @@ module Oymarkit_mod = struct
       raw_html;
       entity_refs;
       tilde_code_fences;
+      djot_code_fences;
       block_quote_marker_space;
       div;
       wikilink;
@@ -362,6 +364,7 @@ module Oymarkit_mod = struct
      the knob stays because forbidding one of two spellings is useful on its
      own. *)
   let tilde_code_fences t = t.tilde_code_fences
+  let djot_code_fences t = t.djot_code_fences
 
   (* Djot's block quote marker is [>] followed by a space or the end of the
      line, where CommonMark also quotes [>text]. *)
@@ -441,6 +444,7 @@ let parser
     ?raw_html
     ?entity_refs
     ?tilde_code_fences
+    ?djot_code_fences
     ?block_quote_marker_space
     ?div
     ?(wikilink = false)
@@ -522,6 +526,7 @@ let parser
   let raw_html = knob ~cmark:true ~djot:false raw_html in
   let entity_refs = knob ~cmark:true ~djot:false entity_refs in
   let tilde_code_fences = knob ~cmark:true ~djot:true tilde_code_fences in
+  let djot_code_fences = knob ~cmark:false ~djot:true djot_code_fences in
   let block_quote_marker_space =
     knob ~cmark:false ~djot:true block_quote_marker_space
   in
@@ -536,7 +541,7 @@ let parser
       ~djot_emphasis ~blocks_interrupt_paragraph
       ~list_marker_interrupts_paragraph ~djot_list_indent
       ~djot_list_tightness ~smart_punctuation ~indented_code ~setext_headings ~lazy_continuation
-      ~raw_html ~entity_refs ~tilde_code_fences ~block_quote_marker_space ~div
+      ~raw_html ~entity_refs ~tilde_code_fences ~djot_code_fences ~block_quote_marker_space ~div
       ~wikilink ~jsx_expr ~jsx_element ~callout
   in
   let nolocs = not locs and nolayout = not layout and exts = not strict in

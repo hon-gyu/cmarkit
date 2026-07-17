@@ -679,7 +679,10 @@ module Block_struct = struct
           Paragraph_line
       | '~' | '`' ->
           let tilde_fences = Oymarkit_mod.tilde_code_fences p.oymarkit_mod in
-          let r = Match.fenced_code_block_start ~tilde_fences p.i ~last ~start in
+          let djot = Oymarkit_mod.djot_code_fences p.oymarkit_mod in
+          let r =
+            Match.fenced_code_block_start ~tilde_fences ~djot p.i ~last ~start
+          in
           if r <> Nomatch then r else
           Paragraph_line
       | ':' when Oymarkit_mod.div p.oymarkit_mod

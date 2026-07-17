@@ -376,12 +376,14 @@ val setext_heading_underline :
     is the last underline char. *)
 
 val fenced_code_block_start :
-  ?tilde_fences:bool -> string -> last:byte_pos -> start:byte_pos -> line_type
+  ?tilde_fences:bool -> ?djot:bool ->
+  string -> last:byte_pos -> start:byte_pos -> line_type
 (** [fenced_code_block_start s ~last ~start] is the start of a fenced
     code block line in the range \[[start];[last]\]. The first span is
     the fence and the second one is the info string (if any). If
     [tilde_fences] is [false] (defaults to [true]) only backtick fences
-    are recognized. *)
+    are recognized. If [djot] is [true] (defaults to [false]), an info string
+    containing whitespace does not start a fence. *)
 
 val fenced_code_block_continue :
   fence:char * int -> string -> last:byte_pos -> start:byte_pos ->

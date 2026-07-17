@@ -1116,7 +1116,15 @@ let tokenize ~p ?oymarkit_mod ~exts s lines =
             if exts then try_add_strikethrough_marks_token acc s line ~start:k
             else acc, k + 1
         end
-    | '$' when exts -> try_add_math_span_marks_token acc s line ~start:k
+    | '$' when exts ->
+        (* A djot math span is a dollar prefix followed by a verbatim span.
+           Do not let the pandoc dollar-delimiter pass claim that prefix first;
+           [try_promote_djot_math] will promote the backtick token instead. *)
+        begin match oymarkit_mod with
+        | Some m when Oymarkit_mod.djot_math m && k < line.last
+                      && s.[k + 1] = '`' -> acc, k + 1
+        | _ -> try_add_math_span_marks_token acc s line ~start:k
+        end
     | _ -> acc, k + 1
     in
     match !jumped with
@@ -1365,11 +1373,16 @@ let try_promote_djot_math p line t = match t with
   when Oymarkit_mod.djot_math p.oymarkit_mod ->
     let first = line.first in
     let is_dollar k = k >= first && p.i.[k] = '$' in
-    let escaped k = k - 1 >= first && p.i.[k - 1] = '\\' in
+    let escaped k =
+      let rec count n j =
+        if j >= first && p.i.[j] = '\\' then count (n + 1) (j - 1) else n
+      in
+      count 0 (k - 1) mod 2 <> 0
+    in
     if not (is_dollar (start - 1)) then None else
-    let display = is_dollar (start - 2) in
+    if escaped (start - 1) then None else
+    let display = is_dollar (start - 2) && not (escaped (start - 2)) in
     let dollar_first = if display then start - 2 else start - 1 in
-    if escaped dollar_first then None else
     let meta =
       if p.nolocs then Meta.none else
       let textloc = Meta.textloc cs_meta in

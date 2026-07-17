@@ -28,7 +28,7 @@ let of_string
     ?blocks_interrupt_paragraph
     ?list_marker_interrupts_paragraph ?djot_list_indent ?djot_list_tightness ?smart_punctuation
     ?indented_code ?setext_headings ?lazy_continuation ?raw_html ?entity_refs
-    ?tilde_code_fences ?block_quote_marker_space
+    ?tilde_code_fences ?djot_code_fences ?block_quote_marker_space
     ?div ?wikilink ?jsx_expr ?jsx_element ?callout
     ?strict s
   =
@@ -49,7 +49,7 @@ let of_string
       ?blocks_interrupt_paragraph
     ?list_marker_interrupts_paragraph ?djot_list_indent ?djot_list_tightness ?smart_punctuation
       ?indented_code ?setext_headings ?lazy_continuation ?raw_html ?entity_refs
-      ?tilde_code_fences ?block_quote_marker_space
+      ?tilde_code_fences ?djot_code_fences ?block_quote_marker_space
       ?div ?wikilink ?jsx_expr ?jsx_element ?callout ~strict s
   in
   let nl, doc = Block_struct.parse p in

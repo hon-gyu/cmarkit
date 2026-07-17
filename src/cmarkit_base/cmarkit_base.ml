@@ -1220,7 +1220,8 @@ let setext_heading_underline s ~last ~start =
   if not (s.[start] = '-' || s.[start] = '=') then Nomatch else
   underline s last start (start + 1)
 
-let fenced_code_block_start ?(tilde_fences = true) s ~last ~start  =
+let fenced_code_block_start ?(tilde_fences = true) ?(djot = false) s ~last
+    ~start =
   (* https://spec.commonmark.org/current/#code-fence *)
   (* Djot fences are backticks only; a [~~~] line is then ordinary text. *)
   let rec info s last nobt info_first k =
@@ -1230,6 +1231,7 @@ let fenced_code_block_start ?(tilde_fences = true) s ~last ~start  =
     then info s last nobt info_first (k + 1) else
     let after_blank = first_non_blank s ~last ~start:k in
     if after_blank > last then Some (info_first, k - 1) else
+    if djot then raise_notrace Exit else
     info s last nobt info_first after_blank
   in
   let rec fence s last fence_first k =

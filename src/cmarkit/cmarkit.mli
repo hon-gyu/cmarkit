@@ -2040,7 +2040,8 @@ module Doc : sig
     ?smart_punctuation:bool ->
     ?indented_code:bool -> ?setext_headings:bool ->
     ?lazy_continuation:bool -> ?raw_html:bool -> ?entity_refs:bool ->
-    ?tilde_code_fences:bool -> ?block_quote_marker_space:bool ->
+    ?tilde_code_fences:bool -> ?djot_code_fences:bool ->
+    ?block_quote_marker_space:bool ->
     ?div:bool -> ?wikilink:bool ->
     ?jsx_expr:bool -> ?jsx_element:bool ->
     ?callout:Block.Callout.Config.t ->
@@ -2202,6 +2203,10 @@ module Doc : sig
       orthogonal: it is what keeps [snake_case] intact, which CommonMark folds
       into its [_] rules. The default is [false], which preserves CommonMark
       behavior.}
+   {- If [djot_code_fences] is [true], a code fence info string cannot contain
+      whitespace: a line such as [``` not a fence] is parsed as inline verbatim
+      text instead. This is djot's rule. The default is [false], which preserves
+      CommonMark behavior.}
    {- If [blocks_interrupt_paragraph] is [false], no block start interrupts a
       paragraph: only a blank line ends one, so a [#], [```] or [>] line under a
       paragraph is more of that paragraph's text rather than the start of a

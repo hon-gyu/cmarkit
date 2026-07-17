@@ -39,6 +39,18 @@ let%expect_test "on: an escaped dollar is not a math prefix" =
   html ~djot_math:true "a \\$`e=mc^2` b";
   [%expect {| <p>a $<code>e=mc^2</code> b</p> |}]
 
+let%expect_test "on: an even backslash run leaves a live math prefix" =
+  html ~djot_math:true "\\\\$`e=mc^2`";
+  [%expect {| <p>\\(e=mc^2\)</p> |}]
+
+let%expect_test "on: an escaped dollar can precede a live math prefix" =
+  html ~djot_math:true "\\$$`a`";
+  [%expect {| <p>$\(a\)</p> |}]
+
+let%expect_test "on: dollars inside djot math stay verbatim" =
+  html ~djot_math:true "$`e=\\text{the number $\\pi$}`";
+  [%expect {| <p>\(e=\text{the number $\pi$}\)</p> |}]
+
 let%expect_test "on: the pandoc spelling still works alongside it" =
   html ~djot_math:true "pandoc $e=mc^2$ and djot $`e=mc^2`";
   [%expect {| <p>pandoc \(e=mc^2\) and djot \(e=mc^2\)</p> |}]
