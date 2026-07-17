@@ -14,7 +14,8 @@ open Cmarkit_
 
 let html ?djot_links s =
   let doc = Doc.of_string ~strict:false ?djot_links s in
-  print_string (Cmarkit_html.of_doc ~safe:false doc)
+  let djot = djot_links = Some true in
+  print_string (Cmarkit_html.of_doc ~safe:false ~djot doc)
 
 (* Inline links
    ============ *)
@@ -25,7 +26,7 @@ let%expect_test "commonmark: the quoted trailer is a title" =
 
 let%expect_test "djot: there are no titles, it is all destination" =
   html ~djot_links:true "[a](https://example.org \"The title\")";
-  [%expect {| <p><a href="https://example.org%20%22The%20title%22">a</a></p> |}]
+  [%expect {| <p><a href="https://example.org &quot;The title&quot;">a</a></p> |}]
 
 let%expect_test "both: a plain destination is unaffected" =
   html "[a](https://example.org)";
@@ -38,6 +39,10 @@ let%expect_test "both: a plain destination is unaffected" =
 let%expect_test "djot: the destination may be split over lines" =
   html ~djot_links:true "[a](https://example.org/\n  a/long/path)";
   [%expect {| <p><a href="https://example.org/a/long/path">a</a></p> |}]
+
+let%expect_test "djot: multiline destination bytes stay literal" =
+  html ~djot_links:true "[closed](hello *a\nb*)";
+  [%expect {| <p><a href="hello *ab*">closed</a></p> |}]
 
 let%expect_test "djot: an empty destination" =
   html ~djot_links:true "[a]()";
@@ -56,7 +61,7 @@ let%expect_test "djot: the rest of the line is the destination" =
 
 let%expect_test "djot: no titles in definitions either" =
   html ~djot_links:true "[a]: https://example.org \"The title\"\n\n[a]\n";
-  [%expect {| <p><a href="https://example.org%20%22The%20title%22">a</a></p> |}]
+  [%expect {| <p><a href="https://example.org &quot;The title&quot;">a</a></p> |}]
 
 let%expect_test "djot: an indented line continues the destination" =
   html ~djot_links:true "[a]: https://example.org/\n  a/long/path\n\n[a]\n";

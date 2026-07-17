@@ -9,7 +9,7 @@ fenced_divs.test           8/8
 footnotes.test             3/4  
 headings.test             17/17 
 insert_delete_mark.test    4/4  
-links_and_images.test     29/32 
+links_and_images.test     30/32 
 lists.test                31/31 
 math.test                  8/8  
 para.test                  1/1  
@@ -23,4 +23,4 @@ tables.test                9/9
 task_lists.test            3/3  
 thematic_breaks.test       4/4  
 verbatim.test              8/8  
-TOTAL                    260/265  (6 skipped)
+TOTAL                    261/265  (6 skipped)

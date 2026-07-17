@@ -180,6 +180,9 @@ let buffer_add_pct_encoded_string b s = (* Percent encoded + HTML escaped *)
 
 let pct_encoded_string c s = buffer_add_pct_encoded_string (C.buffer c) s
 
+let link_destination_string c s =
+  if djot c then html_escaped_string c s else pct_encoded_string c s
+
 (* Rendering functions *)
 
 let comment c s =
@@ -277,7 +280,7 @@ let image ?(close = " >") ?attrs c i =
         C.byte c '\"'
       in
       let src c =
-        C.string c " src=\""; pct_encoded_string c link; C.byte c '\"'
+        C.string c " src=\""; link_destination_string c link; C.byte c '\"'
       in
       C.string c "<img";
       if djot then (alt c; src c) else (src c; alt c);
@@ -318,7 +321,7 @@ let link_footnote c l fn =
 let link ?attrs c l = match Inline.Link.reference_definition (C.get_defs c) l with
 | Some (Link_definition.Def (ld, _)) ->
     let link, title = link_dest_and_title c ld in
-    C.string c "<a href=\""; pct_encoded_string c link;
+    C.string c "<a href=\""; link_destination_string c link;
     if title <> "" then (C.string c "\" title=\""; html_escaped_string c title);
     C.byte c '\"';
     (match attrs with None -> () | Some a -> attributes c a);
