@@ -350,10 +350,12 @@ type line_type =
      [last < first] denotes a fragment) and the terminating '>' index (last) *)
 | Nomatch (* built-in [None] to avoid option allocs *)
 
-val thematic_break : string -> last:byte_pos -> start:byte_pos -> line_type
+val thematic_break :
+  ?djot:bool -> string -> last:byte_pos -> start:byte_pos -> line_type
 (** [thematic_break s ~last ~start] matches a thematic break in the range
     in the range \[[start];[last]\]. The returned position is the last
-    non-blank. *)
+    non-blank. With [~djot:true] the marker characters may be mixed ([*] and
+    [-] together) and [_] is not a marker. *)
 
 val atx_heading :
   ?closing_sequence:bool ->

@@ -1106,8 +1106,24 @@ type line_type =
      [last < first] denotes a fragment) and the terminating '>' index (last) *)
 | Nomatch
 
-let thematic_break s ~last ~start =
-  (* https://spec.commonmark.org/current/#thematic-breaks *)
+let thematic_break ?(djot = false) s ~last ~start =
+  (* https://spec.commonmark.org/current/#thematic-breaks
+
+     Djot differs on two points: the marker characters may be *mixed* (a line of
+     [*] and [-] together, e.g. [*-*-*-*], is a break), and [_] is not a marker
+     at all (a [_] break is ordinary text; the caller gates that separately). *)
+  if start > last then Nomatch else
+  if djot then
+    let rec loop count prev k =
+      if k > last
+      then (if count < 3 then Nomatch else Thematic_break_line prev) else
+      match s.[k] with
+      | '*' | '-' -> loop (count + 1) k (k + 1)
+      | ' ' | '\t' -> loop count prev (k + 1)
+      | _ -> Nomatch
+    in
+    (match s.[start] with '*' | '-' -> loop 0 start start | _ -> Nomatch)
+  else
   let rec loop s last count prev k =
     if k > last
     then (if count < 3 then Nomatch else Thematic_break_line prev) else
@@ -1115,7 +1131,7 @@ let thematic_break s ~last ~start =
     if s.[k] = ' ' || s.[k] = '\t' then loop s last count prev (k + 1) else
     Nomatch
   in
-  if start > last then Nomatch else match s.[start] with
+  match s.[start] with
   | '-' | '_' | '*' -> loop s last 1 start (start + 1)
   | _ -> Nomatch
 

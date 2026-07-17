@@ -642,7 +642,7 @@ module Block_struct = struct
             Match.setext_heading_underline p.i ~last ~start
           in
           if r <> Nomatch then r else
-          let r = Match.thematic_break p.i ~last ~start in
+          let r = Match.thematic_break ~djot:djot_tb p.i ~last ~start in
           if r <> Nomatch then r else
           let r = match_list_marker p ~last ~start in
           if r <> Nomatch then r else
@@ -655,7 +655,7 @@ module Block_struct = struct
           if r <> Nomatch then r else
           Paragraph_line
       | '+' | '*' | '0' .. '9' ->
-          let r = Match.thematic_break p.i ~last ~start in
+          let r = Match.thematic_break ~djot:djot_tb p.i ~last ~start in
           if r <> Nomatch then r else
           let r = match_list_marker p ~last ~start in
           if r <> Nomatch then r else

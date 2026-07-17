@@ -21,6 +21,6 @@ sourcepos.test             0/0    (1 skipped)
 super_subscript.test       4/4  
 tables.test                9/9  
 task_lists.test            3/3  
-thematic_breaks.test       3/4  
+thematic_breaks.test       4/4  
 verbatim.test              8/8  
-TOTAL                    245/265  (6 skipped)
+TOTAL                    246/265  (6 skipped)
