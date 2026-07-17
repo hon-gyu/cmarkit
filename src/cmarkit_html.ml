@@ -607,6 +607,17 @@ let djot_heading c h =
   C.inline c (Block.Heading.inline h);
   C.string c "</h"; C.string c level; C.string c ">\n"
 
+(* A djot heading that is not opening a section -- inside a block quote, a list
+   item, … -- carries its id on the [<h>] itself, since there is no section to
+   put it on. *)
+let djot_heading_with_id c h =
+  let id = djot_heading_id c ~attrs:None h in
+  let level = string_of_int (Block.Heading.level h) in
+  C.string c "<h"; C.string c level;
+  C.string c " id=\""; html_escaped_string c id; C.string c "\">";
+  C.inline c (Block.Heading.inline h);
+  C.string c "</h"; C.string c level; C.string c ">\n"
+
 let heading_of = function
 | Block.Heading (h, _) -> Some (h, None)
 | Block.Ext_attributes (a, _) ->
@@ -938,6 +949,7 @@ let block c = function
 | Block.Blocks (bs, _) when djot c -> djot_sections c bs; true
 | Block.Blocks (bs, _) -> List.iter (C.block c) bs; true
 | Block.Code_block (cb, _) -> code_block c cb; true
+| Block.Heading (h, _) when djot c -> djot_heading_with_id c h; true
 | Block.Heading (h, _) -> heading c h; true
 | Block.Html_block (h, _) -> html_block c h; true
 | Block.List (l, _) -> list c l; true
