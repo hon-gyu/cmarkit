@@ -11,8 +11,9 @@ open Cmarkit_
     Two djot rules are pinned here:
 
     - a style change starts a new list;
-    - an ambiguous marker resolves by context. [i.] is alpha 9 or roman 1, and
-      djot reads it as roman only when it continues a roman list. *)
+    - an ambiguous marker resolves by context. [i.] is alpha 9 or roman 1; an
+      unresolved lone/repeated marker defaults to roman, while a following
+      unambiguous alpha marker settles it as alpha. *)
 
 let html ?djot_ordered_list_styles s =
   let doc = Doc.of_string ~strict:false ?djot_ordered_list_styles s in
@@ -123,13 +124,16 @@ let%expect_test "on: the delimiter is part of the style" =
 (* Ambiguous markers resolve by context
    ==================================== *)
 
-let%expect_test "on: a lone [i.] opens an alpha list, not a roman one" =
-  (* [i] is the 9th letter; as roman it would be 1. A marker opening a list has
-     no context to disambiguate it, so the alpha reading wins. *)
+let%expect_test "on: unresolved [i.] markers default to roman" =
   html ~djot_ordered_list_styles:true "i. item\n";
+  html ~djot_ordered_list_styles:true "i. one\ni. two\n";
   [%expect {|
-    <ol type="a" start="9">
+    <ol type="i">
     <li>item</li>
+    </ol>
+    <ol type="i">
+    <li>one</li>
+    <li>two</li>
     </ol>
     |}]
 

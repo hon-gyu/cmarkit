@@ -1480,9 +1480,8 @@ let could_be_link_reference_definition s ~last ~start =
 
    A single letter that is also a roman digit ([i], [v], [x], [l], [c], [d], [m]
    and their uppercase) has two readings: [i.] is alpha 9 or roman 1. We report
-   the alpha reading, which is what a marker starting a list means, plus the
-   roman reading as [alt]; the parser picks [alt] when the list already open is
-   roman. Djot resolves such markers by context in exactly this way. *)
+   the alpha reading plus the roman reading as [alt]; the parser picks [alt]
+   when the marker starts a list or continues a roman list. *)
 
 let roman_digit_value = function
 | 'i' | 'I' -> 1 | 'v' | 'V' -> 5 | 'x' | 'X' -> 10 | 'l' | 'L' -> 50

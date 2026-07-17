@@ -532,6 +532,12 @@ module Block_struct = struct
         Ext_def_list { dl with def_items } :: bs
 
   and close_list p l bs =
+    let l = match l.roman_alt, l.list_type with
+    | Some (roman_style, roman_start), `Ext_ordered (_, delim, _) ->
+        { l with list_type = `Ext_ordered (roman_style, delim, roman_start);
+                 roman_alt = None }
+    | _ -> l
+    in
     let i = List.hd l.items in
     let blocks = close_last_block p i.blocks in
     (* The final blank line extraction of the list item entails less blank
@@ -755,8 +761,7 @@ module Block_struct = struct
   | _ -> false
 
   (* A djot marker whose alpha reading is ambiguous ([i.] is alpha 9 or roman 1)
-     reads as roman only when the list it continues is roman; otherwise the alpha
-     reading wins, which is what a marker opening a list means. *)
+     reads as roman when it opens a list or continues a roman list. *)
   let block_list_type ?open_type (m : Match.list_marker) : Block.List'.type' =
     match m with
     | `Unordered c -> `Unordered c
@@ -941,6 +946,7 @@ module Block_struct = struct
                | _ -> false) ->
         { l with list_type = `Ext_ordered (roman_style, delim, roman_start);
                  roman_alt = None }
+    | Some _, `Ext_ordered (_, _, _, None) -> { l with roman_alt = None }
     | _ -> l
     in
     let lt = block_list_type ~open_type:l.list_type marker in
