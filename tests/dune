@@ -9,7 +9,7 @@
 (test
   (name spec_conformance)
   (modules spec_conformance)
-  (libraries cmarkit_ cmarkit_html yojson)
+  (libraries cmarkit_ cmarkit_html cmarkit_renderer yojson)
   (deps ./spec.json)
 )
 
