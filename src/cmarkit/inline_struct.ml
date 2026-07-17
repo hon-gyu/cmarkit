@@ -2563,7 +2563,18 @@ let rec finish_col p line blanks_before is toks k = match toks with
     | `Found (text, after, k) ->
         let is = match text with Some t -> t :: is | None -> is in
         (make_col p is, (blanks_before, after)), [], k
-    | `Not_found _ -> assert false
+    | `Not_found text ->
+        (* The closing [|] that [Match.ext_table_row] saw at block detection was
+           consumed during inline parsing -- a djot verbatim span running to the
+           end of the line swallows it -- so no top-level boundary is left. Close
+           the final cell with what remains instead of asserting. (Unreachable in
+           CommonMark, where the row's trailing [|] always stays top-level.) *)
+        let is = text :: is in
+        let after =
+          layout_clean_raw_span' p { line with first = line.last + 1;
+                                     last = line.last }
+        in
+        (make_col p is, (blanks_before, after)), [], line.last + 1
     end
 | Inline { start; inline; next } :: toks when k >= start ->
     finish_col p line blanks_before (inline :: is) toks next
