@@ -35,6 +35,10 @@ let%expect_test "inline: a comment inside a multi-line spec" =
   inline_attrs "a *word*{#id\n % a comment %\n .cls} b";
   [%expect {| <p>a <em id="id" class="cls">word</em> b</p> |}]
 
+let%expect_test "inline: a comment may run to the closing brace" =
+  inline_attrs "word{#id % a comment}";
+  [%expect {| <p><span id="id">word</span></p> |}]
+
 (* Block attributes
    ================ *)
 

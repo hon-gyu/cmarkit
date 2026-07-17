@@ -130,23 +130,18 @@ let text_string c s =
   if djot c then djot_escaped_string c s else html_escaped_string c s
 
 let attributes c a =
-  begin match Attribute.id a with
-  | None -> ()
-  | Some id ->
-      C.string c " id=\""; html_escaped_string c id; C.byte c '"'
-  end;
-  begin match Attribute.classes a with
-  | [] -> ()
-  | classes ->
-      C.string c " class=\"";
-      html_escaped_string c (String.concat " " classes);
-      C.byte c '"'
-  end;
   List.iter
-    (fun (key, value) ->
-      C.byte c ' '; html_escaped_string c key; C.string c "=\"";
-      html_escaped_string c value; C.byte c '"')
-    (Attribute.key_values a)
+    (function
+      | `Id id ->
+          C.string c " id=\""; html_escaped_string c id; C.byte c '"'
+      | `Class classes ->
+          C.string c " class=\"";
+          html_escaped_string c (String.concat " " classes);
+          C.byte c '"'
+      | `Key_value (key, value) ->
+          C.byte c ' '; html_escaped_string c key; C.string c "=\"";
+          html_escaped_string c value; C.byte c '"')
+    (Attribute.bindings a)
 
 let buffer_add_pct_encoded_string b s = (* Percent encoded + HTML escaped *)
   let byte = Buffer.add_char and string = Buffer.add_string in

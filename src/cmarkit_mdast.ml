@@ -130,18 +130,12 @@ let footnote_identifier label =
   else k
 
 let hproperties_of_attributes a =
-  let id =
-    match Attribute.id a with
-    | None -> []
-    | Some id -> [ ("id", Str id) ]
-  in
-  let classes =
-    match Attribute.classes a with
-    | [] -> []
-    | cs -> [ class_name cs ]
-  in
-  let kvs = List.map (fun (k, v) -> (k, Str v)) (Attribute.key_values a) in
-  id @ classes @ kvs
+  List.map
+    (function
+      | `Id id -> "id", Str id
+      | `Class classes -> class_name classes
+      | `Key_value (key, value) -> key, Str value)
+    (Attribute.bindings a)
 
 (* Inlines ==================================================================*)
 

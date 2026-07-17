@@ -37,7 +37,7 @@ Djot attributes
 ==========
 stacked text attributes
 ----------
-(Attributes ".blue lang=fr" (Text avant))
+(Attributes "lang=fr .blue" (Text avant))
 
 emphasis attributes
 ----------

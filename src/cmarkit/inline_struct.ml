@@ -504,7 +504,13 @@ let scan_attribute_spec s line lines ~start =
           loop next_line lines next_line.first in_quote false in_comment
     else
       let c = s.[k] in
-      if in_comment then begin
+      if in_comment && c = '}' then
+        begin match Attribute.of_string (Buffer.contents b) with
+        | None -> None
+        | Some attribute ->
+            Some ({ start; attribute; endline = line; next = k + 1 }, lines)
+        end
+      else if in_comment then begin
         Buffer.add_char b c;
         loop line lines (k + 1) in_quote false (c <> '%')
       end else if escaped then begin

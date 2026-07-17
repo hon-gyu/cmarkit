@@ -45,4 +45,4 @@ let%expect_test "an inline link takes no attributes from any definition" =
 
 let%expect_test "an inline specifier still applies on top" =
   html "{.external}\n[docs]: https://example.org\n\nSee [docs][]{#here}.\n";
-  [%expect {| <p>See <a href="https://example.org" id="here" class="external">docs</a>.</p> |}]
+  [%expect {| <p>See <a href="https://example.org" class="external" id="here">docs</a>.</p> |}]

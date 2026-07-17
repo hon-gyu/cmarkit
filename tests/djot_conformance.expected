@@ -1,4 +1,4 @@
-attributes.test           33/35   (2 skipped)
+attributes.test           35/35   (2 skipped)
 block_quote.test          15/15 
 code_blocks.test           7/7  
 definition_lists.test      1/4  
@@ -23,4 +23,4 @@ tables.test                9/9
 task_lists.test            3/3  
 thematic_breaks.test       4/4  
 verbatim.test              8/8  
-TOTAL                    254/265  (6 skipped)
+TOTAL                    256/265  (6 skipped)

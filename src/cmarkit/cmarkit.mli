@@ -270,6 +270,9 @@ module Attribute : sig
   val id : t -> string option
   val classes : t -> string list
   val key_values : t -> (string * string) list
+  val bindings :
+    t -> [ `Id of string | `Class of string list |
+           `Key_value of string * string ] list
   val source : t -> string option
   val merge : t -> t -> t
   val of_string : string -> t option

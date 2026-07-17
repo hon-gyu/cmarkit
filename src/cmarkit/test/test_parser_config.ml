@@ -76,7 +76,7 @@ let () =
         attribute_string (Inline.Attributes.attributes a),
         Inline.Attributes.inline a
       with
-      | ".blue lang=fr", Inline.Text ("avant", _) -> ()
+      | "lang=fr .blue", Inline.Text ("avant", _) -> ()
       | attrs, i ->
           fail_inline (Fmt.str "wrong bare-text attributes %S" attrs) i
       end

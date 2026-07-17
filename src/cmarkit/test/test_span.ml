@@ -80,4 +80,4 @@ let%expect_test "span: not a span (no adjacent non-empty attribute)" =
 
 let%expect_test "span: adjacent specifiers merge" =
   html "[word]{.a}{#i}";
-  [%expect {| <p><span id="i" class="a">word</span></p> |}]
+  [%expect {| <p><span class="a" id="i">word</span></p> |}]
