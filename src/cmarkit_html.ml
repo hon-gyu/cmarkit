@@ -994,15 +994,11 @@ let xhtml_inline c = function
    render the note, then reopen its final [</p>]. A note with no paragraph to end
    on (or no content at all, for a reference whose definition is missing) gets a
    paragraph of its own for the backlink. *)
-let djot_footnotes c fns =
-  let fns = Label.Map.fold (fun _ fn acc -> fn :: acc) fns [] in
+let djot_footnotes c _fns =
   let number id =
     (* [fnN] *)
     match int_of_string_opt (String.sub id 2 (String.length id - 2)) with
     | Some n -> n | None -> 0
-  in
-  let fns = List.sort (fun (_, a, _, _) (_, b, _, _) ->
-      Int.compare (number a) (number b)) fns
   in
   let footnote c (_, id, _, fn) =
     C.string c "<li id=\""; html_escaped_string c id; C.string c "\">\n";
@@ -1032,7 +1028,19 @@ let djot_footnotes c fns =
     C.string c "</li>\n"
   in
   C.string c "<section role=\"doc-endnotes\">\n<hr>\n<ol>\n";
-  List.iter (footnote c) fns;
+  let rec render_number n =
+    let st = C.State.get c state in
+    let fn =
+      Label.Map.fold
+        (fun _ ((_, id, _, _) as fn) found ->
+          if number id = n then Some fn else found)
+        st.footnotes None
+    in
+    match fn with
+    | None -> ()
+    | Some fn -> footnote c fn; render_number (n + 1)
+  in
+  render_number 1;
   C.string c "</ol>\n</section>\n"
 
 let footnotes c fns =
