@@ -37,6 +37,12 @@ let%expect_test "the name may hold alphanumerics, _, + and -" =
       (Text " ") (Symbol f9)))
     |}]
 
+(* djot's symb.test: the scan is greedy and stops at the first closing colon,
+   so [:ice:scream:] is the symbol [ice] then literal [scream:], not [ice:scream]. *)
+let%expect_test "the scan stops at the first closing colon" =
+  sexp ":ice:scream:";
+  [%expect {| (Paragraph (Inlines (Symbol ice) (Text scream:))) |}]
+
 let%expect_test "off by default: no knob, no symbol" =
   let doc = Doc.of_string ~strict:false ":smile:" in
   print_string (Cmarkit_html.of_doc ~safe:false doc);

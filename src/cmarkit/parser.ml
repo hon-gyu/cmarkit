@@ -313,8 +313,14 @@ module Block_struct = struct
      the line after a table. Its continuation lines are indented. *)
   let match_table_caption p ~indent =
     if not (Oymarkit_mod.djot_table_captions p.oymarkit_mod) then None else
-    if end_of_line p || p.i.[p.current_char] <> '^' then None else
-    let next = p.current_char + 1 in
+    (* The caption marker may sit behind some indent; the '^' is the first
+       non-blank on the line, not necessarily [p.current_char]. *)
+    let marker =
+      Match.first_non_blank p.i ~last:p.current_line_last_char
+        ~start:p.current_char
+    in
+    if end_of_line p || p.i.[marker] <> '^' then None else
+    let next = marker + 1 in
     if next <= p.current_line_last_char && not (Ascii.is_blank p.i.[next])
     then None else
     let first = Match.first_non_blank p.i ~last:p.current_line_last_char
@@ -1128,40 +1134,37 @@ module Block_struct = struct
 
   let try_add_to_table p ind rows caption blanks bs =
     let indent_start = p.current_char and indent = current_indent p in
+    if only_blanks p then
+      (* Hold the blank line: it ends any open caption's continuation, but a
+         later [^] line may still start a caption — and in djot that later one
+         replaces an earlier caption (last wins). *)
+      let first = p.current_char and last = p.current_line_last_char in
+      let blank = current_line_span p ~first ~last in
+      Ext_table (ind, rows, caption, blank :: blanks) :: bs
+    else
     match caption with
-    | Some c ->
-        (* A caption runs to the blank line that ends it; its continuation lines
-           need no indent. *)
-        if only_blanks p then begin
-          let bs = Ext_table (ind, rows, caption, []) :: bs in
-          let ltype = match_line_type ~indent ~no_setext:true p in
-          add_open_blocks_with_line_class p ~indent ~indent_start bs ltype
-        end else begin
-          accept_cols ~count:indent p;
-          let line =
-            current_line_span p ~first:p.current_char
-              ~last:p.current_line_last_char
-          in
-          let c = { c with caption_lines = line :: c.caption_lines } in
-          Ext_table (ind, rows, Some c, []) :: bs
-        end
-    | None ->
-        if only_blanks p then
-          (* Hold the blank line: a caption may still follow it. *)
-          let first = p.current_char and last = p.current_line_last_char in
-          let blank = current_line_span p ~first ~last in
-          Ext_table (ind, rows, None, blank :: blanks) :: bs
-        else
+    | Some c when blanks = [] ->
+        (* Continuation line of the current caption; needs no indent. *)
+        accept_cols ~count:indent p;
+        let line =
+          current_line_span p ~first:p.current_char
+            ~last:p.current_line_last_char
+        in
+        let c = { c with caption_lines = line :: c.caption_lines } in
+        Ext_table (ind, rows, Some c, []) :: bs
+    | _ ->
+        (* No caption yet, or one closed by a blank line: a [^] line (re)starts
+           the caption, replacing any previous one. *)
         match match_table_caption p ~indent with
         | Some c -> Ext_table (ind, rows, Some c, []) :: bs
         | None ->
-            (* No caption: the held blank lines belong after the table. *)
             match match_line_type ~indent ~no_setext:true p with
-            | Ext_table_row last when blanks = [] ->
+            | Ext_table_row last when blanks = [] && caption = None ->
                 let row = table_row p ~first:p.current_char ~last in
                 Ext_table (ind, row :: rows, None, []) :: bs
             | ltype ->
-                let bs = Ext_table (ind, rows, None, []) :: bs in
+                (* Not a caption: keep the caption we had and flush held blanks. *)
+                let bs = Ext_table (ind, rows, caption, []) :: bs in
                 let bs = flush_table_blanks blanks bs in
                 add_open_blocks_with_line_class p ~indent ~indent_start bs ltype
 

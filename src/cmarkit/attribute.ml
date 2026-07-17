@@ -78,15 +78,21 @@ let of_string s =
     let last = loop i in
     if last = i then None else Some (String.sub s i (last - i), last)
   in
+  (* A quoted value may span lines. Djot folds any run of space, CR or LF to a
+     single space (a tab is left alone), so a value broken over several lines is
+     one space-separated string. This mirrors [inline.ts]'s [/[ \r\n]+/g] pass. *)
   let quoted i =
     let b = Buffer.create 16 in
+    let in_ws = ref false in
+    let add_ws () = if not !in_ws then (Buffer.add_char b ' '; in_ws := true) in
+    let add c = in_ws := false; Buffer.add_char b c in
     let rec loop k =
       if k >= len then None else
       match s.[k] with
       | '"' -> Some (Buffer.contents b, k + 1)
-      | '\\' when k + 1 < len ->
-          Buffer.add_char b s.[k + 1]; loop (k + 2)
-      | c -> Buffer.add_char b c; loop (k + 1)
+      | ' ' | '\r' | '\n' -> add_ws (); loop (k + 1)
+      | '\\' when k + 1 < len -> add s.[k + 1]; loop (k + 2)
+      | c -> add c; loop (k + 1)
     in
     loop i
   in

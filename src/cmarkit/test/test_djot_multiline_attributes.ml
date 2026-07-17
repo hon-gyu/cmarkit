@@ -53,3 +53,28 @@ let%expect_test "block: the same spec split over lines" =
 let%expect_test "block: a comment inside a multi-line spec" =
   block_attrs "{#id\n % a comment %\n .cls}\nA paragraph.\n";
   [%expect {| <p id="id" class="cls">A paragraph.</p> |}]
+
+(* Multi-line values (from djot's [attributes.test] AST-dump cases)
+   =============================================================== *)
+
+(* A quoted value that itself spans lines: the line breaks fold to single
+   spaces, so the value is one string. djot's dump reads
+   [attr="long value spanning multiple lines"]. *)
+let%expect_test "block: a quoted value spanning lines folds to spaces" =
+  block_attrs
+    "{\n attr=\"long\n value\n spanning\n multiple\n lines\"\n }\n> a\n";
+  [%expect {|
+    <blockquote attr="long value spanning multiple lines">
+    <p>a</p>
+    </blockquote>
+    |}]
+
+(* Inside a block quote: the value carries an escape ([\$] -> [$]) and folds
+   its own line break. djot's dump reads [key="bar a$bim"]. *)
+let%expect_test "block: a multi-line value with an escape, inside a quote" =
+  block_attrs "> {key=\"bar\n>    a\\$bim\"}\n> ou\n";
+  [%expect {|
+    <blockquote>
+    <p key="bar a$bim">ou</p>
+    </blockquote>
+    |}]

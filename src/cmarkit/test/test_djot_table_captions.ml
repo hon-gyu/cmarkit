@@ -122,6 +122,33 @@ let%expect_test "on: the marker needs a space or the end of the line" =
     </table></div><p>^not a caption</p>
     |}]
 
+(* A caption may sit behind indent and after a blank line. *)
+let%expect_test "on: a caption attaches across a blank line, even indented" =
+  html ~djot_table_captions:true "| 1 | 2 |\n\n ^ The caption.\n";
+  [%expect {|
+    <div role="region"><table>
+    <caption>The caption.</caption>
+    <tr>
+    <td>1</td>
+    <td>2</td>
+    </tr>
+    </table></div>
+    |}]
+
+(* From djot's [regression.test]: several [^] paragraphs after a table each
+   supply a caption, and the last one wins. *)
+let%expect_test "on: a later caption replaces an earlier one" =
+  html ~djot_table_captions:true "| 1 | 2 |\n\n ^ cap1\n\n ^ cap2\n";
+  [%expect {|
+    <div role="region"><table>
+    <caption>cap2</caption>
+    <tr>
+    <td>1</td>
+    <td>2</td>
+    </tr>
+    </table></div>
+    |}]
+
 let%expect_test "on: a table without a caption is unchanged" =
   html ~djot_table_captions:true table;
   [%expect {|
