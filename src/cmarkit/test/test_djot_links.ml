@@ -48,6 +48,15 @@ let%expect_test "djot: an empty destination" =
   html ~djot_links:true "[a]()";
   [%expect {| <p><a href="">a</a></p> |}]
 
+let%expect_test "djot: implicit labels use parsed plain text" =
+  html ~djot_links:true
+    "[link _and_ link][]\n\n[link and link]: url\n";
+  [%expect {| <p><a href="url">link <em>and</em> link</a></p> |}]
+
+let%expect_test "djot: an attempted link clears unresolved text openers" =
+  html ~djot_links:true "[x_y](x_";
+  [%expect {| <p>[x_y](x_</p> |}]
+
 (* Reference definitions
    ===================== *)
 

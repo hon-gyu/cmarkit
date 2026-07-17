@@ -1534,12 +1534,16 @@ let try_full_reflink_remainder p toks line ~image ~start (* is label's [ *) =
           Some (Some (toks, line, `Ref (`Full, ref, ref), last))
       | None -> Some None
 
-let try_shortcut_reflink p toks line ~image ~start (* is starting [ or ! *) =
+let try_shortcut_reflink p toks line ~image ~start ~implicit_key
+    (* [start] is the starting [ or ! *) =
   (* https://spec.commonmark.org/current/#shortcut-reference-link *)
   let start = if image then start + 1 (* [ *) else start in
   match Match.link_label ~djot:(Oymarkit_mod.djot_links p.oymarkit_mod) p.buf ~next_line p.i toks ~line ~start with
   | None -> None
   | Some (toks, line, rev_spans, last, key) ->
+      let key =
+        if Oymarkit_mod.djot_links p.oymarkit_mod then implicit_key else key
+      in
       let ref = label_of_rev_spans p ~key rev_spans in
       let toks = drop_stop_after_right_brack toks in
       match find_def_for_ref p ~image ref with
@@ -1551,12 +1555,16 @@ let try_shortcut_reflink p toks line ~image ~start (* is starting [ or ! *) =
           Some (toks, line, `Ref (`Shortcut, ref, ref), last)
       | None -> None
 
-let try_collapsed_reflink p toks line ~image ~start (* is starting [ or ! *) =
+let try_collapsed_reflink p toks line ~image ~start ~implicit_key
+    (* [start] is the starting [ or ! *) =
   (* https://spec.commonmark.org/current/#collapsed-reference-link *)
   let start = if image then start + 1 (* [ *) else start in
   match Match.link_label ~djot:(Oymarkit_mod.djot_links p.oymarkit_mod) p.buf ~next_line p.i toks ~line ~start with
   | None -> None
   | Some (toks, line, rev_spans, last, key) ->
+      let key =
+        if Oymarkit_mod.djot_links p.oymarkit_mod then implicit_key else key
+      in
       let ref = label_of_rev_spans p ~key rev_spans in
       let last = last + 2 in (* adjust for ][] *)
       let toks = drop_stop_after_right_brack toks in
@@ -1709,27 +1717,43 @@ let find_link_text_tokens p toks start_line ~start =
 let try_link_def
     p ~start ~start_toks ~start_line ~toks ~line ~text_last ~image text
   =
+  let implicit_key =
+    let inline = Inline.Inlines (text, Meta.none) in
+    let plain =
+      Inline.to_plain_text ~break_on_soft:false inline
+      |> List.map (String.concat "") |> String.concat "\n"
+    in
+    Match.label_key ~djot:true p.buf plain
+  in
   let next = text_last + 1 in
   let link =
     if next > line.last
-    then try_shortcut_reflink p start_toks start_line ~image ~start else
+    then try_shortcut_reflink p start_toks start_line ~image ~start ~implicit_key
+    else
     match p.i.[next] with
     | '(' ->
         (match try_inline_link_remainder p toks line ~image ~start:next with
-        | None -> try_shortcut_reflink p start_toks start_line ~image ~start
+        | None ->
+            try_shortcut_reflink p start_toks start_line ~image ~start
+              ~implicit_key
         | Some _ as v -> v)
     | '[' ->
         let next' = next + 1 in
         if next' <= line.last && p.i.[next'] = ']'
-        then try_collapsed_reflink p start_toks start_line ~image ~start else
+        then
+          try_collapsed_reflink p start_toks start_line ~image ~start
+            ~implicit_key
+        else
         let r = try_full_reflink_remainder p toks line ~image ~start:next in
         begin match r with
-        | None -> try_shortcut_reflink p start_toks start_line ~image ~start
+        | None ->
+            try_shortcut_reflink p start_toks start_line ~image ~start
+              ~implicit_key
         | Some None -> None (* Example 570 *)
         | Some (Some _ as v) -> v
         end
     | c ->
-        try_shortcut_reflink p start_toks start_line ~image ~start
+        try_shortcut_reflink p start_toks start_line ~image ~start ~implicit_key
   in
   match link with
   | None -> None
@@ -1900,6 +1924,48 @@ let rec try_link p start_toks start_line ~image ~start =
 and first_pass p toks line =
   (* Parse inline atoms and links. Links are parsed here otherwise
       link reference data gets parsed as atoms. *)
+  let settle_djot_link_text p line ~close acc =
+    let rec split depth inside = function
+    | [] -> acc
+    | Right_brack _ as t :: rest -> split (depth + 1) (t :: inside) rest
+    | Link_start { start; image } as opener :: rest ->
+        if depth > 0 then split (depth - 1) (opener :: inside) rest else
+        if start < line.first then acc else
+        let has_unsettled_delimiter =
+          let external_openers =
+            List.filter_map
+              (function
+                | Emphasis_marks marks when marks.may_open -> Some (marks, false)
+                | _ -> None)
+              rest
+          in
+          let rec loop openers = function
+          | [] -> List.exists snd openers
+          | Emphasis_marks marks :: toks ->
+              let matching ((m : emphasis_marks), _) =
+                m.char = marks.char && m.open_marker = marks.close_marker
+              in
+              begin match marks.may_close, List.partition matching openers with
+              | true, (_ :: matching, rest) -> loop (matching @ rest) toks
+              | _ ->
+                  let openers =
+                    if marks.may_open then (marks, true) :: openers else openers
+                  in
+                  loop openers toks
+              end
+          | _ :: toks -> loop openers toks
+          in
+          loop external_openers inside
+        in
+        if not has_unsettled_delimiter then acc else
+        let first = start + if image then 2 else 1 in
+        let text_line = { line with first; last = close - 1 } in
+        let settled = second_pass p inside text_line in
+        List.rev_append settled (opener :: rest)
+    | t :: rest -> split depth (t :: inside) rest
+    in
+    split 0 [] acc
+  in
   let rec loop p toks line ~had_link acc = match toks with
   | [] -> List.rev acc, had_link
   | Attribute_spec _ as t :: toks ->
@@ -1970,8 +2036,13 @@ and first_pass p toks line =
       (* Deferred with its [Link_start]; [second_pass] consumes the matched one
          via [try_link] and drops any unmatched [ ] ]. If a destination [ (...) ]
          opens here, neutralize its delimiters first (the guard above). *)
+      let has_destination = k + 1 <= line.last && p.i.[k + 1] = '(' in
+      let acc =
+        if has_destination then settle_djot_link_text p line ~close:k acc
+        else acc
+      in
       let toks =
-        if k + 1 <= line.last && p.i.[k + 1] = '(' then
+        if has_destination then
           match djot_destination_close p toks line ~start:(k + 1) with
           | Some close -> neutralize_dest_delimiters ~lo:k ~hi:close toks
           | None ->
