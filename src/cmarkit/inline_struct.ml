@@ -2603,13 +2603,47 @@ let rec parse_cols p line acc toks k = match toks with
   | Wikilink_start _ | Jsx_expr_start _ | Jsx_element_start _ | Jsx_open _ | Jsx_close _ ) :: _ ->
     assert false
 
+(* Resolve each cell's stack delimiters in isolation.
+
+   [parse_cols] finds cell boundaries at the top-level [|] left in the gaps
+   between [Inline] tokens, so a [|] buried in a code span never splits a row.
+   But if [second_pass] runs over the whole row first, an emphasis (or other
+   stack) span also becomes one [Inline] token, burying any [|] it straddles and
+   merging two cells ([ |*c| d*| ]). Splitting the post-[first_pass] stream at
+   each top-level [|] and running [second_pass] per segment keeps a delimiter
+   from ever pairing across a cell wall; reassembled, the stream is exactly what
+   [parse_cols] expects, only with no stack span crossing a boundary. This is
+   the table-level counterpart of resolving links on the delimiter stack: the
+   tight [first_pass] constructs may cross the boundary, the stack pass may
+   not. *)
+let second_pass_cells p first_line toks =
+  let has_pipe ~lo ~hi =
+    lo <= hi && Match.first_non_escaped_char '|' p.i ~last:hi ~start:lo <= hi
+  in
+  let rec split k seg segs = function
+  | [] -> List.rev (List.rev seg :: segs)
+  | t :: toks ->
+      let s = token_start t in
+      let seg, segs =
+        if has_pipe ~lo:k ~hi:(s - 1) then [], List.rev seg :: segs
+        else seg, segs
+      in
+      (* Advance past [Inline] content (a code span may hold a [|]); for a bare
+         marker, keeping [k] at its start is enough -- its own bytes are never a
+         [|], so the next gap scan cannot false-trip on them. *)
+      let k = match t with Inline { next; _ } -> next | _ -> s in
+      split k (t :: seg) segs toks
+  in
+  let segs = split first_line.first [] [] toks in
+  List.concat_map (fun seg -> second_pass p seg first_line) segs
+
 let parse_table_row p line =
   let cidx, toks, first_line =
     tokenize ~p ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i [line]
   in
   p.cidx <- cidx;
   let toks, _had_link = first_pass p toks first_line in
-  let toks = second_pass p toks first_line in
+  let toks = second_pass_cells p first_line toks in
   (* We now have modified last pass, inner inlines will have gone through
       the regular [last_pass] which is fine since we are only interested
       in creating the toplevel text nodes further splited on (unescaped)
