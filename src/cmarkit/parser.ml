@@ -1290,6 +1290,19 @@ module Block_struct = struct
       end
   | _ -> None
 
+  (* Is the innermost still-open block on this spine an open fenced code block?
+     A fenced code block captures every line until its own closing fence, so
+     while one is open inside a div a [:::] line is code content, not a div
+     close -- the fence must see the line first. We walk down through open div /
+     jsx containers (only their head child can be open) to that innermost leaf. *)
+  and innermost_open_is_fenced_code = function
+  | Code_block (`Fenced { fence = { closing_fence = None; _ }; _ }) :: _ -> true
+  | Ext_div ({ closing_fence = None; _ }, ch) :: _ ->
+      innermost_open_is_fenced_code ch
+  | Ext_jsx_block ({ raw_close = None; _ }, ch) :: _ ->
+      innermost_open_is_fenced_code ch
+  | _ -> false
+
   and try_add_to_div p fence children bs =
     match fence.closing_fence with
     | Some _ -> (* closed: this line starts a new sibling block *)
@@ -1297,7 +1310,7 @@ module Block_struct = struct
     | None ->
         let start = p.current_char and last = p.current_line_last_char in
         match Match.div_close p.i ~last ~start with
-        | Some line_len ->
+        | Some line_len when not (innermost_open_is_fenced_code children) ->
             let close () =
               let first = Match.first_non_blank p.i ~last ~start in
               current_line_span p ~first ~last
@@ -1310,7 +1323,7 @@ module Block_struct = struct
                               children) :: bs
                 else Ext_div (fence, add_line p children) :: bs
             end
-        | None -> Ext_div (fence, add_line p children) :: bs
+        | Some _ | None -> Ext_div (fence, add_line p children) :: bs
 
   (* Oymarkit JSX block containers.
 

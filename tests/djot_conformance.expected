@@ -5,7 +5,7 @@ definition_lists.test      1/4
 symb.test                  0/0    (2 skipped)
 emphasis.test             35/35 
 escapes.test               6/6  
-fenced_divs.test           7/8  
+fenced_divs.test           8/8  
 footnotes.test             3/4  
 headings.test             14/17 
 insert_delete_mark.test    4/4  
@@ -23,4 +23,4 @@ tables.test                9/9
 task_lists.test            3/3  
 thematic_breaks.test       3/4  
 verbatim.test              8/8  
-TOTAL                    244/265  (6 skipped)
+TOTAL                    245/265  (6 skipped)
