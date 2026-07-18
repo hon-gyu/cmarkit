@@ -332,13 +332,13 @@ end
 module Text = struct
   let nbsp = Uchar.of_int 0x00A0
 
-  let _utf_8_clean_unesc_unref ~do_unesc ~unref ~djot_escapes buf s ~first ~last
+  let _utf_8_clean_unesc_unref ~do_unesc ~unref ~backslash_space_nbsp buf s ~first ~last
     =
     (* This unescapes CommonMark escapes if [do_unesc] is true,
        resolves entity and character references if [unref] is true and
        replaces U+0000 or UTF-8 decoding errors by U+FFFD.
 
-       With [djot_escapes], a backslash before a space stands for a
+       With [backslash_space_nbsp], a backslash before a space stands for a
        non-breaking space; djot has no other syntax for one. Backslash before
        ASCII punctuation is unchanged, and a backslash before anything else
        stays literal in both. *)
@@ -415,7 +415,7 @@ module Text = struct
       | '\\' when do_unesc ->
           if next > last then resolve ~do_unesc buf s last start next else
           let nc = get s next in
-          if djot_escapes && nc = ' ' then begin
+          if backslash_space_nbsp && nc = ' ' then begin
             let next' = next + 1 in
             flush buf s last start k; Buffer.add_utf_8_uchar buf nbsp;
             resolve ~do_unesc buf s last next' next'
@@ -476,14 +476,14 @@ module Text = struct
     let first = if first < 0 then 0 else first in
     check ~do_unesc buf s last first first
 
-  let utf_8_clean_unesc_unref ?(unref = true) ?(djot_escapes = false) buf s
+  let utf_8_clean_unesc_unref ?(unref = true) ?(backslash_space_nbsp = false) buf s
       ~first ~last
     =
-    _utf_8_clean_unesc_unref ~do_unesc:true ~unref ~djot_escapes buf s ~first
+    _utf_8_clean_unesc_unref ~do_unesc:true ~unref ~backslash_space_nbsp buf s ~first
       ~last
 
   let utf_8_clean_unref ?(unref = true) buf s ~first ~last =
-    _utf_8_clean_unesc_unref ~do_unesc:false ~unref ~djot_escapes:false buf s
+    _utf_8_clean_unesc_unref ~do_unesc:false ~unref ~backslash_space_nbsp:false buf s
       ~first ~last
 
   let utf_8_clean_raw ?(pad = 0) buf s ~first ~last =
@@ -1442,7 +1442,7 @@ let html_block_end ~end_cond s ~last ~start = match end_cond with
 | `End_cond_1 -> html_block_end_cond_1 s ~last ~start
 | `End_blank | `End_blank_7 -> first_non_blank s ~last ~start = last + 1
 
-let ext_table_row ?(djot_verbatim = false) s ~last ~start =
+let ext_table_row ?(verbatim_span = false) s ~last ~start =
   if start > last || s.[start] <> '|' then Nomatch else
   let first = start + 1 in
   let last_nb = last_non_blank s ~first ~start:last in
@@ -1473,7 +1473,7 @@ let ext_table_row ?(djot_verbatim = false) s ~last ~start =
     in
     outside first
   in
-  if djot_verbatim && closing_pipe_is_verbatim_content then Nomatch
+  if verbatim_span && closing_pipe_is_verbatim_content then Nomatch
   else Ext_table_row last_nb
 
 let ext_footnote_label buf s ~line_pos ~last ~start =
@@ -1533,7 +1533,7 @@ let is_roman_string s ~first ~last =
   in
   first <= last && loop first
 
-let list_marker ?(djot_styles = false) s ~last ~start =
+let list_marker ?(extended_styles = false) s ~last ~start =
   (* https://spec.commonmark.org/current/#list-marker *)
   (* [word_last] is the last byte of the number, [close] the last byte of the
      whole marker (they differ for the [(a)] form). *)
@@ -1621,8 +1621,8 @@ let list_marker ?(djot_styles = false) s ~last ~start =
       if next > last || Ascii.is_blank s.[next]
       then List_marker_line (`Unordered c, start)
       else Nomatch
-  | '(' when djot_styles -> parens s ~start
-  | 'a' .. 'z' | 'A' .. 'Z' when djot_styles -> alpha_or_roman s ~start
+  | '(' when extended_styles -> parens s ~start
+  | 'a' .. 'z' | 'A' .. 'Z' when extended_styles -> alpha_or_roman s ~start
   | '0' .. '9' as c ->
       let[@inline] digit c = Char.code c - 0x30 in
       let rec loop s last count acc k =

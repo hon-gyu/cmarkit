@@ -13,6 +13,9 @@ open Parser_common_
 open Parser
 
 type t = { nl : Layout.string; block : Block.t; defs : Label.defs }
+type list_indent = [ `Content_column | `Marker_plus_one ]
+type list_tightness = [ `Any_blank | `Non_list_boundary_blank ]
+type verbatim_style = [ `Code_span | `Verbatim_span ]
 let make ?(nl = "\n") ?(defs = Label.Map.empty) block = { nl; block; defs }
 let empty = make (Block.Blocks ([], Meta.none))
 let nl d = d.nl
@@ -23,13 +26,15 @@ let of_string
     ?djot ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis
     ?marked_emphasis_delims ?strong_emphasis_width ?extra_inline_containers
     ?block_id ?inline_attributes ?block_attributes
-    ?djot_thematic_break ?colon_symbols ?djot_escapes ?two_space_hard_break
+    ?underscore_thematic_break ?colon_symbols ?backslash_space_nbsp
+    ?hard_break_trailing_blanks ?two_space_hard_break
     ?format_raw_content
     ?extended_ordered_list_styles ?definition_lists ?backtick_math
-    ?table_captions ?djot_verbatim ?djot_headings
+    ?table_captions ?verbatim_style ?multiline_atx_headings
+    ?atx_closing_sequence
     ?heading_implicit_targets ?djot_links ?case_sensitive_labels ?simple_emphasis_flanking
     ?blocks_interrupt_paragraph
-    ?list_marker_interrupts_paragraph ?djot_list_indent ?djot_list_tightness ?smart_punctuation
+    ?list_marker_interrupts_paragraph ?list_indent ?list_tightness ?smart_punctuation
     ?indented_code ?setext_headings ?lazy_continuation ?raw_html ?entity_refs
     ?tilde_code_fences ?whitespace_free_info_string ?block_quote_marker_space
     ?div ?wikilink ?jsx_expr ?jsx_element ?callout
@@ -46,13 +51,15 @@ let of_string
       ?djot ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis ?file
       ?marked_emphasis_delims ?strong_emphasis_width ?extra_inline_containers
       ?block_id ?inline_attributes ?block_attributes
-      ?djot_thematic_break ?colon_symbols ?djot_escapes ?two_space_hard_break
+      ?underscore_thematic_break ?colon_symbols ?backslash_space_nbsp
+      ?hard_break_trailing_blanks ?two_space_hard_break
       ?format_raw_content
       ?extended_ordered_list_styles ?definition_lists ?backtick_math
-      ?table_captions ?djot_verbatim ?djot_headings
+      ?table_captions ?verbatim_style ?multiline_atx_headings
+      ?atx_closing_sequence
       ?heading_implicit_targets ?djot_links ?case_sensitive_labels ?simple_emphasis_flanking
       ?blocks_interrupt_paragraph
-    ?list_marker_interrupts_paragraph ?djot_list_indent ?djot_list_tightness ?smart_punctuation
+    ?list_marker_interrupts_paragraph ?list_indent ?list_tightness ?smart_punctuation
       ?indented_code ?setext_headings ?lazy_continuation ?raw_html ?entity_refs
       ?tilde_code_fences ?whitespace_free_info_string ?block_quote_marker_space
       ?div ?wikilink ?jsx_expr ?jsx_element ?callout ~strict s

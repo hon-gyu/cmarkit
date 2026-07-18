@@ -156,7 +156,7 @@ val next_uchar : string -> last:int -> after:int -> Uchar.t
     references. *)
 module Text : sig
   val utf_8_clean_unesc_unref :
-    ?unref:bool -> ?djot_escapes:bool ->
+    ?unref:bool -> ?backslash_space_nbsp:bool ->
     Buffer.t -> string -> first:int -> last:int -> string
   (** [utf_8_clean_unesc_unref b s ~first ~last] unescapes CommonMark
       escapes, resolves HTML entity and character references in the
@@ -166,7 +166,7 @@ module Text : sig
 
       If [unref] is [false] (defaults to [true]) entity and character
       references are left literal, as in djot where backslash is the
-      only escape. If [djot_escapes] is [true] (defaults to [false]) a
+      only escape. If [backslash_space_nbsp] is [true] (defaults to [false]) a
       backslash before a space stands for U+00A0. *)
 
   val utf_8_clean_unref :
@@ -422,10 +422,10 @@ val html_block_end :
     end with [end_code] in the the range \[[start];[last]\] *)
 
 val ext_table_row :
-  ?djot_verbatim:bool -> string -> last:byte_pos -> start:byte_pos -> line_type
+  ?verbatim_span:bool -> string -> last:byte_pos -> start:byte_pos -> line_type
 (** [ext_table s ~last ~start] matches a table row in the range
     \[[start];[last]\]. The returned position is the rightmost [|]. With
-    [djot_verbatim] an unmatched backtick run owns that rightmost pipe, so the
+    [verbatim_span] an unmatched backtick run owns that rightmost pipe, so the
     line is not a table row. *)
 
 val ext_footnote_label :
@@ -449,12 +449,12 @@ val definition_list_marker :
     line. A [:::] div fence is not one. *)
 
 val list_marker :
-  ?djot_styles:bool -> string -> last:byte_pos -> start:byte_pos -> line_type
+  ?extended_styles:bool -> string -> last:byte_pos -> start:byte_pos -> line_type
 (** [list_marker s ~last ~start] is a list marker in the range
     \[[start];[last]\]. This checks there's at least one space
     following unless the item is empty.
 
-    If [djot_styles] is [true] (defaults to [false]) djot's alpha ([a.]) and
+    If [extended_styles] is [true] (defaults to [false]) djot's alpha ([a.]) and
     roman ([iv.]) numbering and its fully parenthesized delimiter ([(a)]) are
     also recognized, as [`Ext_ordered] markers. *)
 

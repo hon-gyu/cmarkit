@@ -2002,6 +2002,10 @@ module Doc : sig
   type t = Cmarkit_.Doc.t
   (** The type for CommonMark documents. *)
 
+  type list_indent = [ `Content_column | `Marker_plus_one ]
+  type list_tightness = [ `Any_blank | `Non_list_boundary_blank ]
+  type verbatim_style = [ `Code_span | `Verbatim_span ]
+
   val nl : t -> Layout.string
   (** [nl d] is the first newline found in the text during parsing
       or ["\n"] if there was none. *)
@@ -2033,17 +2037,19 @@ module Doc : sig
     ?marked_emphasis_delims:bool -> ?strong_emphasis_width:int ->
     ?extra_inline_containers:Inline.Extra_inline_container.Config.t ->
     ?block_id:bool -> ?inline_attributes:bool ->
-    ?block_attributes:bool -> ?djot_thematic_break:bool ->
-    ?colon_symbols:bool -> ?djot_escapes:bool -> ?two_space_hard_break:bool ->
+    ?block_attributes:bool -> ?underscore_thematic_break:bool ->
+    ?colon_symbols:bool -> ?backslash_space_nbsp:bool ->
+    ?hard_break_trailing_blanks:bool -> ?two_space_hard_break:bool ->
     ?format_raw_content:bool ->
     ?extended_ordered_list_styles:bool -> ?definition_lists:bool ->
     ?backtick_math:bool -> ?table_captions:bool ->
-    ?djot_verbatim:bool -> ?djot_headings:bool ->
+    ?verbatim_style:verbatim_style -> ?multiline_atx_headings:bool ->
+    ?atx_closing_sequence:bool ->
     ?heading_implicit_targets:bool -> ?djot_links:bool ->
     ?case_sensitive_labels:bool ->
     ?simple_emphasis_flanking:bool -> ?blocks_interrupt_paragraph:bool ->
     ?list_marker_interrupts_paragraph:bool ->
-    ?djot_list_indent:bool -> ?djot_list_tightness:bool ->
+    ?list_indent:list_indent -> ?list_tightness:list_tightness ->
     ?smart_punctuation:bool ->
     ?indented_code:bool -> ?setext_headings:bool ->
     ?lazy_continuation:bool -> ?raw_html:bool -> ?entity_refs:bool ->
@@ -2134,15 +2140,10 @@ module Doc : sig
    {- If [block_attributes] is [true], Djot attribute lines immediately
       preceding a block are represented by {!Block.Ext_attributes}. Continued
       lines inside a block attribute must be indented.}
-   {- If [djot_thematic_break] is [true], a
-      {{:https://htmlpreview.github.io/?https://github.com/jgm/djot/blob/master/doc/syntax.html#thematic-break}djot}
-      thematic break is a line of three or more [*] or [-], and nothing else
-      but spaces or tabs. Unlike CommonMark, [_] is not a break character:
-      [___] is ordinary text. Djot also allows a break to be indented
-      arbitrarily; that follows from [indented_code] rather than from this
-      knob, since a deep indent is only claimed by something else when
-      indented code blocks exist. The default is [false], which preserves
-      CommonMark behavior.}
+   {- If [underscore_thematic_break] is [true], [_] may delimit a thematic
+      break, as it does in CommonMark. If [false], only [*] and [-] may delimit
+      one. The default is [true]; the [djot] preset disables it. Arbitrary
+      indentation is controlled independently by [indented_code].}
    {- If [colon_symbols] is [true], [:name:] is represented by
       {!Inline.Ext_symbol}, where [name] is a non-empty run of ASCII
       alphanumerics, ['_'], ['+'] or ['-']. An unterminated run stays text.
@@ -2231,22 +2232,24 @@ module Doc : sig
       case, so [[Link][]] does not resolve a definition named [[link]]. The
       default is [false], which preserves CommonMark behavior; the [djot]
       preset enables it.}
-   {- If [djot_headings] is [true], a heading runs until a blank line: the lines
+   {- If [multiline_atx_headings] is [true], a heading runs until a blank line: the lines
       after the [#] line continue its inline content, whether or not they repeat
       the [#] (which is stripped when they do). The default is [false], which
       preserves CommonMark behavior.}
+   {- If [atx_closing_sequence] is [true], a trailing run of [#] may close an
+      ATX heading and is excluded from its text. If [false], it remains heading
+      text. The default is [true]; the [djot] preset disables it.}
    {- If [heading_implicit_targets] is [true], a heading becomes an implicit
       link-reference target, so [[Some Heading][]] links to it, and auto heading
       IDs use Djot's case-preserving algorithm. Resolving the target needs
       [heading_auto_ids], which emits the ID the link points at. An explicit
       link-reference definition of the same label wins. The default is [false];
       the [djot] preset enables it.}
-   {- If [djot_verbatim] is [true], a verbatim span strips a padding space
-      only where the space is what lets its content start or end with a
-      backtick, rather than stripping one from each end whenever both are
-      present. So [ ` a ` ] holds [" a "] rather than ["a"]. This is djot's
-      rule, see {!Inline.Code_span.code}. The default is [false], which
-      preserves CommonMark behavior.}
+   {- [verbatim_style] selects [`Code_span] or [`Verbatim_span]. A code span
+      requires a matching closing backtick run and applies CommonMark's
+      symmetric padding rule. A verbatim span may run to the end of its block
+      and strips padding only at an edge where it protects a backtick. The
+      default is [`Code_span]; the [djot] preset selects [`Verbatim_span].}
    {- If [backtick_math] is [true], a verbatim span prefixed with [$] or [$$] is
       djot {{!ext_djot_math}math}, producing the same
       {!Inline.extension-Ext_math_span} as the pandoc [$...$] spelling. The
@@ -2266,14 +2269,27 @@ module Doc : sig
       gets into an [`Ext_ordered] {!Block.List'.type'}; CommonMark's decimal
       lists are unaffected. The default is [false], which preserves CommonMark
       behavior.}
-   {- If [djot_escapes] is [true], a trailing backslash is a hard line break and
-      a backslash before a space stands for a non-breaking space (U+00A0), which
-      CommonMark has no syntax for. Backslash before ASCII punctuation is
+   {- If [backslash_space_nbsp] is [true], a backslash before a space stands for
+      a non-breaking space (U+00A0). Backslash before ASCII punctuation is
       unchanged. The default is [false]; the [djot] preset enables it.}
+   {- If [hard_break_trailing_blanks] is [true], blanks may follow the trailing
+      backslash that creates a hard line break. The final unescaped backslash
+      and surrounding blanks are layout. The default is [false]; the [djot]
+      preset enables it.}
    {- If [two_space_hard_break] is [true], two or more trailing spaces are a
       hard line break. If [false], trailing spaces remain text. The default is
       [true], which preserves CommonMark behavior; the [djot] preset disables
       it.}
+   {- [list_indent] selects the minimum indentation for list-item content.
+      [`Content_column] requires continuation lines to reach the first content
+      column; [`Marker_plus_one] accepts any indentation past the marker. The
+      default is [`Content_column]; the [djot] preset selects
+      [`Marker_plus_one].}
+   {- [list_tightness] selects which blanks make a list loose. [`Any_blank]
+      applies CommonMark's rule. [`Non_list_boundary_blank] ignores blanks at a
+      nested-list or item boundary but still loosens for a blank between two
+      ordinary blocks. The default is [`Any_blank]; the [djot] preset selects
+      [`Non_list_boundary_blank].}
    {- If [wikilink] is [true], Obsidian {{!ext_wikilink}wikilinks} [ [[...]] ]
       and embeds [ ![[...]] ] are represented by {!Inline.Ext_wikilink}. The
       default is [false]. This knob is independent of [strict].}

@@ -12,9 +12,9 @@ open Cmarkit_
     setext [<h2>] as long as setext headings are on, whatever the break config
     says. *)
 
-let html ?djot_thematic_break ?indented_code ?setext_headings s =
+let html ?underscore_thematic_break ?indented_code ?setext_headings s =
   let doc =
-    Doc.of_string ~strict:false ?djot_thematic_break ?indented_code
+    Doc.of_string ~strict:false ?underscore_thematic_break ?indented_code
       ?setext_headings s
   in
   print_string (Cmarkit_html.of_doc ~safe:false doc)
@@ -33,9 +33,9 @@ let%expect_test "commonmark: *, - and _ all break" =
     |}]
 
 let%expect_test "djot: only * and - break, _ is text" =
-  html ~djot_thematic_break:true "***";
-  html ~djot_thematic_break:true "---";
-  html ~djot_thematic_break:true "___";
+  html ~underscore_thematic_break:false "***";
+  html ~underscore_thematic_break:false "---";
+  html ~underscore_thematic_break:false "___";
   [%expect {|
     <hr>
     <hr>
@@ -43,12 +43,12 @@ let%expect_test "djot: only * and - break, _ is text" =
     |}]
 
 let%expect_test "djot: a long _ run stays text" =
-  html ~djot_thematic_break:true "________";
+  html ~underscore_thematic_break:false "________";
   [%expect {| <p>________</p> |}]
 
 let%expect_test "djot: spaces and tabs between markers are allowed" =
-  html ~djot_thematic_break:true "* * *";
-  html ~djot_thematic_break:true "-\t-\t-";
+  html ~underscore_thematic_break:false "* * *";
+  html ~underscore_thematic_break:false "-\t-\t-";
   [%expect {|
     <hr>
     <hr>
@@ -58,7 +58,7 @@ let%expect_test "djot: markers may be mixed" =
   (* djot.js's [pattThematicBreak] is [-*] runs mixed freely -- three or more
      of [*] / [-] with optional spaces -- so [*-*] is a thematic break, not
      emphasis. *)
-  html ~djot_thematic_break:true "*-*";
+  html ~underscore_thematic_break:false "*-*";
   [%expect {| <hr> |}]
 
 (* Indentation, via [indented_code]
@@ -66,22 +66,22 @@ let%expect_test "djot: markers may be mixed" =
 
 let%expect_test "indent < 4 breaks under either config" =
   html "   ***";
-  html ~djot_thematic_break:true "   ***";
+  html ~underscore_thematic_break:false "   ***";
   [%expect {|
     <hr>
     <hr>
     |}]
 
 let%expect_test "indent >= 4 is code while indented code blocks exist" =
-  html ~djot_thematic_break:true "    ***";
+  html ~underscore_thematic_break:false "    ***";
   [%expect {|
     <pre><code>***
     </code></pre>
     |}]
 
 let%expect_test "indent >= 4 breaks once indented code is off" =
-  html ~djot_thematic_break:true ~indented_code:false "    ***";
-  html ~djot_thematic_break:true ~indented_code:false "\t\t***";
+  html ~underscore_thematic_break:false ~indented_code:false "    ***";
+  html ~underscore_thematic_break:false ~indented_code:false "\t\t***";
   [%expect {|
     <hr>
     <hr>
@@ -107,11 +107,11 @@ let%expect_test "indented_code:false leaves fenced code alone" =
    ============================= *)
 
 let%expect_test "setext wins over --- while setext headings are on" =
-  html ~djot_thematic_break:true "para\n---";
+  html ~underscore_thematic_break:false "para\n---";
   [%expect {| <h2>para</h2> |}]
 
 let%expect_test "--- under a paragraph breaks once setext is off" =
-  html ~djot_thematic_break:true ~setext_headings:false "para\n---";
+  html ~underscore_thematic_break:false ~setext_headings:false "para\n---";
   [%expect {|
     <p>para</p>
     <hr>
@@ -132,8 +132,8 @@ let%expect_test "setext_headings:false leaves atx headings alone" =
    =========================== *)
 
 let%expect_test "djot: all three knobs together" =
-  html ~djot_thematic_break:true ~indented_code:false ~setext_headings:false
-    "para\n---\n\n  ___\n\n      * * *";
+  html ~underscore_thematic_break:false ~indented_code:false
+    ~setext_headings:false "para\n---\n\n  ___\n\n      * * *";
   [%expect {|
     <p>para</p>
     <hr>

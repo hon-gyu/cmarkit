@@ -217,7 +217,8 @@ let rec next_line = function
 
 (* Tokenization *)
 
-let newline_token ~djot_escapes ~two_space_hard_break s prev_line newline =
+let newline_token ~hard_break_trailing_blanks ~two_space_hard_break s prev_line
+    newline =
   (* https://spec.commonmark.org/current/#softbreak *)
   (* https://spec.commonmark.org/current/#hard-line-breaks *)
   let start (* includes spaces or '\\' on prev line *), break_type =
@@ -226,7 +227,7 @@ let newline_token ~djot_escapes ~two_space_hard_break s prev_line newline =
     (* In djot the backslash of a hard break may be followed by trailing blanks,
        tabs included; [rev_drop_spaces] only drops spaces. *)
     let non_blank =
-      if not djot_escapes then non_space else
+      if not hard_break_trailing_blanks then non_space else
       let rec loop k =
         if k < first then first - 1 else
         if Ascii.is_blank s.[k] then loop (k - 1) else k
@@ -236,14 +237,15 @@ let newline_token ~djot_escapes ~two_space_hard_break s prev_line newline =
     let rec backslash_run_start k =
       if k > first && s.[k - 1] = '\\' then backslash_run_start (k - 1) else k
     in
-    let djot_hard_break =
-      if not djot_escapes || non_blank < first || s.[non_blank] <> '\\'
+    let blank_tolerant_hard_break =
+      if not hard_break_trailing_blanks || non_blank < first
+         || s.[non_blank] <> '\\'
       then false
       else
         let run_start = backslash_run_start non_blank in
         (non_blank - run_start + 1) mod 2 = 1
     in
-    if djot_hard_break then begin
+    if blank_tolerant_hard_break then begin
       (* The blanks on either side of the backslash are layout: the text ends at
          the last non-blank before it. *)
       let rec back k =
@@ -252,7 +254,8 @@ let newline_token ~djot_escapes ~two_space_hard_break s prev_line newline =
       in
       (back (non_blank - 1), `Hard)
     end else
-    if (not djot_escapes) && non_space = last && s.[non_space] = '\\'
+    if (not hard_break_trailing_blanks) && non_space = last
+       && s.[non_space] = '\\'
     then (non_space, `Hard) else
     (* In djot's escape rule, a trailing backslash is the only hard break: two
        trailing spaces are neither a break nor layout, they are text, and they
@@ -261,7 +264,8 @@ let newline_token ~djot_escapes ~two_space_hard_break s prev_line newline =
     let start = non_space + 1 in
     let two_space_break = last - start + 1 >= 2 in
     if two_space_hard_break && two_space_break then (start, `Hard) else
-    if djot_escapes || not two_space_hard_break then (last + 1, `Soft) else
+    if hard_break_trailing_blanks || not two_space_hard_break
+    then (last + 1, `Soft) else
     (start, `Soft)
   in
   Newline { start; break_type; newline }
@@ -400,12 +404,12 @@ let try_add_marked_emphasis_closer_token oymarkit_mod acc s line ~start =
   else try_add_emphasis_token ~oymarkit_mod ~close_marker:true acc s line ~start
 
 let extra_inline_container_kind_of_char = function
-| '=' -> Some Inline.Extra_inline_container.Highlight
-| '^' -> Some Inline.Extra_inline_container.Superscript
-| '~' -> Some Inline.Extra_inline_container.Subscript
-| '+' -> Some Inline.Extra_inline_container.Inserted
-| '-' -> Some Inline.Extra_inline_container.Deleted
-| _ -> None
+  | '=' -> Some Inline.Extra_inline_container.Highlight
+  | '^' -> Some Inline.Extra_inline_container.Superscript
+  | '~' -> Some Inline.Extra_inline_container.Subscript
+  | '+' -> Some Inline.Extra_inline_container.Inserted
+  | '-' -> Some Inline.Extra_inline_container.Deleted
+  | _ -> None
 
 let extra_inline_container_syntax oymarkit_mod kind =
   Oymarkit_mod.extra_inline_container_syntax oymarkit_mod kind
@@ -420,11 +424,18 @@ let try_add_extra_inline_container_opener_token oymarkit_mod acc s line ~start =
         let open Inline.Extra_inline_container.Config in
         begin match extra_inline_container_syntax oymarkit_mod kind with
         | Disabled -> None
-        | Curly_required | Curly_optional ->
+        | Curly_required
+        | Curly_optional ->
             Some
               ( Extra_inline_container_marks
-                  { start; char = s.[next]; kind; curly = true;
-                    may_open = true; may_close = false }
+                  {
+                    start;
+                    char = s.[next];
+                    kind;
+                    curly = true;
+                    may_open = true;
+                    may_close = false;
+                  }
                 :: acc,
                 next + 1 )
         end
@@ -439,11 +450,18 @@ let try_add_extra_inline_container_closer_token oymarkit_mod acc s line ~start =
         let open Inline.Extra_inline_container.Config in
         begin match extra_inline_container_syntax oymarkit_mod kind with
         | Disabled -> None
-        | Curly_required | Curly_optional ->
+        | Curly_required
+        | Curly_optional ->
             Some
               ( Extra_inline_container_marks
-                  { start; char = s.[start]; kind; curly = true;
-                    may_open = false; may_close = true }
+                  {
+                    start;
+                    char = s.[start];
+                    kind;
+                    curly = true;
+                    may_open = false;
+                    may_close = true;
+                  }
                 :: acc,
                 marker + 1 )
         end
@@ -454,24 +472,29 @@ let try_add_extra_inline_container_marks_token oymarkit_mod acc s line ~start =
   | Some kind ->
       let open Inline.Extra_inline_container.Config in
       begin match extra_inline_container_syntax oymarkit_mod kind with
-      | Disabled | Curly_required -> None
+      | Disabled
+      | Curly_required ->
+          None
       | Curly_optional ->
           let first = line.first and last = line.last in
           let prev_uchar = Match.prev_uchar s ~first ~before:start in
           let next_uchar = Match.next_uchar s ~last ~after:start in
-          let may_close =
-            not (Cmarkit_data.is_unicode_whitespace prev_uchar)
-          in
-          let may_open =
-            not (Cmarkit_data.is_unicode_whitespace next_uchar)
-          in
-          if not may_open && not may_close then None else
-          Some
-            ( Extra_inline_container_marks
-                { start; char = s.[start]; kind; curly = false; may_open;
-                  may_close }
-              :: acc,
-              start + 1 )
+          let may_close = not (Cmarkit_data.is_unicode_whitespace prev_uchar) in
+          let may_open = not (Cmarkit_data.is_unicode_whitespace next_uchar) in
+          if (not may_open) && not may_close then None
+          else
+            Some
+              ( Extra_inline_container_marks
+                  {
+                    start;
+                    char = s.[start];
+                    kind;
+                    curly = false;
+                    may_open;
+                    may_close;
+                  }
+                :: acc,
+                start + 1 )
       end
 
 [@@@ocamlformat "disable"]
@@ -951,19 +974,27 @@ let tokenize ~p ?oymarkit_mod ~exts s lines =
   (* For inlines this is where we conditionalize for extensions. All code
       paths after that no longer check for p.exts: there just won't be
       extension data to process if [exts] was not [true] here. *)
-  let djot_escapes = match oymarkit_mod with
-  | Some m when is_oymarkit_enabled () -> Oymarkit_mod.djot_escapes m
+  let backslash_space_nbsp = match oymarkit_mod with
+  | Some m when is_oymarkit_enabled () -> Oymarkit_mod.backslash_space_nbsp m
   | _ -> false
   in
   let two_space_hard_break = match oymarkit_mod with
   | Some m when is_oymarkit_enabled () -> Oymarkit_mod.two_space_hard_break m
   | _ -> true
   in
+  let hard_break_trailing_blanks = match oymarkit_mod with
+  | Some m when is_oymarkit_enabled () ->
+      Oymarkit_mod.hard_break_trailing_blanks m
+  | _ -> false
+  in
   let rec loop ~exts s lines line ~prev_bslash acc k =
     if k > line.last then match lines with
     | [] -> rev_token_list_and_make_closer_index acc
     | newline :: lines ->
-        let t = newline_token ~djot_escapes ~two_space_hard_break s line newline in
+        let t =
+          newline_token ~hard_break_trailing_blanks ~two_space_hard_break s line
+            newline
+        in
         loop ~exts s lines newline ~prev_bslash:false (t :: acc) newline.first
     else
     if s.[k] = '\\'
@@ -971,7 +1002,7 @@ let tokenize ~p ?oymarkit_mod ~exts s lines =
     let jumped = ref None in
     let acc, next = match s.[k] with
     | '`' -> add_backtick_token acc s line ~prev_bslash ~start:k
-    | ' ' when prev_bslash && djot_escapes && not (blank_to_eol s line ~start:k)
+    | ' ' when prev_bslash && backslash_space_nbsp && not (blank_to_eol s line ~start:k)
       ->
         (* Only a backslash-space with something after it on the line is a
            non-breaking space: a backslash followed by blanks to the end of the
@@ -1197,7 +1228,7 @@ let code_span_token p ~count ~first ~last ~first_line ~last_line rev_spans =
   let textloc = textloc_of_lines p ~first ~last ~first_line ~last_line in
   let code_layout = raw_tight_block_lines p ~rev_spans in
   let meta = meta p textloc in
-  let djot = Oymarkit_mod.djot_verbatim p.oymarkit_mod in
+  let djot = Oymarkit_mod.verbatim_style p.oymarkit_mod = `Verbatim_span in
   let cs =
     Inline.Code_span ({ backtick_count = count; code_layout; djot }, meta)
   in
@@ -1310,7 +1341,7 @@ let try_code_span p toks start_line ~start:cstart ~count ~escaped =
      closing run the span simply runs to the end of the block. CommonMark instead
      leaves an unmatched run as literal text, so it can rule the span out up
      front. *)
-  let djot = Oymarkit_mod.djot_verbatim p.oymarkit_mod in
+  let djot = Oymarkit_mod.verbatim_style p.oymarkit_mod = `Verbatim_span in
   if not djot && not (has_backticks ~count ~after:cstart p.cidx) then None else
   let rec match_backticks toks line ~count spans k = match toks with
   | [] when djot ->

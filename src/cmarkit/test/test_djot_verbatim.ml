@@ -1,6 +1,6 @@
 open Cmarkit_
 
-(** Djot's rules for reading a verbatim span's content, behind [djot_verbatim].
+(** Djot's rules for reading a verbatim span's content, behind [verbatim_style].
 
     Three divergences, all decided at parse time because every renderer that
     reads the content must read it the same way.
@@ -16,12 +16,12 @@ open Cmarkit_
     {b Line endings.} CommonMark turns a line ending inside a span into a space;
     djot keeps the newline.
 
-    {b No closing run.} In djot an opening backtick run always opens a span: with
-    no closing run of the same length the span runs to the end of the block.
-    CommonMark leaves such a run as literal text. *)
+    {b No closing run.} In djot an opening backtick run always opens a span:
+    with no closing run of the same length the span runs to the end of the
+    block. CommonMark leaves such a run as literal text. *)
 
-let html ?djot_verbatim s =
-  let doc = Doc.of_string ~strict:false ?djot_verbatim s in
+let html ?verbatim_style s =
+  let doc = Doc.of_string ~strict:false ?verbatim_style s in
   print_string (Cmarkit_html.of_doc ~safe:false doc)
 
 let%expect_test "commonmark: both padding spaces are stripped" =
@@ -29,13 +29,14 @@ let%expect_test "commonmark: both padding spaces are stripped" =
   [%expect {| <p>a <code>x</code> b</p> |}]
 
 let%expect_test "djot: padding spaces that do no work are kept" =
-  html ~djot_verbatim:true "a ` x ` b";
+  html ~verbatim_style:`Verbatim_span "a ` x ` b";
   [%expect {| <p>a <code> x </code> b</p> |}]
 
 let%expect_test "both: a space lets the content start with a backtick" =
   html "a `` ` `` b";
-  html ~djot_verbatim:true "a `` ` `` b";
-  [%expect {|
+  html ~verbatim_style:`Verbatim_span "a `` ` `` b";
+  [%expect
+    {|
     <p>a <code>`</code> b</p>
     <p>a <code>`</code> b</p>
     |}]
@@ -43,29 +44,32 @@ let%expect_test "both: a space lets the content start with a backtick" =
 let%expect_test "djot: the two sides are independent" =
   (* The leading space is stripped (it lets the content start with a backtick),
      the trailing one is not (nothing needs it). *)
-  html ~djot_verbatim:true "a `` `x `` b";
+  html ~verbatim_style:`Verbatim_span "a `` `x `` b";
   [%expect {| <p>a <code>`x </code> b</p> |}]
 
 let%expect_test "both: no padding, nothing to strip" =
   html "a `x` b";
-  html ~djot_verbatim:true "a `x` b";
-  [%expect {|
+  html ~verbatim_style:`Verbatim_span "a `x` b";
+  [%expect
+    {|
     <p>a <code>x</code> b</p>
     <p>a <code>x</code> b</p>
     |}]
 
 let%expect_test "both: an all-spaces span" =
   html "a `  ` b";
-  html ~djot_verbatim:true "a `  ` b";
-  [%expect {|
+  html ~verbatim_style:`Verbatim_span "a `  ` b";
+  [%expect
+    {|
     <p>a <code>  </code> b</p>
     <p>a <code>  </code> b</p>
     |}]
 
 let%expect_test "line ending: a space in CommonMark, a newline in djot" =
   html "Some `code\nwith a break`";
-  html ~djot_verbatim:true "Some `code\nwith a break`";
-  [%expect {|
+  html ~verbatim_style:`Verbatim_span "Some `code\nwith a break`";
+  [%expect
+    {|
     <p>Some <code>code with a break</code></p>
     <p>Some <code>code
     with a break</code></p>
@@ -73,25 +77,26 @@ let%expect_test "line ending: a space in CommonMark, a newline in djot" =
 
 let%expect_test "no closing run: literal in CommonMark, runs to end in djot" =
   html "a `b c";
-  html ~djot_verbatim:true "a `b c";
+  html ~verbatim_style:`Verbatim_span "a `b c";
   [%expect {|
     <p>a `b c</p>
     <p>a <code>b c</code></p>
     |}]
 
-let%expect_test "djot: an unclosed span runs to the end of the block, not the line" =
-  html ~djot_verbatim:true "` a\nc";
+let%expect_test
+    "djot: an unclosed span runs to the end of the block, not the line" =
+  html ~verbatim_style:`Verbatim_span "` a\nc";
   [%expect {|
     <p><code> a
     c</code></p>
     |}]
 
 let%expect_test "djot: a trailing run opens a span with no content" =
-  html ~djot_verbatim:true "a `";
+  html ~verbatim_style:`Verbatim_span "a `";
   [%expect {| <p>a <code></code></p> |}]
 
 let%expect_test "both: a blank line still ends the block, and so the span" =
-  html ~djot_verbatim:true "a `b\n\nc";
+  html ~verbatim_style:`Verbatim_span "a `b\n\nc";
   [%expect {|
     <p>a <code>b</code></p>
     <p>c</p>
@@ -99,8 +104,9 @@ let%expect_test "both: a blank line still ends the block, and so the span" =
 
 let%expect_test "an unmatched verbatim opener owns an apparent table pipe" =
   html "|`|";
-  html ~djot_verbatim:true "|`|";
-  [%expect {|
+  html ~verbatim_style:`Verbatim_span "|`|";
+  [%expect
+    {|
     <div role="region"><table>
     <tr>
     <td>`</td>

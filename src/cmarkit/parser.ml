@@ -120,7 +120,7 @@ module Block_struct = struct
       heading : line_span;
       layout_after : line_span;
       (* Djot heading continuation lines, reversed. Empty unless
-         [djot_headings]: in CommonMark a heading is exactly one line. *)
+         [multiline_atx_headings]: in CommonMark a heading is exactly one line. *)
       more : line_span list }
 
   type setext =
@@ -628,8 +628,8 @@ module Block_struct = struct
   (* Adding lines to blocks *)
 
   let match_list_marker p ~last ~start =
-    let djot_styles = Oymarkit_mod.extended_ordered_list_styles p.oymarkit_mod in
-    Match.list_marker ~djot_styles p.i ~last ~start
+    let extended_styles = Oymarkit_mod.extended_ordered_list_styles p.oymarkit_mod in
+    Match.list_marker ~extended_styles p.i ~last ~start
 
   let match_html_block_start p ~last ~start =
     (* Djot has no HTML blocks: a line starting with a tag is a paragraph. *)
@@ -641,7 +641,9 @@ module Block_struct = struct
     let no_setext =
       no_setext || not (Oymarkit_mod.setext_headings p.oymarkit_mod)
     in
-    let djot_tb = Oymarkit_mod.djot_thematic_break p.oymarkit_mod in
+    let thematic_break_djot =
+      not (Oymarkit_mod.underscore_thematic_break p.oymarkit_mod)
+    in
     if only_blanks p then Match.Blank_line else
     if indent >= 4 && Oymarkit_mod.indented_code p.oymarkit_mod
     then Indented_code_block_line else begin
@@ -665,20 +667,20 @@ module Block_struct = struct
             Match.setext_heading_underline p.i ~last ~start
           in
           if r <> Nomatch then r else
-          let r = Match.thematic_break ~djot:djot_tb p.i ~last ~start in
+          let r = Match.thematic_break ~djot:thematic_break_djot p.i ~last ~start in
           if r <> Nomatch then r else
           let r = match_list_marker p ~last ~start in
           if r <> Nomatch then r else
           Paragraph_line
       | '#' ->
           let closing_sequence =
-            not (Oymarkit_mod.djot_headings p.oymarkit_mod)
+            Oymarkit_mod.atx_closing_sequence p.oymarkit_mod
           in
           let r = Match.atx_heading ~closing_sequence p.i ~last ~start in
           if r <> Nomatch then r else
           Paragraph_line
       | '+' | '*' | '0' .. '9' ->
-          let r = Match.thematic_break ~djot:djot_tb p.i ~last ~start in
+          let r = Match.thematic_break ~djot:thematic_break_djot p.i ~last ~start in
           if r <> Nomatch then r else
           let r = match_list_marker p ~last ~start in
           if r <> Nomatch then r else
@@ -695,7 +697,8 @@ module Block_struct = struct
       | '_' ->
           (* Djot has no [_] thematic break: [___] is ordinary text. *)
           let r =
-            if djot_tb then Match.Nomatch else
+            if not (Oymarkit_mod.underscore_thematic_break p.oymarkit_mod)
+            then Match.Nomatch else
             Match.thematic_break p.i ~last ~start
           in
           if r <> Nomatch then r else
@@ -752,8 +755,11 @@ module Block_struct = struct
           if r <> Nomatch then r else
           Paragraph_line
       | '|' when p.exts ->
-          let djot_verbatim = Oymarkit_mod.djot_verbatim p.oymarkit_mod in
-          let r = Match.ext_table_row ~djot_verbatim p.i ~last ~start in
+          let verbatim_span =
+            Oymarkit_mod.verbatim_style p.oymarkit_mod = `Verbatim_span
+          in
+          let r = Match.ext_table_row ~verbatim_span p.i ~last
+              ~start in
           if r <> Nomatch then r else
           Paragraph_line
       | '[' when p.exts ->
@@ -920,8 +926,9 @@ module Block_struct = struct
        second item: the line is inside the item, and there a marker cannot
        interrupt the open paragraph. *)
     let min =
-      if Oymarkit_mod.djot_list_indent p.oymarkit_mod then indent + 1
-      else indent + marker_size + after_marker
+      match Oymarkit_mod.list_indent p.oymarkit_mod with
+      | `Marker_plus_one -> indent + 1
+      | `Content_column -> indent + marker_size + after_marker
     in
     min, { before_marker; marker; after_marker; ext_task_marker;
            blocks = add_open_blocks p [] }
@@ -1427,7 +1434,7 @@ module Block_struct = struct
 
   and add_line p = function
   | Paragraph par :: bs -> try_add_to_paragraph p par bs
-  | Heading (`Atx a) :: bs when Oymarkit_mod.djot_headings p.oymarkit_mod ->
+  | Heading (`Atx a) :: bs when Oymarkit_mod.multiline_atx_headings p.oymarkit_mod ->
       try_add_to_atx_heading p a bs
   | ((Thematic_break _ | Heading _ | Blank_line _ | Linkref_def _
       | Attribute_specs _) :: _)
@@ -1988,14 +1995,16 @@ and block_struct_to_footnote_definition p indent (label, defined_label) bs =
   Block.Ext_footnote_definition fn
 
 and block_struct_to_list_item p (i : Block_struct.list_item) =
-  let djot_tight = Oymarkit_mod.djot_list_tightness p.oymarkit_mod in
+  let non_list_boundary_blank =
+    Oymarkit_mod.list_tightness p.oymarkit_mod = `Non_list_boundary_blank
+  in
   let rec loop bstate tight acc = function
   | Block_struct.Blank_line _ as bl :: bs ->
       let bstate = if bstate = `Trail_blank then `Trail_blank else `Blank in
       loop bstate tight (block_struct_to_block p bl :: acc) bs
   | Block_struct.List
       { items = { blocks = Block_struct.Blank_line _ :: _ } :: _ } as l :: bs
-    when not djot_tight ->
+    when not non_list_boundary_blank ->
       loop bstate false (block_struct_to_block p l :: acc) bs
   | b :: bs ->
       let tight = tight && not (bstate = `Blank)  in
@@ -2087,8 +2096,9 @@ and block_struct_to_list p list =
   let last, tight = block_struct_to_list_item p (List.hd items) in
   let tight, items = loop p (not list.loose && tight) [last] (List.tl items) in
   let tight =
-    if Oymarkit_mod.djot_list_tightness p.oymarkit_mod
-    then djot_list_is_tight list else tight
+    match Oymarkit_mod.list_tightness p.oymarkit_mod with
+    | `Non_list_boundary_blank -> djot_list_is_tight list
+    | `Any_blank -> tight
   in
   let meta = meta_of_metas p ~first:(snd (List.hd items)) ~last:(snd last) in
   Block.List ({ type' = list.Block_struct.list_type; tight; items }, meta)

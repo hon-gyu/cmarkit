@@ -15,22 +15,22 @@ open Cmarkit_
       on. The knob stands on its own, for a stricter dialect;
     - [raw_html]: djot parses no HTML, inline or block;
     - [entity_refs]: djot's only escape is the backslash;
-    - [djot_escapes]: backslash-newline is a hard break and backslash-space is a
-      non-breaking space;
+    - [backslash_space_nbsp]: backslash-space is a non-breaking space;
+    - [hard_break_trailing_blanks]: a hard-break backslash may precede blanks;
     - [two_space_hard_break]: two trailing spaces create a hard break;
-    - [whitespace_free_info_string]: fence info strings cannot contain whitespace;
+    - [whitespace_free_info_string]: fence info strings cannot contain
+      whitespace;
     - [block_quote_marker_space]: djot's [>] wants a space after it. *)
 
-let html ?djot ?lazy_continuation ?raw_html ?entity_refs ?djot_escapes
-    ?two_space_hard_break
-    ?indented_code ?tilde_code_fences ?whitespace_free_info_string ?djot_verbatim
-    ?block_quote_marker_space s
-  =
+let html ?djot ?lazy_continuation ?raw_html ?entity_refs ?backslash_space_nbsp
+    ?hard_break_trailing_blanks ?two_space_hard_break ?list_indent
+    ?list_tightness ?indented_code ?tilde_code_fences
+    ?whitespace_free_info_string ?verbatim_style ?block_quote_marker_space s =
   let doc =
     Doc.of_string ~strict:false ?djot ?lazy_continuation ?raw_html ?entity_refs
-      ?djot_escapes ?two_space_hard_break ?indented_code ?tilde_code_fences
-      ?whitespace_free_info_string
-      ?djot_verbatim ?block_quote_marker_space s
+      ?backslash_space_nbsp ?hard_break_trailing_blanks ?two_space_hard_break
+      ?list_indent ?list_tightness ?indented_code ?tilde_code_fences
+      ?whitespace_free_info_string ?verbatim_style ?block_quote_marker_space s
   in
   print_string (Cmarkit_html.of_doc ~safe:false doc)
 
@@ -39,7 +39,8 @@ let html ?djot ?lazy_continuation ?raw_html ?entity_refs ?djot_escapes
 
 let%expect_test "commonmark: an unmarked line continues the quoted paragraph" =
   html "> quoted\nlazy\n";
-  [%expect {|
+  [%expect
+    {|
     <blockquote>
     <p>quoted
     lazy</p>
@@ -48,7 +49,8 @@ let%expect_test "commonmark: an unmarked line continues the quoted paragraph" =
 
 let%expect_test "off: an unmarked line closes the block quote" =
   html ~lazy_continuation:false "> quoted\nlazy\n";
-  [%expect {|
+  [%expect
+    {|
     <blockquote>
     <p>quoted</p>
     </blockquote>
@@ -57,7 +59,8 @@ let%expect_test "off: an unmarked line closes the block quote" =
 
 let%expect_test "off: a marked line still continues the block quote" =
   html ~lazy_continuation:false "> quoted\n> more\n";
-  [%expect {|
+  [%expect
+    {|
     <blockquote>
     <p>quoted
     more</p>
@@ -112,7 +115,8 @@ let%expect_test "commonmark: a lone tag opens an HTML block" =
 
 let%expect_test "djot: a lone tag is just a paragraph line" =
   html ~raw_html:false "<div>\nnot a paragraph\n</div>\n";
-  [%expect {|
+  [%expect
+    {|
     <p>&lt;div&gt;
     not a paragraph
     &lt;/div&gt;</p>
@@ -156,23 +160,23 @@ let%expect_test "off: two trailing spaces are just spaces" =
     |}]
 
 let%expect_test "independent: djot escapes do not disable two-space breaks" =
-  html ~djot_escapes:true "one  \ntwo";
+  html ~backslash_space_nbsp:true "one  \ntwo";
   [%expect {|
     <p>one<br>
     two</p>
     |}]
 
-let%expect_test "djot: a trailing backslash is the hard break" =
-  html ~djot_escapes:true "one\\\ntwo";
+let%expect_test "both: a trailing backslash is the hard break" =
+  html "one\\\ntwo";
   [%expect {|
     <p>one<br>
     two</p>
     |}]
 
-let%expect_test "djot: trailing backslash runs use escape parity" =
-  html ~djot_escapes:true {|foo\\
+let%expect_test "trailing backslash runs use escape parity" =
+  html ~hard_break_trailing_blanks:true {|foo\\
 bar|};
-  html ~djot_escapes:true {|foo\\\
+  html ~hard_break_trailing_blanks:true {|foo\\\
 bar|};
   [%expect {|
     <p>foo\
@@ -181,21 +185,76 @@ bar|};
     bar</p>
     |}]
 
+let%expect_test "hard-break backslashes may tolerate trailing blanks" =
+  html "one\\  \ntwo";
+  html ~hard_break_trailing_blanks:true "one\\  \ntwo";
+  [%expect {|
+    <p>one\<br>
+    two</p>
+    <p>one<br>
+    two</p>
+    |}]
+
 let%expect_test "commonmark: backslash-space is a literal backslash" =
   html "a\\ b";
   [%expect {| <p>a\ b</p> |}]
 
 let%expect_test "djot: backslash-space is a non-breaking space" =
-  html ~djot_escapes:true "a\\ b";
+  html ~backslash_space_nbsp:true "a\\ b";
   [%expect {| <p>a&nbsp;b</p> |}]
 
 let%expect_test "djot: an escaped backslash can precede a non-breaking space" =
-  html ~djot_escapes:true {|foo\\\ bar|};
+  html ~backslash_space_nbsp:true {|foo\\\ bar|};
   [%expect {| <p>foo\&nbsp;bar</p> |}]
 
 let%expect_test "djot: backslash before punctuation is unchanged" =
-  html ~djot_escapes:true "\\*x\\* \\\\ \\a";
+  html ~backslash_space_nbsp:true "\\*x\\* \\\\ \\a";
   [%expect {| <p>*x* \ \a</p> |}]
+
+let%expect_test "list indentation is a policy" =
+  html ~list_indent:`Content_column "- one\n - two\n";
+  html ~list_indent:`Marker_plus_one "- one\n - two\n";
+  [%expect
+    {|
+    <ul>
+    <li>one</li>
+    <li>two</li>
+    </ul>
+    <ul>
+    <li>one
+    <ul>
+    <li>two</li>
+    </ul>
+    </li>
+    </ul>
+    |}]
+
+let%expect_test "list tightness is a policy" =
+  let source = "- a\n\n  - b\n\n- c\n" in
+  html ~list_tightness:`Any_blank source;
+  html ~list_tightness:`Non_list_boundary_blank source;
+  [%expect
+    {|
+    <ul>
+    <li>
+    <p>a</p>
+    <ul>
+    <li>b</li>
+    </ul>
+    </li>
+    <li>
+    <p>c</p>
+    </li>
+    </ul>
+    <ul>
+    <li>a
+    <ul>
+    <li>b</li>
+    </ul>
+    </li>
+    <li>c</li>
+    </ul>
+    |}]
 
 (* Code fences
    =========== *)
@@ -203,7 +262,8 @@ let%expect_test "djot: backslash before punctuation is unchanged" =
 let%expect_test "commonmark: both fence characters open a code block" =
   html "```\ncode\n```\n";
   html "~~~\ncode\n~~~\n";
-  [%expect {|
+  [%expect
+    {|
     <pre><code>code
     </code></pre>
     <pre><code>code
@@ -213,7 +273,8 @@ let%expect_test "commonmark: both fence characters open a code block" =
 let%expect_test "djot: only backticks fence, a tilde run is text" =
   html ~tilde_code_fences:false "```\ncode\n```\n";
   html ~tilde_code_fences:false "~~~\ncode\n~~~\n";
-  [%expect {|
+  [%expect
+    {|
     <pre><code>code
     </code></pre>
     <p>~~~
@@ -226,7 +287,8 @@ let%expect_test "commonmark: fence info may contain whitespace" =
   [%expect {| <pre><code class="language-not"></code></pre> |}]
 
 let%expect_test "djot: fence info may not contain whitespace" =
-  html ~whitespace_free_info_string:true ~djot_verbatim:true "``` not a code block";
+  html ~whitespace_free_info_string:true ~verbatim_style:`Verbatim_span
+    "``` not a code block";
   [%expect {| <p><code> not a code block</code></p> |}]
 
 (* Block quote marker
@@ -244,7 +306,8 @@ let%expect_test "djot: the marker needs a space or the end of the line" =
   html ~block_quote_marker_space:true ">text";
   html ~block_quote_marker_space:true "> text";
   html ~block_quote_marker_space:true ">\n> text";
-  [%expect {|
+  [%expect
+    {|
     <p>&gt;text</p>
     <blockquote>
     <p>text</p>
@@ -265,7 +328,8 @@ let%expect_test "preset: lazy lines stay, no HTML, no entities, djot escapes" =
   (* Two trailing spaces are not a hard break in djot, and they are not layout
      either: they are text, and they survive into the output. *)
   html ~djot:true "one  \ntwo";
-  [%expect {|
+  [%expect
+    {|
     <blockquote>
     <p>quoted
     lazy</p>
@@ -283,7 +347,8 @@ let%expect_test "preset: no indented code, no setext heading, no _ break" =
   html ~djot:true "heading?\n---\n";
   html ~djot:true "heading?\n\n---\n";
   html ~djot:true "___";
-  [%expect {|
+  [%expect
+    {|
     <p>not code</p>
     <p>heading?
     —</p>
@@ -295,7 +360,8 @@ let%expect_test "preset: no indented code, no setext heading, no _ break" =
 let%expect_test "preset: an explicit knob wins over the preset" =
   html ~djot:true ~indented_code:true "    code";
   html ~djot:true ~raw_html:true "<b>bold</b>";
-  [%expect {|
+  [%expect
+    {|
     <pre><code>code
     </code></pre>
     <p><b>bold</b></p>
