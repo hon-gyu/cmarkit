@@ -14,6 +14,7 @@ let set_enable_oymarkit b = enable_oymarkit_ := b
 
 (*---------------------------------------------------------------------------
    Copyright (c) 2021 The cmarkit programmers. All rights reserved.
+   Copyright (c) 2026 The oymarkit programmers. All rights reserved.
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 

@@ -10,6 +10,7 @@ module Parser_common = Parser_common_
 
 (*---------------------------------------------------------------------------
    Copyright (c) 2021 The cmarkit programmers. All rights reserved.
+   Copyright (c) 2026 The oymarkit programmers. All rights reserved.
    SPDX-License-Identifier: ISC
   --------------------------------------------------------------------------- *)
 
