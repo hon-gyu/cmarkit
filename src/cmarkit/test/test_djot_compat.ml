@@ -159,6 +159,18 @@ let%expect_test "djot: a trailing backslash is the hard break" =
     two</p>
     |}]
 
+let%expect_test "djot: trailing backslash runs use escape parity" =
+  html ~djot_escapes:true {|foo\\
+bar|};
+  html ~djot_escapes:true {|foo\\\
+bar|};
+  [%expect {|
+    <p>foo\
+    bar</p>
+    <p>foo\<br>
+    bar</p>
+    |}]
+
 let%expect_test "commonmark: backslash-space is a literal backslash" =
   html "a\\ b";
   [%expect {| <p>a\ b</p> |}]
@@ -166,6 +178,10 @@ let%expect_test "commonmark: backslash-space is a literal backslash" =
 let%expect_test "djot: backslash-space is a non-breaking space" =
   html ~djot_escapes:true "a\\ b";
   [%expect {| <p>a&nbsp;b</p> |}]
+
+let%expect_test "djot: an escaped backslash can precede a non-breaking space" =
+  html ~djot_escapes:true {|foo\\\ bar|};
+  [%expect {| <p>foo\&nbsp;bar</p> |}]
 
 let%expect_test "djot: backslash before punctuation is unchanged" =
   html ~djot_escapes:true "\\*x\\* \\\\ \\a";

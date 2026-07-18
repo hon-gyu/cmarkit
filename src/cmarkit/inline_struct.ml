@@ -233,7 +233,17 @@ let newline_token ~djot_escapes s prev_line newline =
       in
       loop last
     in
-    if djot_escapes && non_blank >= first && s.[non_blank] = '\\' then begin
+    let rec backslash_run_start k =
+      if k > first && s.[k - 1] = '\\' then backslash_run_start (k - 1) else k
+    in
+    let djot_hard_break =
+      if not djot_escapes || non_blank < first || s.[non_blank] <> '\\'
+      then false
+      else
+        let run_start = backslash_run_start non_blank in
+        (non_blank - run_start + 1) mod 2 = 1
+    in
+    if djot_hard_break then begin
       (* The blanks on either side of the backslash are layout: the text ends at
          the last non-blank before it. *)
       let rec back k =
@@ -242,7 +252,8 @@ let newline_token ~djot_escapes s prev_line newline =
       in
       (back (non_blank - 1), `Hard)
     end else
-    if non_space = last && s.[non_space] = '\\' then (non_space, `Hard) else
+    if (not djot_escapes) && non_space = last && s.[non_space] = '\\'
+    then (non_space, `Hard) else
     (* In djot's escape rule, a trailing backslash is the only hard break: two
        trailing spaces are neither a break nor layout, they are text, and they
        survive into the rendered output. CommonMark instead drops them, and reads
