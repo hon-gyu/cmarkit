@@ -8,11 +8,11 @@ open Sexplib0
    It is a *fallback*: link/image resolution keeps CommonMark precedence. *)
 
 let html s =
-  let doc = Doc.of_string ~strict:false ~djot_inline_attributes:true s in
+  let doc = Doc.of_string ~strict:false ~inline_attributes:true s in
   print_string (Cmarkit_html.of_doc ~safe:false doc)
 
 let sexp s =
-  let doc = Doc.of_string ~strict:false ~djot_inline_attributes:true s in
+  let doc = Doc.of_string ~strict:false ~inline_attributes:true s in
   Format.printf "%a@." Sexp.pp_hum ((make_sexp_of ()).doc doc)
 
 let%expect_test "span: djot reference example" =

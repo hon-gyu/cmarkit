@@ -107,12 +107,12 @@ let html_block_absorbs (lines : (string * Cmarkit_.Meta.t) list) : bool =
 
 let reparse ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis
     ?marked_emphasis_delims ?strong_emphasis_width ?extra_inline_containers
-    ?block_id ?djot_inline_attributes ?djot_block_attributes ?djot_symbols
+    ?block_id ?inline_attributes ?block_attributes ?colon_symbols
     ?smart_punctuation (b : Block.t) : Block.t =
   b |> to_commonmark
   |> Doc.of_string ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis
        ?marked_emphasis_delims ?strong_emphasis_width ?extra_inline_containers
-       ?block_id ?djot_inline_attributes ?djot_block_attributes ?djot_symbols
+       ?block_id ?inline_attributes ?block_attributes ?colon_symbols
        ?smart_punctuation
   |> Doc.block
 

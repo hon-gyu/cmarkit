@@ -49,7 +49,7 @@ let count = 5000
 
 let roundtrip =
   P.roundtrip_with ~emphasis_delims:[ '_' ] ~strong_emphasis_delims:[ '*' ]
-    ~marked_emphasis_delims:true ~djot_symbols:true ~smart_punctuation:true ()
+    ~marked_emphasis_delims:true ~colon_symbols:true ~smart_punctuation:true ()
 
 let test ~negative name (config : G.Bconfig.t) =
   let gen = G.gen_paragraph config in

@@ -78,17 +78,17 @@ module Oymarkit_mod = struct
     strong_emphasis_width : int;
     extra_inline_containers : Inline.Extra_inline_container.Config.t;
     block_id : bool;
-    djot_inline_attributes : bool;
-    djot_block_attributes : bool;
+    inline_attributes : bool;
+    block_attributes : bool;
     djot_thematic_break : bool;
-    djot_symbols : bool;
+    colon_symbols : bool;
     djot_escapes : bool;
     two_space_hard_break : bool;
-    djot_raw : bool;
-    djot_ordered_list_styles : bool;
-    djot_definition_lists : bool;
-    djot_math : bool;
-    djot_table_captions : bool;
+    format_raw_content : bool;
+    extended_ordered_list_styles : bool;
+    definition_lists : bool;
+    backtick_math : bool;
+    table_captions : bool;
     djot_verbatim : bool;
     djot_headings : bool;
     heading_implicit_targets : bool;
@@ -98,7 +98,7 @@ module Oymarkit_mod = struct
     list_marker_interrupts_paragraph : bool;
     djot_list_indent : bool;
     djot_list_tightness : bool;
-    djot_emphasis : bool;
+    simple_emphasis_flanking : bool;
     smart_punctuation : bool;
     indented_code : bool;
     setext_headings : bool;
@@ -137,13 +137,13 @@ module Oymarkit_mod = struct
 
   let make ~emphasis_delims ~strong_emphasis_delims ~intraword_emphasis
       ~marked_emphasis_delims ~strong_emphasis_width ~extra_inline_containers
-      ~block_id ~djot_inline_attributes ~djot_block_attributes
-      ~djot_thematic_break ~djot_symbols ~djot_escapes ~two_space_hard_break
-      ~djot_raw
-      ~djot_ordered_list_styles ~djot_definition_lists ~djot_math
-      ~djot_table_captions ~djot_verbatim ~djot_headings
+      ~block_id ~inline_attributes ~block_attributes
+      ~djot_thematic_break ~colon_symbols ~djot_escapes ~two_space_hard_break
+      ~format_raw_content
+      ~extended_ordered_list_styles ~definition_lists ~backtick_math
+      ~table_captions ~djot_verbatim ~djot_headings
       ~heading_implicit_targets ~djot_links ~case_sensitive_labels
-      ~djot_emphasis ~blocks_interrupt_paragraph
+      ~simple_emphasis_flanking ~blocks_interrupt_paragraph
       ~list_marker_interrupts_paragraph ~djot_list_indent
       ~djot_list_tightness ~smart_punctuation
       ~indented_code ~setext_headings ~lazy_continuation ~raw_html ~entity_refs
@@ -169,17 +169,17 @@ module Oymarkit_mod = struct
       strong_emphasis_width;
       extra_inline_containers;
       block_id;
-      djot_inline_attributes;
-      djot_block_attributes;
+      inline_attributes;
+      block_attributes;
       djot_thematic_break;
-      djot_symbols;
+      colon_symbols;
       djot_escapes;
       two_space_hard_break;
-      djot_raw;
-      djot_ordered_list_styles;
-      djot_definition_lists;
-      djot_math;
-      djot_table_captions;
+      format_raw_content;
+      extended_ordered_list_styles;
+      definition_lists;
+      backtick_math;
+      table_captions;
       djot_verbatim;
       djot_headings;
       heading_implicit_targets;
@@ -189,7 +189,7 @@ module Oymarkit_mod = struct
       list_marker_interrupts_paragraph;
       djot_list_indent;
       djot_list_tightness;
-      djot_emphasis;
+      simple_emphasis_flanking;
       smart_punctuation;
       indented_code;
       setext_headings;
@@ -235,7 +235,7 @@ module Oymarkit_mod = struct
        to [intraword_emphasis], which stays orthogonal to this knob). A run may
        therefore both open and close; which it does is settled by matching. *)
     let may_open, may_close =
-      if t.djot_emphasis then (not next_white), (not prev_white) else
+      if t.simple_emphasis_flanking then (not next_white), (not prev_white) else
       let may_open =
         (char = '*' && is_left_flanking)
         || char = '_' && is_left_flanking
@@ -272,8 +272,8 @@ module Oymarkit_mod = struct
     Inline.Extra_inline_container.Config.syntax t.extra_inline_containers kind
 
   let block_id t = t.block_id
-  let djot_inline_attributes t = t.djot_inline_attributes
-  let djot_block_attributes t = t.djot_block_attributes
+  let inline_attributes t = t.inline_attributes
+  let block_attributes t = t.block_attributes
 
   (* Djot thematic breaks are runs of [*] or [-] only: [_] is not a break
      character. Djot also lets a break be indented arbitrarily, but that falls
@@ -281,7 +281,7 @@ module Oymarkit_mod = struct
      code blocks disabled there is no competing interpretation of a deep
      indent, so the break simply matches. *)
   let djot_thematic_break t = t.djot_thematic_break
-  let djot_symbols t = t.djot_symbols
+  let colon_symbols t = t.colon_symbols
 
   (* Djot adds a non-breaking-space escape and uses a trailing backslash for a
      hard break. Whether two trailing spaces are also a hard break is controlled
@@ -292,25 +292,25 @@ module Oymarkit_mod = struct
   (* Djot raw content: a verbatim span with a [ {=format} ] specifier, and a code
      fence whose info string is [=format]. A renderer whose output format matches
      passes the content through verbatim; every other one drops it. *)
-  let djot_raw t = t.djot_raw
+  let format_raw_content t = t.format_raw_content
 
   (* Djot numbers ordered lists in decimal, lower/upper alpha and lower/upper
      roman, and delimits with [1.], [1)] or [(1)]. A style change starts a new
      list. *)
-  let djot_ordered_list_styles t = t.djot_ordered_list_styles
+  let extended_ordered_list_styles t = t.extended_ordered_list_styles
 
   (* Djot definition lists: a [: term] line followed by the indented blocks that
      define it. *)
-  let djot_definition_lists t = t.djot_definition_lists
+  let definition_lists t = t.definition_lists
 
   (* Djot spells math as a dollar-prefixed verbatim span, [ $`x` ] inline and
      [ $$`x` ] display. It produces the same [Ext_math_span] as the pandoc
      [$...$] spelling behind the math extension; the two can coexist. *)
-  let djot_math t = t.djot_math
+  let backtick_math t = t.backtick_math
 
   (* Djot table caption: a [^ text] line after a table, continuation lines
      indented. *)
-  let djot_table_captions t = t.djot_table_captions
+  let table_captions t = t.table_captions
 
   (* Djot strips a padding space of a verbatim span only where it is what lets
      the content start or end with a backtick; CommonMark strips one from both
@@ -353,7 +353,7 @@ module Oymarkit_mod = struct
      item, leaves the list tight; a blank between two paragraphs of one item does
      not. CommonMark loosens on any blank line between items. *)
   let djot_list_tightness t = t.djot_list_tightness
-  let djot_emphasis t = t.djot_emphasis
+  let simple_emphasis_flanking t = t.simple_emphasis_flanking
   let smart_punctuation t = t.smart_punctuation
   let indented_code t = t.indented_code
   let setext_headings t = t.setext_headings
@@ -430,23 +430,23 @@ let parser
     ?strong_emphasis_width
     ?extra_inline_containers
     ?(block_id = false)
-    ?djot_inline_attributes
-    ?djot_block_attributes
+    ?inline_attributes
+    ?block_attributes
     ?djot_thematic_break
-    ?djot_symbols
+    ?colon_symbols
     ?djot_escapes
     ?two_space_hard_break
-    ?djot_raw
-    ?djot_ordered_list_styles
-    ?djot_definition_lists
-    ?djot_math
-    ?djot_table_captions
+    ?format_raw_content
+    ?extended_ordered_list_styles
+    ?definition_lists
+    ?backtick_math
+    ?table_captions
     ?djot_verbatim
     ?djot_headings
     ?heading_implicit_targets
     ?djot_links
     ?case_sensitive_labels
-    ?djot_emphasis
+    ?simple_emphasis_flanking
     ?blocks_interrupt_paragraph
     ?list_marker_interrupts_paragraph
     ?djot_list_indent
@@ -495,28 +495,28 @@ let parser
     let djot = Inline.Extra_inline_container.Config.djot in
     knob ~cmark ~djot extra_inline_containers
   in
-  let djot_inline_attributes =
-    knob ~cmark:false ~djot:true djot_inline_attributes
+  let inline_attributes =
+    knob ~cmark:false ~djot:true inline_attributes
   in
-  let djot_block_attributes =
-    knob ~cmark:false ~djot:true djot_block_attributes
+  let block_attributes =
+    knob ~cmark:false ~djot:true block_attributes
   in
   let djot_thematic_break = knob ~cmark:false ~djot:true djot_thematic_break in
-  let djot_symbols = knob ~cmark:false ~djot:true djot_symbols in
+  let colon_symbols = knob ~cmark:false ~djot:true colon_symbols in
   let djot_escapes = knob ~cmark:false ~djot:true djot_escapes in
   let two_space_hard_break =
     knob ~cmark:true ~djot:false two_space_hard_break
   in
-  let djot_raw = knob ~cmark:false ~djot:true djot_raw in
-  let djot_ordered_list_styles =
-    knob ~cmark:false ~djot:true djot_ordered_list_styles
+  let format_raw_content = knob ~cmark:false ~djot:true format_raw_content in
+  let extended_ordered_list_styles =
+    knob ~cmark:false ~djot:true extended_ordered_list_styles
   in
-  let djot_definition_lists =
-    knob ~cmark:false ~djot:true djot_definition_lists
+  let definition_lists =
+    knob ~cmark:false ~djot:true definition_lists
   in
-  let djot_math = knob ~cmark:false ~djot:true djot_math in
-  let djot_table_captions =
-    knob ~cmark:false ~djot:true djot_table_captions
+  let backtick_math = knob ~cmark:false ~djot:true backtick_math in
+  let table_captions =
+    knob ~cmark:false ~djot:true table_captions
   in
   let djot_verbatim = knob ~cmark:false ~djot:true djot_verbatim in
   let djot_headings = knob ~cmark:false ~djot:true djot_headings in
@@ -527,7 +527,7 @@ let parser
   let case_sensitive_labels =
     knob ~cmark:false ~djot:true case_sensitive_labels
   in
-  let djot_emphasis = knob ~cmark:false ~djot:true djot_emphasis in
+  let simple_emphasis_flanking = knob ~cmark:false ~djot:true simple_emphasis_flanking in
   let blocks_interrupt_paragraph =
     knob ~cmark:true ~djot:false blocks_interrupt_paragraph
   in
@@ -557,13 +557,13 @@ let parser
   let oymarkit_mod =
     Oymarkit_mod.make ~emphasis_delims ~strong_emphasis_delims
       ~intraword_emphasis ~marked_emphasis_delims ~strong_emphasis_width
-      ~extra_inline_containers ~block_id ~djot_inline_attributes
-      ~djot_block_attributes ~djot_thematic_break ~djot_symbols ~djot_escapes
+      ~extra_inline_containers ~block_id ~inline_attributes
+      ~block_attributes ~djot_thematic_break ~colon_symbols ~djot_escapes
       ~two_space_hard_break
-      ~djot_raw ~djot_ordered_list_styles ~djot_definition_lists ~djot_math
-      ~djot_table_captions ~djot_verbatim ~djot_headings
+      ~format_raw_content ~extended_ordered_list_styles ~definition_lists ~backtick_math
+      ~table_captions ~djot_verbatim ~djot_headings
       ~heading_implicit_targets ~djot_links ~case_sensitive_labels
-      ~djot_emphasis ~blocks_interrupt_paragraph
+      ~simple_emphasis_flanking ~blocks_interrupt_paragraph
       ~list_marker_interrupts_paragraph ~djot_list_indent
       ~djot_list_tightness ~smart_punctuation ~indented_code ~setext_headings ~lazy_continuation
       ~raw_html ~entity_refs ~tilde_code_fences ~whitespace_free_info_string ~block_quote_marker_space ~div

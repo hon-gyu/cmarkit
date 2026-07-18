@@ -22,8 +22,8 @@ See [docs][].
 
 let html s =
   let doc =
-    Doc.of_string ~strict:false ~djot_block_attributes:true
-      ~djot_inline_attributes:true s
+    Doc.of_string ~strict:false ~block_attributes:true
+      ~inline_attributes:true s
   in
   print_string (Cmarkit_html.of_doc ~safe:false doc)
 

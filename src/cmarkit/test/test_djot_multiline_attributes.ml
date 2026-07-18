@@ -11,14 +11,14 @@ open Cmarkit_
     These tests exist to pin that down: it costs nothing and it is the kind of
     property a later change to either scanner could quietly break. *)
 
-let html ?djot_inline_attributes ?djot_block_attributes s =
+let html ?inline_attributes ?block_attributes s =
   let doc =
-    Doc.of_string ~strict:false ?djot_inline_attributes ?djot_block_attributes s
+    Doc.of_string ~strict:false ?inline_attributes ?block_attributes s
   in
   print_string (Cmarkit_html.of_doc ~safe:false doc)
 
-let inline_attrs = html ~djot_inline_attributes:true
-let block_attrs = html ~djot_block_attributes:true
+let inline_attrs = html ~inline_attributes:true
+let block_attrs = html ~block_attributes:true
 
 (* Inline attributes
    ================= *)

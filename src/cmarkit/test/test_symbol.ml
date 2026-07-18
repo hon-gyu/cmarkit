@@ -9,16 +9,16 @@ open Cmarkit_
     does not become a symbol. *)
 
 let html s =
-  let doc = Doc.of_string ~strict:false ~djot_symbols:true s in
+  let doc = Doc.of_string ~strict:false ~colon_symbols:true s in
   print_string (Cmarkit_html.of_doc ~safe:false doc)
 
 let sexp s =
-  let doc = Doc.of_string ~strict:false ~djot_symbols:true s in
+  let doc = Doc.of_string ~strict:false ~colon_symbols:true s in
   Format.printf "%a@." Sexplib0.Sexp.pp_hum ((Sexp.make_sexp_of ()).doc doc)
 
 (* [commonmark] renders back to source: symbols must roundtrip. *)
 let commonmark s =
-  let doc = Doc.of_string ~strict:false ~djot_symbols:true s in
+  let doc = Doc.of_string ~strict:false ~colon_symbols:true s in
   print_string (Cmarkit_commonmark.of_doc doc)
 
 (* What is a symbol

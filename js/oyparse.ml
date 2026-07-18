@@ -21,7 +21,7 @@ let extra_inline_containers =
 let parse (md : string) : string =
   let doc =
     Cmarkit.Doc.of_string ~strict:false ~locs:true ~wikilink:true ~div:true
-      ~djot_inline_attributes:true ~djot_block_attributes:true ~block_id:true
+      ~inline_attributes:true ~block_attributes:true ~block_id:true
       ~callout ~extra_inline_containers md
   in
   (* Keep the [^id] block-id marker (dimmed via CSS) rather than stripping it. *)

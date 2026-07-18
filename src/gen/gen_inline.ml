@@ -94,7 +94,7 @@ let (raw_html_egs : Inline.t list) =
 (* Djot symbols. Opaque leaves: no children, never span a line. They need no
    separation rule — [:a:] and [:b:] flush against each other render [:a::b:],
    and the scanner takes [:a:] then [:b:], recovering both. Requires the
-   parser's [djot_symbols]. *)
+   parser's [colon_symbols]. *)
 let symbol_egs : Inline.t list =
   [ "smile"; "+1"; "a_b" ]
   |> List.map (fun n -> Inline.(Ext_symbol (Symbol.make n, Meta.none)))
@@ -231,7 +231,7 @@ module Iconfig = struct
         (** Weight of an {!Inline.Ext_quoted} span. Requires the parser's
             [smart_punctuation]. *)
         (** Djot symbols. Defaults to 0: the node only has a witness when the
-            parser's [djot_symbols] is on, so a consumer must opt in on both
+            parser's [colon_symbols] is on, so a consumer must opt in on both
             sides. *)
     w_smart_punct : int;
         (** Djot smart punctuation. Defaults to 0, and pairs with the parser's
@@ -333,7 +333,7 @@ module Iconfig = struct
 
   (** {!typed} with the djot inline extensions switched on. Kept separate
       because the nodes only have a witness when the parser is given
-      [djot_symbols] and [smart_punctuation]; reparsing without those knobs
+      [colon_symbols] and [smart_punctuation]; reparsing without those knobs
       turns the rendered source back into plain text. *)
   let typed_djot = { typed with w_symbol = 1; w_smart_punct = 1; w_quoted = 1 }
 end

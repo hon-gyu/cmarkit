@@ -70,7 +70,7 @@ let () =
 let attribute_string a = Attribute.to_string a
 
 let () =
-  match inline_of_string ~djot_inline_attributes:true "avant{lang=fr}{.blue}" with
+  match inline_of_string ~inline_attributes:true "avant{lang=fr}{.blue}" with
   | Inline.Ext_attributes (a, _) ->
       begin match
         attribute_string (Inline.Attributes.attributes a),
@@ -83,7 +83,7 @@ let () =
   | i -> fail_inline "parser should attach stacked attributes to text" i
 
 let () =
-  match inline_of_string ~djot_inline_attributes:true "_text_{#last .a}" with
+  match inline_of_string ~inline_attributes:true "_text_{#last .a}" with
   | Inline.Ext_attributes (a, _) ->
       begin match Inline.Attributes.inline a with
       | Inline.Emphasis _ ->
@@ -95,7 +95,7 @@ let () =
 
 let () =
   match
-    inline_of_string ~djot_inline_attributes:true
+    inline_of_string ~inline_attributes:true
       ~extra_inline_containers:Extra_config.explicit "{=text=}{.marked}"
   with
   | Inline.Ext_attributes (a, _) ->
@@ -106,7 +106,7 @@ let () =
   | i -> fail_inline "parser should attach attributes after extra containers" i
 
 let () =
-  match inline_of_string ~djot_inline_attributes:true "text{#foo\n.bar key=\"a b\"}" with
+  match inline_of_string ~inline_attributes:true "text{#foo\n.bar key=\"a b\"}" with
   | Inline.Ext_attributes (a, _) ->
       if attribute_string (Inline.Attributes.attributes a)
          <> "#foo .bar key=\"a b\""
@@ -124,7 +124,7 @@ let rec first_block = function
 
 let () =
   match
-    Doc.of_string ~djot_block_attributes:true
+    Doc.of_string ~block_attributes:true
       "{#water}\n{.important .large}\nDon't forget."
     |> Doc.block |> first_block
   with
@@ -140,7 +140,7 @@ let () =
 
 let () =
   match
-    Doc.of_string ~djot_block_attributes:true "{source=Iliad}\n> Sing, muse"
+    Doc.of_string ~block_attributes:true "{source=Iliad}\n> Sing, muse"
     |> Doc.block |> first_block
   with
   | Block.Ext_attributes (a, _) ->
@@ -152,7 +152,7 @@ let () =
 
 let () =
   match
-    Doc.of_string ~djot_block_attributes:true
+    Doc.of_string ~block_attributes:true
       "{#water\n  .important key=\"two words\"}\nFlow."
     |> Doc.block |> first_block
   with
@@ -164,7 +164,7 @@ let () =
 
 let () =
   match
-    Doc.of_string ~djot_block_attributes:true "{#orphan}\n\nParagraph."
+    Doc.of_string ~block_attributes:true "{#orphan}\n\nParagraph."
     |> Doc.block
   with
   | Block.Blocks
@@ -182,7 +182,7 @@ let () =
 
 let () =
   let rendered =
-    Doc.of_string ~djot_inline_attributes:true "_text_{#foo .bar}"
+    Doc.of_string ~inline_attributes:true "_text_{#foo .bar}"
     |> Cmarkit_commonmark.of_doc
   in
   if rendered <> "_text_{#foo .bar}"
@@ -190,7 +190,7 @@ let () =
 
 let () =
   let rendered =
-    Doc.of_string ~djot_block_attributes:true "{#water}\nFlow."
+    Doc.of_string ~block_attributes:true "{#water}\nFlow."
     |> Cmarkit_commonmark.of_doc
   in
   if rendered <> "{#water}\nFlow."
@@ -199,7 +199,7 @@ let () =
 let () =
   let source = "text{#foo\n.bar %keep me% key=\"a b\"}" in
   let rendered =
-    Doc.of_string ~djot_inline_attributes:true source
+    Doc.of_string ~inline_attributes:true source
     |> Cmarkit_commonmark.of_doc
   in
   if rendered <> source
@@ -207,7 +207,7 @@ let () =
 
 let () =
   let rendered =
-    Doc.of_string ~djot_inline_attributes:true "_text_{#foo .bar}"
+    Doc.of_string ~inline_attributes:true "_text_{#foo .bar}"
     |> Cmarkit_html.of_doc ~safe:false
   in
   if rendered <> "<p><em id=\"foo\" class=\"bar\">text</em></p>\n"
@@ -215,7 +215,7 @@ let () =
 
 let () =
   let rendered =
-    Doc.of_string ~djot_block_attributes:true "{#water .important}\nFlow."
+    Doc.of_string ~block_attributes:true "{#water .important}\nFlow."
     |> Cmarkit_html.of_doc ~safe:false
   in
   if rendered <> "<p id=\"water\" class=\"important\">Flow.</p>\n"

@@ -349,7 +349,7 @@ module Bconfig = struct
     }
 
   (** {!typed_md} with the djot inline extensions switched on. Reparsing must
-      supply [djot_symbols] and [smart_punctuation], or the rendered source
+      supply [colon_symbols] and [smart_punctuation], or the rendered source
       comes back as plain text. *)
   let typed_djot_md =
     {

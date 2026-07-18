@@ -322,7 +322,7 @@ let try_add_emphasis_token
   let prev_uchar = Match.prev_uchar s ~first ~before:start in
   let next_uchar = Match.next_uchar s ~last ~after:marker_last in
   let djot_white = match oymarkit_mod with
-  | Some m when is_oymarkit_enabled () -> Oymarkit_mod.djot_emphasis m
+  | Some m when is_oymarkit_enabled () -> Oymarkit_mod.simple_emphasis_flanking m
   | _ -> false
   in
   let prev_white = is_delim_white ~djot:djot_white prev_uchar in
@@ -929,7 +929,7 @@ let is_symbol_char c =
   || c = '_' || c = '+' || c = '-'
 
 let try_add_symbol_token p oymarkit_mod acc s line ~start =
-  if not (Oymarkit_mod.djot_symbols oymarkit_mod) then None else
+  if not (Oymarkit_mod.colon_symbols oymarkit_mod) then None else
   (* [start] is the opening ':'. The name must be non-empty, so [::] is not a
      symbol. An unterminated run is not one either: it stays text. *)
   let rec scan k =
@@ -999,7 +999,7 @@ let tokenize ~p ?oymarkit_mod ~exts s lines =
             | Some r -> r
             | None ->
                 begin match
-                  if Oymarkit_mod.djot_inline_attributes oymarkit_mod
+                  if Oymarkit_mod.inline_attributes oymarkit_mod
                   then scan_attribute_spec s line lines ~start:k
                   else None
                 with
@@ -1142,9 +1142,9 @@ let tokenize ~p ?oymarkit_mod ~exts s lines =
     | '$' when exts ->
         (* A djot math span is a dollar prefix followed by a verbatim span.
            Do not let the pandoc dollar-delimiter pass claim that prefix first;
-           [try_promote_djot_math] will promote the backtick token instead. *)
+           [try_promote_backtick_math] will promote the backtick token instead. *)
         begin match oymarkit_mod with
-        | Some m when Oymarkit_mod.djot_math m && k < line.last
+        | Some m when Oymarkit_mod.backtick_math m && k < line.last
                       && s.[k + 1] = '`' -> acc, k + 1
         | _ -> try_add_math_span_marks_token acc s line ~start:k
         end
@@ -1357,7 +1357,7 @@ let is_raw_format_char = function
 
 let try_promote_raw_inline p toks t = match t with
 | Inline { start; inline = Inline.Code_span (cs, cs_meta); endline; next }
-  when Oymarkit_mod.djot_raw p.oymarkit_mod ->
+  when Oymarkit_mod.format_raw_content p.oymarkit_mod ->
     let last = endline.last in
     if next + 2 > last || p.i.[next] <> '{' || p.i.[next + 1] <> '=' then None
     else
@@ -1391,9 +1391,9 @@ let try_promote_raw_inline p toks t = match t with
 
    A backslash-escaped [ \$ ] is not a math prefix: the escape is what the
    author writes to get a literal dollar before a verbatim span. *)
-let try_promote_djot_math p line t = match t with
+let try_promote_backtick_math p line t = match t with
 | Inline { start; inline = Inline.Code_span (cs, cs_meta); endline; next }
-  when Oymarkit_mod.djot_math p.oymarkit_mod ->
+  when Oymarkit_mod.backtick_math p.oymarkit_mod ->
     let first = line.first in
     let is_dollar k = k >= first && p.i.[k] = '$' in
     let escaped k =
@@ -1426,7 +1426,7 @@ let try_code p toks start_line ~start ~count ~escaped =
       match try_promote_raw_inline p toks t with
       | Some (toks, t) -> Some (toks, line, t)
       | None ->
-          match try_promote_djot_math p start_line t with
+          match try_promote_backtick_math p start_line t with
           | Some t -> Some (toks, line, t)
           | None -> Some (toks, line, t)
 
@@ -2524,7 +2524,7 @@ and last_pass ?(line_start = true) p toks start_line =
       (* A specifier that has nothing to attach to — at the start of a line, or
          after a space — is dropped by djot rather than left as text. *)
       let unattached acc =
-        if Oymarkit_mod.djot_inline_attributes p.oymarkit_mod
+        if Oymarkit_mod.inline_attributes p.oymarkit_mod
         then loop toks endline acc next else
         let literal = "{" ^ Attribute.to_string attribute ^ "}" in
         loop toks endline (Inline.Text (literal, Meta.none) :: acc) next

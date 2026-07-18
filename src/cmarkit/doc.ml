@@ -22,12 +22,12 @@ let of_string
     ?defs ?resolver ?nested_links ?heading_auto_ids ?layout ?locs ?file
     ?djot ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis
     ?marked_emphasis_delims ?strong_emphasis_width ?extra_inline_containers
-    ?block_id ?djot_inline_attributes ?djot_block_attributes
-    ?djot_thematic_break ?djot_symbols ?djot_escapes ?two_space_hard_break
-    ?djot_raw
-    ?djot_ordered_list_styles ?djot_definition_lists ?djot_math
-    ?djot_table_captions ?djot_verbatim ?djot_headings
-    ?heading_implicit_targets ?djot_links ?case_sensitive_labels ?djot_emphasis
+    ?block_id ?inline_attributes ?block_attributes
+    ?djot_thematic_break ?colon_symbols ?djot_escapes ?two_space_hard_break
+    ?format_raw_content
+    ?extended_ordered_list_styles ?definition_lists ?backtick_math
+    ?table_captions ?djot_verbatim ?djot_headings
+    ?heading_implicit_targets ?djot_links ?case_sensitive_labels ?simple_emphasis_flanking
     ?blocks_interrupt_paragraph
     ?list_marker_interrupts_paragraph ?djot_list_indent ?djot_list_tightness ?smart_punctuation
     ?indented_code ?setext_headings ?lazy_continuation ?raw_html ?entity_refs
@@ -45,12 +45,12 @@ let of_string
     parser ?defs ?resolver ?nested_links ?heading_auto_ids ?layout ?locs
       ?djot ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis ?file
       ?marked_emphasis_delims ?strong_emphasis_width ?extra_inline_containers
-      ?block_id ?djot_inline_attributes ?djot_block_attributes
-      ?djot_thematic_break ?djot_symbols ?djot_escapes ?two_space_hard_break
-      ?djot_raw
-      ?djot_ordered_list_styles ?djot_definition_lists ?djot_math
-      ?djot_table_captions ?djot_verbatim ?djot_headings
-      ?heading_implicit_targets ?djot_links ?case_sensitive_labels ?djot_emphasis
+      ?block_id ?inline_attributes ?block_attributes
+      ?djot_thematic_break ?colon_symbols ?djot_escapes ?two_space_hard_break
+      ?format_raw_content
+      ?extended_ordered_list_styles ?definition_lists ?backtick_math
+      ?table_captions ?djot_verbatim ?djot_headings
+      ?heading_implicit_targets ?djot_links ?case_sensitive_labels ?simple_emphasis_flanking
       ?blocks_interrupt_paragraph
     ?list_marker_interrupts_paragraph ?djot_list_indent ?djot_list_tightness ?smart_punctuation
       ?indented_code ?setext_headings ?lazy_continuation ?raw_html ?entity_refs

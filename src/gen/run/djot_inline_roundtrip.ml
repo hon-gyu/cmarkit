@@ -35,5 +35,5 @@ let () =
          P.qcheck_test_of_t ~gen ~count:5000 ()
            (P.roundtrip_with ~emphasis_delims:[ '_' ]
               ~strong_emphasis_delims:[ '*' ] ~marked_emphasis_delims:true
-              ~djot_symbols:true ~smart_punctuation:true ());
+              ~colon_symbols:true ~smart_punctuation:true ());
        ]

@@ -1527,7 +1527,7 @@ module Block : sig
           style with the given delimiter, starting at the given integer.
           CommonMark's decimal [1.] and [1)] stay [`Ordered]: only the styles
           and the delimiter djot adds go here, so a document parsed without
-          [djot_ordered_list_styles] keeps the AST it always had. *) ]
+          [extended_ordered_list_styles] keeps the AST it always had. *) ]
     (** The type for list types. *)
 
     val ordered_number : ordered_style -> int -> string
@@ -2032,16 +2032,16 @@ module Doc : sig
     ?strong_emphasis_delims:char list -> ?intraword_emphasis:bool ->
     ?marked_emphasis_delims:bool -> ?strong_emphasis_width:int ->
     ?extra_inline_containers:Inline.Extra_inline_container.Config.t ->
-    ?block_id:bool -> ?djot_inline_attributes:bool ->
-    ?djot_block_attributes:bool -> ?djot_thematic_break:bool ->
-    ?djot_symbols:bool -> ?djot_escapes:bool -> ?two_space_hard_break:bool ->
-    ?djot_raw:bool ->
-    ?djot_ordered_list_styles:bool -> ?djot_definition_lists:bool ->
-    ?djot_math:bool -> ?djot_table_captions:bool ->
+    ?block_id:bool -> ?inline_attributes:bool ->
+    ?block_attributes:bool -> ?djot_thematic_break:bool ->
+    ?colon_symbols:bool -> ?djot_escapes:bool -> ?two_space_hard_break:bool ->
+    ?format_raw_content:bool ->
+    ?extended_ordered_list_styles:bool -> ?definition_lists:bool ->
+    ?backtick_math:bool -> ?table_captions:bool ->
     ?djot_verbatim:bool -> ?djot_headings:bool ->
     ?heading_implicit_targets:bool -> ?djot_links:bool ->
     ?case_sensitive_labels:bool ->
-    ?djot_emphasis:bool -> ?blocks_interrupt_paragraph:bool ->
+    ?simple_emphasis_flanking:bool -> ?blocks_interrupt_paragraph:bool ->
     ?list_marker_interrupts_paragraph:bool ->
     ?djot_list_indent:bool -> ?djot_list_tightness:bool ->
     ?smart_punctuation:bool ->
@@ -2128,10 +2128,10 @@ module Doc : sig
       attached to the paragraph metadata as a {!Block.Block_id.t}. The marker
       remains part of the paragraph inline content. The default is [false],
       which preserves CommonMark behavior.}
-   {- If [djot_inline_attributes] is [true], Djot [{...}] attribute
+   {- If [inline_attributes] is [true], Djot [{...}] attribute
       specifiers immediately following inline content are represented by
       {!Inline.Ext_attributes}.}
-   {- If [djot_block_attributes] is [true], Djot attribute lines immediately
+   {- If [block_attributes] is [true], Djot attribute lines immediately
       preceding a block are represented by {!Block.Ext_attributes}. Continued
       lines inside a block attribute must be indented.}
    {- If [djot_thematic_break] is [true], a
@@ -2143,7 +2143,7 @@ module Doc : sig
       knob, since a deep indent is only claimed by something else when
       indented code blocks exist. The default is [false], which preserves
       CommonMark behavior.}
-   {- If [djot_symbols] is [true], [:name:] is represented by
+   {- If [colon_symbols] is [true], [:name:] is represented by
       {!Inline.Ext_symbol}, where [name] is a non-empty run of ASCII
       alphanumerics, ['_'], ['+'] or ['-']. An unterminated run stays text.
       Like djot, the renderers emit a symbol literally: giving [:smile:] a
@@ -2196,12 +2196,12 @@ module Doc : sig
       marker} must be a [>] followed by a space or the end of the line, so
       [>text] is a paragraph rather than a quote. This is djot's rule. The
       default is [false], which preserves CommonMark behavior.}
-   {- If [djot_raw] is [true], djot {{!ext_raw}raw content} is parsed: a verbatim
+   {- If [format_raw_content] is [true], djot {{!ext_raw}raw content} is parsed: a verbatim
       span followed by [ {=format} ] gets into an
       {!Inline.extension-Ext_raw_inline} node and a code fence whose info string
       is [=format] into an {!Block.extension-Ext_raw_block} block. The default is
       [false], which preserves CommonMark behavior.}
-   {- If [djot_emphasis] is [true], emphasis delimiters are classified djot's
+   {- If [simple_emphasis_flanking] is [true], emphasis delimiters are classified djot's
       way rather than CommonMark's: a delimiter run may open if it is not
       followed by whitespace and may close if it is not preceded by whitespace,
       with no
@@ -2247,20 +2247,20 @@ module Doc : sig
       present. So [ ` a ` ] holds [" a "] rather than ["a"]. This is djot's
       rule, see {!Inline.Code_span.code}. The default is [false], which
       preserves CommonMark behavior.}
-   {- If [djot_math] is [true], a verbatim span prefixed with [$] or [$$] is
+   {- If [backtick_math] is [true], a verbatim span prefixed with [$] or [$$] is
       djot {{!ext_djot_math}math}, producing the same
       {!Inline.extension-Ext_math_span} as the pandoc [$...$] spelling. The
       default is [false], which preserves CommonMark behavior.}
-   {- If [djot_table_captions] is [true], a [^ text] line after a table is a
+   {- If [table_captions] is [true], a [^ text] line after a table is a
       djot {{!ext_djot_table_captions}table caption}, available on
       {!Block.Table.caption}. The default is [false], which preserves CommonMark
       behavior.}
-   {- If [djot_definition_lists] is [true], a [: term] line followed by the
+   {- If [definition_lists] is [true], a [: term] line followed by the
       blocks indented under it is a djot
       {{!ext_djot_definition_lists}definition list}, represented by
       {!Block.extension-Ext_definition_list}. The default is [false], which
       preserves CommonMark behavior.}
-   {- If [djot_ordered_list_styles] is [true], an ordered list may be numbered in
+   {- If [extended_ordered_list_styles] is [true], an ordered list may be numbered in
       the djot {{!ext_djot_list_styles}styles} — lower or upper alpha, lower or
       upper roman — and delimited by [(1)] as well as [1.] and [1)]. Such a list
       gets into an [`Ext_ordered] {!Block.List'.type'}; CommonMark's decimal
@@ -2676,7 +2676,7 @@ end
 
     According to
     {{:https://htmlpreview.github.io/?https://github.com/jgm/djot/blob/master/doc/syntax.html#math}djot},
-    behind the [djot_math] knob of {!Doc.of_string}.
+    behind the [backtick_math] knob of {!Doc.of_string}.
 
     {v Inline $`e=mc^2` and display $$`\int_0^1 x`. v}
 
@@ -2690,7 +2690,7 @@ end
 
     According to
     {{:https://htmlpreview.github.io/?https://github.com/jgm/djot/blob/master/doc/syntax.html#table}djot},
-    behind the [djot_table_captions] knob of {!Doc.of_string}.
+    behind the [table_captions] knob of {!Doc.of_string}.
 
 {v
 | a | b |
@@ -2710,7 +2710,7 @@ v}
 
     According to
     {{:https://htmlpreview.github.io/?https://github.com/jgm/djot/blob/master/doc/syntax.html#definition-list}djot},
-    behind the [djot_definition_lists] knob of {!Doc.of_string}.
+    behind the [definition_lists] knob of {!Doc.of_string}.
 
 {v
 : apple
@@ -2735,7 +2735,7 @@ v}
 
     According to
     {{:https://htmlpreview.github.io/?https://github.com/jgm/djot/blob/master/doc/syntax.html#ordered-list}djot},
-    behind the [djot_ordered_list_styles] knob of {!Doc.of_string}.
+    behind the [extended_ordered_list_styles] knob of {!Doc.of_string}.
 
 {v
 a. lower alpha
@@ -2760,7 +2760,7 @@ v}
 
     According to
     {{:https://htmlpreview.github.io/?https://github.com/jgm/djot/blob/master/doc/syntax.html#raw-content}djot},
-    behind the [djot_raw] knob of {!Doc.of_string}.
+    behind the [format_raw_content] knob of {!Doc.of_string}.
 
 {v
 Here is `<a href="x">a link</a>`{=html} in HTML only.

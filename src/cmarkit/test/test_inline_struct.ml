@@ -261,7 +261,7 @@ let () =
     with_output ~h2:true ~title
       ~f:(fun () ->
         markdown
-        |> Inline_parse_api.of_string ~djot_inline_attributes:true
+        |> Inline_parse_api.of_string ~inline_attributes:true
         |> sexp_of.inline
         |> print_sexp)
       ()
@@ -270,7 +270,7 @@ let () =
     with_output ~h2:true ~title
       ~f:(fun () ->
         markdown
-        |> Doc.of_string ~djot_block_attributes:true
+        |> Doc.of_string ~block_attributes:true
         |> sexp_of.doc
         |> print_sexp)
       ()
@@ -280,7 +280,7 @@ let () =
   with_output ~h2:true ~title:"extra container attributes"
     ~f:(fun () ->
       "{=text=}{.marked}"
-      |> Inline_parse_api.of_string ~djot_inline_attributes:true
+      |> Inline_parse_api.of_string ~inline_attributes:true
            ~extra_inline_containers:Extra_config.explicit
       |> sexp_of.inline
       |> print_sexp)

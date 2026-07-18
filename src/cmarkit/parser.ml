@@ -313,7 +313,7 @@ module Block_struct = struct
   (* Djot table caption: a [^] followed by a space or the end of the line, on
      the line after a table. Its continuation lines are indented. *)
   let match_table_caption p ~indent =
-    if not (Oymarkit_mod.djot_table_captions p.oymarkit_mod) then None else
+    if not (Oymarkit_mod.table_captions p.oymarkit_mod) then None else
     (* The caption marker may sit behind some indent; the '^' is the first
        non-blank on the line, not necessarily [p.current_char]. *)
     let marker =
@@ -628,7 +628,7 @@ module Block_struct = struct
   (* Adding lines to blocks *)
 
   let match_list_marker p ~last ~start =
-    let djot_styles = Oymarkit_mod.djot_ordered_list_styles p.oymarkit_mod in
+    let djot_styles = Oymarkit_mod.extended_ordered_list_styles p.oymarkit_mod in
     Match.list_marker ~djot_styles p.i ~last ~start
 
   let match_html_block_start p ~last ~start =
@@ -684,7 +684,7 @@ module Block_struct = struct
           if r <> Nomatch then r else
           Paragraph_line
       | '(' | 'a' .. 'z' | 'A' .. 'Z'
-        when Oymarkit_mod.djot_ordered_list_styles p.oymarkit_mod ->
+        when Oymarkit_mod.extended_ordered_list_styles p.oymarkit_mod ->
           (* Djot's alpha/roman markers and its [(a)] form start on characters
              that CommonMark never dispatches on. A word that is not a marker
              falls through to a paragraph, which is what any other letter does
@@ -709,7 +709,7 @@ module Block_struct = struct
           if r <> Nomatch then r else
           Paragraph_line
       | ':' when Oymarkit_mod.div p.oymarkit_mod
-                 || Oymarkit_mod.djot_definition_lists p.oymarkit_mod ->
+                 || Oymarkit_mod.definition_lists p.oymarkit_mod ->
           (* A [:::] fence and a [: term] marker both start on a colon; the
              fence is tried first, and only a colon followed by a space or the
              end of the line can be a definition marker, so they never
@@ -720,7 +720,7 @@ module Block_struct = struct
           in
           if r <> Nomatch then r else
           let r =
-            if Oymarkit_mod.djot_definition_lists p.oymarkit_mod
+            if Oymarkit_mod.definition_lists p.oymarkit_mod
             then Match.definition_list_marker p.i ~last ~start
             else Match.Nomatch
           in
@@ -840,7 +840,7 @@ module Block_struct = struct
      opens and closes on this line is taken here; a multi-line one still goes
      through [split_attribute_paragraph]. *)
   and match_block_attribute p =
-    if not (Oymarkit_mod.djot_block_attributes p.oymarkit_mod) then None else
+    if not (Oymarkit_mod.block_attributes p.oymarkit_mod) then None else
     if end_of_line p then None else
     let start = p.current_char and last = p.current_line_last_char in
     if p.i.[start] <> '{' then None else
@@ -1534,7 +1534,7 @@ let block_struct_to_code_block p = function
     in
     let cb = {Block.Code_block.layout = `Fenced layout; info_string; code} in
     let raw_format =
-      if not (Oymarkit_mod.djot_raw p.oymarkit_mod) then None else
+      if not (Oymarkit_mod.format_raw_content p.oymarkit_mod) then None else
       Block.Code_block.raw_format_of_info_string info_string
     in
     match raw_format with
@@ -1688,7 +1688,7 @@ let attach_specs_to_ref_def p (ld, _) specs =
       | _ -> ()
 
 let split_attribute_paragraph p (par : Block_struct.paragraph) =
-  if not (Oymarkit_mod.djot_block_attributes p.oymarkit_mod)
+  if not (Oymarkit_mod.block_attributes p.oymarkit_mod)
   then [Block_struct.Paragraph par] else
   let lines = List.rev par.lines in
   let parse_spec lines =
@@ -2247,7 +2247,7 @@ let register_heading_labels p (doc : Block_struct.t list) =
    The block-structure list is in reverse document order, so the attribute line
    that *precedes* a definition follows it here. *)
 let attach_ref_def_attributes p (doc : Block_struct.t list) =
-  if not (Oymarkit_mod.djot_block_attributes p.oymarkit_mod) then () else
+  if not (Oymarkit_mod.block_attributes p.oymarkit_mod) then () else
   let rec walk (bs : Block_struct.t list) = match bs with
   | Linkref_def ld :: (Attribute_specs specs :: _ as bs) ->
       attach_specs_to_ref_def p ld specs; walk bs

@@ -1,6 +1,6 @@
 open Cmarkit_
 
-(** Djot table captions, behind [djot_table_captions]: a [^ text] line after a
+(** Djot table captions, behind [table_captions]: a [^ text] line after a
     pipe table, its continuation lines indented.
 
     {v
@@ -14,12 +14,12 @@ open Cmarkit_
     cells and is not part of the grid. In HTML it becomes the table's
     [<caption>], which HTML requires to be the table's first child. *)
 
-let html ?djot_table_captions s =
-  let doc = Doc.of_string ~strict:false ?djot_table_captions s in
+let html ?table_captions s =
+  let doc = Doc.of_string ~strict:false ?table_captions s in
   print_string (Cmarkit_html.of_doc ~safe:false doc)
 
-let commonmark ?djot_table_captions s =
-  let doc = Doc.of_string ~strict:false ?djot_table_captions s in
+let commonmark ?table_captions s =
+  let doc = Doc.of_string ~strict:false ?table_captions s in
   print_string (Cmarkit_commonmark.of_doc doc)
 
 let table = "| a | b |\n|---|---|\n| 1 | 2 |\n"
@@ -40,7 +40,7 @@ let%expect_test "off: a [^] line after a table is a paragraph" =
     |}]
 
 let%expect_test "on: the caption attaches to the table" =
-  html ~djot_table_captions:true (table ^ "^ The caption.\n");
+  html ~table_captions:true (table ^ "^ The caption.\n");
   [%expect {|
     <div role="region"><table>
     <caption>The caption.</caption>
@@ -56,7 +56,7 @@ let%expect_test "on: the caption attaches to the table" =
     |}]
 
 let%expect_test "on: the caption is inline content" =
-  html ~djot_table_captions:true (table ^ "^ A *emphatic* caption.\n");
+  html ~table_captions:true (table ^ "^ A *emphatic* caption.\n");
   [%expect {|
     <div role="region"><table>
     <caption>A <em>emphatic</em> caption.</caption>
@@ -72,7 +72,7 @@ let%expect_test "on: the caption is inline content" =
     |}]
 
 let%expect_test "on: indented lines continue the caption" =
-  html ~djot_table_captions:true
+  html ~table_captions:true
     (table ^ "^ The caption,\n  continued on another line.\n");
   [%expect {|
     <div role="region"><table>
@@ -90,7 +90,7 @@ let%expect_test "on: indented lines continue the caption" =
     |}]
 
 let%expect_test "on: an unindented line ends the table" =
-  html ~djot_table_captions:true
+  html ~table_captions:true
     (table ^ "^ The caption.\nA new paragraph.\n");
   [%expect {|
     <div role="region"><table>
@@ -108,7 +108,7 @@ let%expect_test "on: an unindented line ends the table" =
     |}]
 
 let%expect_test "on: the marker needs a space or the end of the line" =
-  html ~djot_table_captions:true (table ^ "^not a caption\n");
+  html ~table_captions:true (table ^ "^not a caption\n");
   [%expect {|
     <div role="region"><table>
     <tr>
@@ -124,7 +124,7 @@ let%expect_test "on: the marker needs a space or the end of the line" =
 
 (* A caption may sit behind indent and after a blank line. *)
 let%expect_test "on: a caption attaches across a blank line, even indented" =
-  html ~djot_table_captions:true "| 1 | 2 |\n\n ^ The caption.\n";
+  html ~table_captions:true "| 1 | 2 |\n\n ^ The caption.\n";
   [%expect {|
     <div role="region"><table>
     <caption>The caption.</caption>
@@ -138,7 +138,7 @@ let%expect_test "on: a caption attaches across a blank line, even indented" =
 (* From djot's [regression.test]: several [^] paragraphs after a table each
    supply a caption, and the last one wins. *)
 let%expect_test "on: a later caption replaces an earlier one" =
-  html ~djot_table_captions:true "| 1 | 2 |\n\n ^ cap1\n\n ^ cap2\n";
+  html ~table_captions:true "| 1 | 2 |\n\n ^ cap1\n\n ^ cap2\n";
   [%expect {|
     <div role="region"><table>
     <caption>cap2</caption>
@@ -150,7 +150,7 @@ let%expect_test "on: a later caption replaces an earlier one" =
     |}]
 
 let%expect_test "on: a table without a caption is unchanged" =
-  html ~djot_table_captions:true table;
+  html ~table_captions:true table;
   [%expect {|
     <div role="region"><table>
     <tr>
@@ -165,7 +165,7 @@ let%expect_test "on: a table without a caption is unchanged" =
     |}]
 
 let%expect_test "on: the caption round-trips through CommonMark" =
-  commonmark ~djot_table_captions:true (table ^ "^ The caption.\n");
+  commonmark ~table_captions:true (table ^ "^ The caption.\n");
   [%expect {|
     |a|b|
     |---|---|
