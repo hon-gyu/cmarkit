@@ -15,18 +15,21 @@ open Cmarkit_
       on. The knob stands on its own, for a stricter dialect;
     - [raw_html]: djot parses no HTML, inline or block;
     - [entity_refs]: djot's only escape is the backslash;
-    - [djot_escapes]: backslash-newline is the only hard break, and
-      backslash-space is a non-breaking space;
-    - [djot_code_fences]: fence info strings cannot contain whitespace;
+    - [djot_escapes]: backslash-newline is a hard break and backslash-space is a
+      non-breaking space;
+    - [two_space_hard_break]: two trailing spaces create a hard break;
+    - [whitespace_free_info_string]: fence info strings cannot contain whitespace;
     - [block_quote_marker_space]: djot's [>] wants a space after it. *)
 
 let html ?djot ?lazy_continuation ?raw_html ?entity_refs ?djot_escapes
-    ?indented_code ?tilde_code_fences ?djot_code_fences ?djot_verbatim
+    ?two_space_hard_break
+    ?indented_code ?tilde_code_fences ?whitespace_free_info_string ?djot_verbatim
     ?block_quote_marker_space s
   =
   let doc =
     Doc.of_string ~strict:false ?djot ?lazy_continuation ?raw_html ?entity_refs
-      ?djot_escapes ?indented_code ?tilde_code_fences ?djot_code_fences
+      ?djot_escapes ?two_space_hard_break ?indented_code ?tilde_code_fences
+      ?whitespace_free_info_string
       ?djot_verbatim ?block_quote_marker_space s
   in
   print_string (Cmarkit_html.of_doc ~safe:false doc)
@@ -145,10 +148,17 @@ let%expect_test "commonmark: two trailing spaces are a hard break" =
     two</p>
     |}]
 
-let%expect_test "djot: two trailing spaces are just spaces" =
-  html ~djot_escapes:true "one  \ntwo";
+let%expect_test "off: two trailing spaces are just spaces" =
+  html ~two_space_hard_break:false "one  \ntwo";
   [%expect {|
     <p>one
+    two</p>
+    |}]
+
+let%expect_test "independent: djot escapes do not disable two-space breaks" =
+  html ~djot_escapes:true "one  \ntwo";
+  [%expect {|
+    <p>one<br>
     two</p>
     |}]
 
@@ -216,7 +226,7 @@ let%expect_test "commonmark: fence info may contain whitespace" =
   [%expect {| <pre><code class="language-not"></code></pre> |}]
 
 let%expect_test "djot: fence info may not contain whitespace" =
-  html ~djot_code_fences:true ~djot_verbatim:true "``` not a code block";
+  html ~whitespace_free_info_string:true ~djot_verbatim:true "``` not a code block";
   [%expect {| <p><code> not a code block</code></p> |}]
 
 (* Block quote marker

@@ -2034,17 +2034,20 @@ module Doc : sig
     ?extra_inline_containers:Inline.Extra_inline_container.Config.t ->
     ?block_id:bool -> ?djot_inline_attributes:bool ->
     ?djot_block_attributes:bool -> ?djot_thematic_break:bool ->
-    ?djot_symbols:bool -> ?djot_escapes:bool -> ?djot_raw:bool ->
+    ?djot_symbols:bool -> ?djot_escapes:bool -> ?two_space_hard_break:bool ->
+    ?djot_raw:bool ->
     ?djot_ordered_list_styles:bool -> ?djot_definition_lists:bool ->
     ?djot_math:bool -> ?djot_table_captions:bool ->
-    ?djot_verbatim:bool -> ?djot_headings:bool -> ?djot_links:bool ->
+    ?djot_verbatim:bool -> ?djot_headings:bool ->
+    ?heading_implicit_targets:bool -> ?djot_links:bool ->
+    ?case_sensitive_labels:bool ->
     ?djot_emphasis:bool -> ?blocks_interrupt_paragraph:bool ->
     ?list_marker_interrupts_paragraph:bool ->
     ?djot_list_indent:bool -> ?djot_list_tightness:bool ->
     ?smart_punctuation:bool ->
     ?indented_code:bool -> ?setext_headings:bool ->
     ?lazy_continuation:bool -> ?raw_html:bool -> ?entity_refs:bool ->
-    ?tilde_code_fences:bool -> ?djot_code_fences:bool ->
+    ?tilde_code_fences:bool -> ?whitespace_free_info_string:bool ->
     ?block_quote_marker_space:bool ->
     ?div:bool -> ?wikilink:bool ->
     ?jsx_expr:bool -> ?jsx_element:bool ->
@@ -2207,10 +2210,10 @@ module Doc : sig
       orthogonal: it is what keeps [snake_case] intact, which CommonMark folds
       into its [_] rules. The default is [false], which preserves CommonMark
       behavior.}
-   {- If [djot_code_fences] is [true], a code fence info string cannot contain
-      whitespace: a line such as [``` not a fence] is parsed as inline verbatim
-      text instead. This is djot's rule. The default is [false], which preserves
-      CommonMark behavior.}
+   {- If [whitespace_free_info_string] is [true], a code fence info string
+      cannot contain whitespace: a line such as [``` not a fence] is parsed as
+      inline verbatim text instead. The default is [false], which preserves
+      CommonMark behavior; the [djot] preset enables it.}
    {- If [blocks_interrupt_paragraph] is [false], no block start interrupts a
       paragraph: only a blank line ends one, so a [#], [```] or [>] line under a
       paragraph is more of that paragraph's text rather than the start of a
@@ -2224,13 +2227,20 @@ module Doc : sig
       over lines (the newlines are removed). A reference definition likewise has
       no title: the rest of the line is the destination, continued on indented
       lines. The default is [false], which preserves CommonMark behavior.}
+   {- If [case_sensitive_labels] is [true], link-reference label keys preserve
+      case, so [[Link][]] does not resolve a definition named [[link]]. The
+      default is [false], which preserves CommonMark behavior; the [djot]
+      preset enables it.}
    {- If [djot_headings] is [true], a heading runs until a blank line: the lines
       after the [#] line continue its inline content, whether or not they repeat
-      the [#] (which is stripped when they do). A heading also becomes an
-      implicit link reference target, so [ [Some Heading][] ] links to it; that
-      part needs [heading_auto_ids], which computes the id the link points at,
-      and an explicit link reference definition of the same label wins. The
-      default is [false], which preserves CommonMark behavior.}
+      the [#] (which is stripped when they do). The default is [false], which
+      preserves CommonMark behavior.}
+   {- If [heading_implicit_targets] is [true], a heading becomes an implicit
+      link-reference target, so [[Some Heading][]] links to it, and auto heading
+      IDs use Djot's case-preserving algorithm. Resolving the target needs
+      [heading_auto_ids], which emits the ID the link points at. An explicit
+      link-reference definition of the same label wins. The default is [false];
+      the [djot] preset enables it.}
    {- If [djot_verbatim] is [true], a verbatim span strips a padding space
       only where the space is what lets its content start or end with a
       backtick, rather than stripping one from each end whenever both are
@@ -2256,11 +2266,14 @@ module Doc : sig
       gets into an [`Ext_ordered] {!Block.List'.type'}; CommonMark's decimal
       lists are unaffected. The default is [false], which preserves CommonMark
       behavior.}
-   {- If [djot_escapes] is [true], a hard line break is written with a trailing
-      backslash only — two trailing spaces are just trailing spaces — and a
-      backslash before a space stands for a non-breaking space (U+00A0), which
+   {- If [djot_escapes] is [true], a trailing backslash is a hard line break and
+      a backslash before a space stands for a non-breaking space (U+00A0), which
       CommonMark has no syntax for. Backslash before ASCII punctuation is
-      unchanged. The default is [false], which preserves CommonMark behavior.}
+      unchanged. The default is [false]; the [djot] preset enables it.}
+   {- If [two_space_hard_break] is [true], two or more trailing spaces are a
+      hard line break. If [false], trailing spaces remain text. The default is
+      [true], which preserves CommonMark behavior; the [djot] preset disables
+      it.}
    {- If [wikilink] is [true], Obsidian {{!ext_wikilink}wikilinks} [ [[...]] ]
       and embeds [ ![[...]] ] are represented by {!Inline.Ext_wikilink}. The
       default is [false]. This knob is independent of [strict].}

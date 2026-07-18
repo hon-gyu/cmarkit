@@ -12,8 +12,8 @@ open Cmarkit_
     they cannot go through CommonMark's destination grammar (which stops at a
     space and hands the rest to the title parser). *)
 
-let html ?djot_links s =
-  let doc = Doc.of_string ~strict:false ?djot_links s in
+let html ?djot_links ?case_sensitive_labels s =
+  let doc = Doc.of_string ~strict:false ?djot_links ?case_sensitive_labels s in
   let djot = djot_links = Some true in
   print_string (Cmarkit_html.of_doc ~safe:false ~djot doc)
 
@@ -75,3 +75,16 @@ let%expect_test "djot: no titles in definitions either" =
 let%expect_test "djot: an indented line continues the destination" =
   html ~djot_links:true "[a]: https://example.org/\n  a/long/path\n\n[a]\n";
   [%expect {| <p><a href="https://example.org/a/long/path">a</a></p> |}]
+
+let%expect_test "labels are case-insensitive by default" =
+  html "[Link]: /url\n\n[link][]\n";
+  html ~djot_links:true ~case_sensitive_labels:false
+    "[Link]: /url\n\n[link][]\n";
+  [%expect {|
+    <p><a href="/url">link</a></p>
+    <p><a href="/url">link</a></p>
+    |}]
+
+let%expect_test "case-sensitive labels are independent of link grammar" =
+  html ~case_sensitive_labels:true "[Link]: /url\n\n[link][]\n";
+  [%expect {| <p>[link][]</p> |}]

@@ -217,7 +217,7 @@ let rec next_line = function
 
 (* Tokenization *)
 
-let newline_token ~djot_escapes s prev_line newline =
+let newline_token ~djot_escapes ~two_space_hard_break s prev_line newline =
   (* https://spec.commonmark.org/current/#softbreak *)
   (* https://spec.commonmark.org/current/#hard-line-breaks *)
   let start (* includes spaces or '\\' on prev line *), break_type =
@@ -258,10 +258,11 @@ let newline_token ~djot_escapes s prev_line newline =
        trailing spaces are neither a break nor layout, they are text, and they
        survive into the rendered output. CommonMark instead drops them, and reads
        two of them as a hard break. *)
-    if djot_escapes then (last + 1, `Soft) else
     let start = non_space + 1 in
     let two_space_break = last - start + 1 >= 2 in
-    (start, if two_space_break then `Hard else `Soft)
+    if two_space_hard_break && two_space_break then (start, `Hard) else
+    if djot_escapes || not two_space_hard_break then (last + 1, `Soft) else
+    (start, `Soft)
   in
   Newline { start; break_type; newline }
 
@@ -954,11 +955,15 @@ let tokenize ~p ?oymarkit_mod ~exts s lines =
   | Some m when is_oymarkit_enabled () -> Oymarkit_mod.djot_escapes m
   | _ -> false
   in
+  let two_space_hard_break = match oymarkit_mod with
+  | Some m when is_oymarkit_enabled () -> Oymarkit_mod.two_space_hard_break m
+  | _ -> true
+  in
   let rec loop ~exts s lines line ~prev_bslash acc k =
     if k > line.last then match lines with
     | [] -> rev_token_list_and_make_closer_index acc
     | newline :: lines ->
-        let t = newline_token ~djot_escapes s line newline in
+        let t = newline_token ~djot_escapes ~two_space_hard_break s line newline in
         loop ~exts s lines newline ~prev_bslash:false (t :: acc) newline.first
     else
     if s.[k] = '\\'
@@ -1533,7 +1538,9 @@ let label_of_rev_spans p ~key rev_spans =
 let try_full_reflink_remainder p toks line ~image ~start (* is label's [ *) =
   (* https://spec.commonmark.org/current/#full-reference-link *)
   let djot = Oymarkit_mod.djot_links p.oymarkit_mod in
-  match Match.link_label ~djot p.buf ~next_line p.i toks ~line ~start with
+  let case_sensitive = Oymarkit_mod.case_sensitive_labels p.oymarkit_mod in
+  match Match.link_label ~djot:case_sensitive p.buf ~next_line p.i toks ~line
+    ~start with
   | None -> None
   | Some (toks, line, rev_spans, last, key) ->
       let ref = label_of_rev_spans p ~key rev_spans in
@@ -1552,7 +1559,9 @@ let try_shortcut_reflink p toks line ~image ~start ~implicit_key
   (* https://spec.commonmark.org/current/#shortcut-reference-link *)
   let start = if image then start + 1 (* [ *) else start in
   let djot = Oymarkit_mod.djot_links p.oymarkit_mod in
-  match Match.link_label ~djot p.buf ~next_line p.i toks ~line ~start with
+  let case_sensitive = Oymarkit_mod.case_sensitive_labels p.oymarkit_mod in
+  match Match.link_label ~djot:case_sensitive p.buf ~next_line p.i toks ~line
+    ~start with
   | None -> None
   | Some (toks, line, rev_spans, last, key) ->
       let key = if djot then implicit_key else key in
@@ -1571,7 +1580,9 @@ let try_collapsed_reflink p toks line ~image ~start ~implicit_key
   (* https://spec.commonmark.org/current/#collapsed-reference-link *)
   let start = if image then start + 1 (* [ *) else start in
   let djot = Oymarkit_mod.djot_links p.oymarkit_mod in
-  match Match.link_label ~djot p.buf ~next_line p.i toks ~line ~start with
+  let case_sensitive = Oymarkit_mod.case_sensitive_labels p.oymarkit_mod in
+  match Match.link_label ~djot:case_sensitive p.buf ~next_line p.i toks ~line
+    ~start with
   | None -> None
   | Some (toks, line, rev_spans, last, key) ->
       let key = if djot then implicit_key else key in
@@ -1738,7 +1749,8 @@ let try_link_def
       Inline.to_plain_text ~break_on_soft:false inline
       |> List.map (String.concat "") |> String.concat "\n"
     in
-    Match.label_key ~djot:true p.buf plain
+    let case_sensitive = Oymarkit_mod.case_sensitive_labels p.oymarkit_mod in
+    Match.label_key ~djot:case_sensitive p.buf plain
   in
   let next = text_last + 1 in
   let link =

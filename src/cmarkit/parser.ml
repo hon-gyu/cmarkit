@@ -359,7 +359,11 @@ module Block_struct = struct
            that [ [a and\nb]: url ] is not a definition at all. *)
         let next_line _ = None in
         match
-          Match.link_label ~djot:true p.buf ~next_line p.i lines ~line ~start
+          let case_sensitive =
+            Oymarkit_mod.case_sensitive_labels p.oymarkit_mod
+          in
+          Match.link_label ~djot:case_sensitive p.buf ~next_line p.i lines
+            ~line ~start
         with
         | None -> none ()
         | Some (_, line, rev_spans, last, key) ->
@@ -421,8 +425,11 @@ module Block_struct = struct
       let indent = start - line.first in
       let meta_first = { line with first = start } in
       let lines, line, label, start =
-        let djot = Oymarkit_mod.djot_links p.oymarkit_mod in
-        match Match.link_label ~djot p.buf ~next_line p.i lines ~line ~start
+        let case_sensitive =
+          Oymarkit_mod.case_sensitive_labels p.oymarkit_mod
+        in
+        match Match.link_label ~djot:case_sensitive p.buf ~next_line p.i lines
+          ~line ~start
         with
         | None -> none ()
         | Some (lines, line, rev_spans, last, key) ->
@@ -695,7 +702,7 @@ module Block_struct = struct
           Paragraph_line
       | '~' | '`' ->
           let tilde_fences = Oymarkit_mod.tilde_code_fences p.oymarkit_mod in
-          let djot = Oymarkit_mod.djot_code_fences p.oymarkit_mod in
+          let djot = Oymarkit_mod.whitespace_free_info_string p.oymarkit_mod in
           let r =
             Match.fenced_code_block_start ~tilde_fences ~djot p.i ~last ~start
           in
@@ -925,7 +932,7 @@ module Block_struct = struct
     let after_marker = accept_list_marker_and_indent p ~marker_size:1 ~last in
     let first = p.current_char in
     let tilde_fences = Oymarkit_mod.tilde_code_fences p.oymarkit_mod in
-    let djot = Oymarkit_mod.djot_code_fences p.oymarkit_mod in
+    let djot = Oymarkit_mod.whitespace_free_info_string p.oymarkit_mod in
     let starts_fence =
       Match.fenced_code_block_start ~tilde_fences ~djot p.i
         ~last:p.current_line_last_char ~start:first <> Match.Nomatch
@@ -1543,7 +1550,7 @@ let block_struct_to_code_block p = function
    the heading (or its section) and the target [register_heading_labels]
    registers must use this, so a [ [Heading][] ] link resolves to a live anchor. *)
 let heading_auto_id p inline =
-  if Oymarkit_mod.djot_headings p.oymarkit_mod then
+  if Oymarkit_mod.heading_implicit_targets p.oymarkit_mod then
     let text =
       Inline.to_plain_text ~skip_link:Inline.is_footnote_reference
         ~break_on_soft:false inline
@@ -2178,8 +2185,8 @@ and block_struct_to_block p = function
    now (link reference definitions are collected during block-structure parsing)
    and we do not overwrite it. *)
 let register_heading_labels p (doc : Block_struct.t list) =
-  if not (Oymarkit_mod.djot_headings p.oymarkit_mod) then () else
-  let djot_links = Oymarkit_mod.djot_links p.oymarkit_mod in
+  if not (Oymarkit_mod.heading_implicit_targets p.oymarkit_mod) then () else
+  let case_sensitive = Oymarkit_mod.case_sensitive_labels p.oymarkit_mod in
   let register ?attr_id lines =
     let _layout, inline = Inline_struct.parse p lines in
     (* Footnote references contribute nothing to the id (djot), so the target
@@ -2189,7 +2196,7 @@ let register_heading_labels p (doc : Block_struct.t list) =
         ~break_on_soft:false inline
     in
     let text = String.concat " " (List.map (String.concat "") text) in
-    let key = Match.label_key ~djot:djot_links p.buf text in
+    let key = Match.label_key ~djot:case_sensitive p.buf text in
     if key = "" || Label.Map.mem key p.defs then () else
     (* The dest must equal the id the HTML renderer puts on the heading's
        section: an explicit [ {#id} ] attribute if present, else djot's
