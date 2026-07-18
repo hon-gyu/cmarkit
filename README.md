@@ -1,3 +1,14 @@
+oymarkit: a fork of cmarkit with pluggable syntax extensions
+=============================================================
+
+oymarkit is a fork of [cmarkit](https://erratique.ch/software/cmarkit)
+by The cmarkit programmers. It extends CommonMark with pluggable,
+individually toggleable syntax extensions. All credit
+for the parser and renderer architecture, and the CommonMark
+implementation itself, goes to the cmarkit programmers.
+
+The original cmarkit README follows.
+
 cmarkit — CommonMark parser and renderer for OCaml
 ==================================================
 %%VERSION%%
