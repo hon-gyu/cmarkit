@@ -1520,14 +1520,15 @@ let label_of_rev_spans p ~key rev_spans =
 
 let try_full_reflink_remainder p toks line ~image ~start (* is label's [ *) =
   (* https://spec.commonmark.org/current/#full-reference-link *)
-  match Match.link_label ~djot:(Oymarkit_mod.djot_links p.oymarkit_mod) p.buf ~next_line p.i toks ~line ~start with
+  let djot = Oymarkit_mod.djot_links p.oymarkit_mod in
+  match Match.link_label ~djot p.buf ~next_line p.i toks ~line ~start with
   | None -> None
   | Some (toks, line, rev_spans, last, key) ->
       let ref = label_of_rev_spans p ~key rev_spans in
       let toks = drop_stop_after_right_brack toks in
       match find_def_for_ref p ~image ref with
       | Some def -> Some (Some (toks, line, `Ref (`Full, ref, def), last))
-      | None when Oymarkit_mod.djot_links p.oymarkit_mod ->
+      | None when djot ->
           (* Djot still makes a link of a reference whose definition is missing;
              the renderer gives it no [href]. The label stands in for the
              definition it did not find. *)
@@ -1538,18 +1539,16 @@ let try_shortcut_reflink p toks line ~image ~start ~implicit_key
     (* [start] is the starting [ or ! *) =
   (* https://spec.commonmark.org/current/#shortcut-reference-link *)
   let start = if image then start + 1 (* [ *) else start in
-  match Match.link_label ~djot:(Oymarkit_mod.djot_links p.oymarkit_mod) p.buf ~next_line p.i toks ~line ~start with
+  let djot = Oymarkit_mod.djot_links p.oymarkit_mod in
+  match Match.link_label ~djot p.buf ~next_line p.i toks ~line ~start with
   | None -> None
   | Some (toks, line, rev_spans, last, key) ->
-      let key =
-        if Oymarkit_mod.djot_links p.oymarkit_mod then implicit_key else key
-      in
+      let key = if djot then implicit_key else key in
       let ref = label_of_rev_spans p ~key rev_spans in
       let toks = drop_stop_after_right_brack toks in
       match find_def_for_ref p ~image ref with
       | Some def -> Some (toks, line, `Ref (`Shortcut, ref, def), last)
-      | None when Oymarkit_mod.djot_links p.oymarkit_mod
-                  && String.length key > 0 && key.[0] = '^' ->
+      | None when djot && String.length key > 0 && key.[0] = '^' ->
           (* A footnote reference is a footnote reference whether or not the note
              exists: djot lists the missing one as an empty note. *)
           Some (toks, line, `Ref (`Shortcut, ref, ref), last)
@@ -1559,19 +1558,18 @@ let try_collapsed_reflink p toks line ~image ~start ~implicit_key
     (* [start] is the starting [ or ! *) =
   (* https://spec.commonmark.org/current/#collapsed-reference-link *)
   let start = if image then start + 1 (* [ *) else start in
-  match Match.link_label ~djot:(Oymarkit_mod.djot_links p.oymarkit_mod) p.buf ~next_line p.i toks ~line ~start with
+  let djot = Oymarkit_mod.djot_links p.oymarkit_mod in
+  match Match.link_label ~djot p.buf ~next_line p.i toks ~line ~start with
   | None -> None
   | Some (toks, line, rev_spans, last, key) ->
-      let key =
-        if Oymarkit_mod.djot_links p.oymarkit_mod then implicit_key else key
-      in
+      let key = if djot then implicit_key else key in
       let ref = label_of_rev_spans p ~key rev_spans in
       let last = last + 2 in (* adjust for ][] *)
       let toks = drop_stop_after_right_brack toks in
       let toks = drop_stop_after_right_brack toks in
       match find_def_for_ref p ~image ref with
       | Some def -> Some (toks, line, `Ref (`Collapsed, ref, def), last)
-      | None when Oymarkit_mod.djot_links p.oymarkit_mod ->
+      | None when djot ->
           Some (toks, line, `Ref (`Collapsed, ref, ref), last)
       | None -> None
 
@@ -1718,6 +1716,11 @@ let try_link_def
     p ~start ~start_toks ~start_line ~toks ~line ~text_last ~image text
   =
   let implicit_key =
+    (* Only djot keys a shortcut/collapsed reference on the link *text*
+       (CommonMark keys on the label source); the reflink parsers below read
+       this solely under [djot_links], so don't pay for the flatten
+       otherwise. *)
+    if not (Oymarkit_mod.djot_links p.oymarkit_mod) then "" else
     let inline = Inline.Inlines (text, Meta.none) in
     let plain =
       Inline.to_plain_text ~break_on_soft:false inline
@@ -1924,6 +1927,10 @@ let rec try_link p start_toks start_line ~image ~start =
 and first_pass p toks line =
   (* Parse inline atoms and links. Links are parsed here otherwise
       link reference data gets parsed as atoms. *)
+  (* Runs once per [ ](  ] seen, and scans [acc] (the tokens to the left) each
+     time, so a pathological run of [ ](](](… ] is quadratic in the number of
+     such pairs. Accepted: the scan is over already-thinned tokens, not bytes,
+     and stops at the first matching [Link_start]. *)
   let settle_djot_link_text p line ~close acc =
     let rec split depth inside = function
     | [] -> acc

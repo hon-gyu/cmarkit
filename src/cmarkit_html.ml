@@ -58,7 +58,11 @@ let make_footnote_ref_ids c label fn =
   | Some (text, id, refc, _) ->
       incr refc;
       let ref_id =
-        if djot then "" (* only the first reference carries an id *)
+        (* Deliberate divergence from djot.js, which puts the same [fnref]
+           id on *every* reference to the note — duplicate ids, invalid
+           HTML. We give only the first reference the id; the corpus never
+           references a note twice, so conformance does not see this. *)
+        if djot then ""
         else footnote_ref_id id !refc
       in
       (text, id, ref_id)

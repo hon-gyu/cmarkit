@@ -420,7 +420,9 @@ module Block_struct = struct
       let indent = start - line.first in
       let meta_first = { line with first = start } in
       let lines, line, label, start =
-        match Match.link_label ~djot:(Oymarkit_mod.djot_links p.oymarkit_mod) p.buf ~next_line p.i lines ~line ~start with
+        let djot = Oymarkit_mod.djot_links p.oymarkit_mod in
+        match Match.link_label ~djot p.buf ~next_line p.i lines ~line ~start
+        with
         | None -> none ()
         | Some (lines, line, rev_spans, last, key) ->
             let colon = last + 1 in
@@ -1660,6 +1662,23 @@ let block_struct_to_paragraph p par =
   (* Oymarkit end *)
   Block.Paragraph ({ leading_indent; inline; trailing_blanks }, meta)
 
+(* Djot attributes written above a link reference definition merge onto the
+   definition in [p.defs], so that every link referencing it sees them. Used
+   both when a definition is peeled out of an attribute paragraph
+   ([split_attribute_paragraph]) and on the finished block structure
+   ([attach_ref_def_attributes]). *)
+let attach_specs_to_ref_def p (ld, _) specs =
+  let attrs = List.fold_left Attribute.merge Attribute.empty specs in
+  match Link_definition.defined_label ld with
+  | None -> ()
+  | Some l ->
+      let key = Label.key l in
+      match Label.Map.find_opt key p.defs with
+      | Some (Link_definition.Def (d, m)) ->
+          let d = Link_definition.with_attributes (Some attrs) d in
+          p.defs <- Label.Map.add key (Link_definition.Def (d, m)) p.defs
+      | _ -> ()
+
 let split_attribute_paragraph p (par : Block_struct.paragraph) =
   if not (Oymarkit_mod.djot_block_attributes p.oymarkit_mod)
   then [Block_struct.Paragraph par] else
@@ -1746,25 +1765,13 @@ let split_attribute_paragraph p (par : Block_struct.paragraph) =
             Block_struct.maybe_add_link_reference_definitions p
               (List.rev lines) []
           in
-          let attach_attributes () =
-            let attrs = List.fold_left Attribute.merge Attribute.empty specs in
-            let attach (ld, _) = match Link_definition.defined_label ld with
-            | None -> ()
-            | Some l ->
-                let key = Label.key l in
-                match Label.Map.find_opt key p.defs with
-                | Some (Link_definition.Def (d, m)) ->
-                    let d = Link_definition.with_attributes (Some attrs) d in
-                    p.defs <- Label.Map.add key (Link_definition.Def (d, m)) p.defs
-                | _ -> ()
-            in
-            (* [rest] is in reverse document order: the first definition under
-               the specifier is the last one here. *)
-            match List.rev rest with
-            | Block_struct.Linkref_def ld :: _ -> attach ld
-            | _ -> ()
-          in
-          attach_attributes ();
+          (* [rest] is in reverse document order: the first definition under
+             the specifier is the last one here. *)
+          begin match List.rev rest with
+          | Block_struct.Linkref_def ld :: _ ->
+              attach_specs_to_ref_def p ld specs
+          | _ -> ()
+          end;
           Block_struct.Attribute_specs specs :: List.rev rest
 
 let rec prepare_block_struct p = function
@@ -2016,7 +2023,6 @@ and block_struct_to_list_item p (i : Block_struct.list_item) =
     { Block.List_item.before_marker; marker; after_marker; block;
       ext_task_marker }
   in
-  ignore djot_tight;
   (i, meta), tight
 
 (* Djot's list tightness.
@@ -2234,21 +2240,9 @@ let register_heading_labels p (doc : Block_struct.t list) =
    that *precedes* a definition follows it here. *)
 let attach_ref_def_attributes p (doc : Block_struct.t list) =
   if not (Oymarkit_mod.djot_block_attributes p.oymarkit_mod) then () else
-  let attach (ld, _) specs =
-    let attrs = List.fold_left Attribute.merge Attribute.empty specs in
-    match Link_definition.defined_label ld with
-    | None -> ()
-    | Some l ->
-        let key = Label.key l in
-        match Label.Map.find_opt key p.defs with
-        | Some (Link_definition.Def (d, m)) ->
-            let d = Link_definition.with_attributes (Some attrs) d in
-            p.defs <- Label.Map.add key (Link_definition.Def (d, m)) p.defs
-        | _ -> ()
-  in
   let rec walk (bs : Block_struct.t list) = match bs with
   | Linkref_def ld :: (Attribute_specs specs :: _ as bs) ->
-      attach ld specs; walk bs
+      attach_specs_to_ref_def p ld specs; walk bs
   | b :: bs -> block b; walk bs
   | [] -> ()
   and block (b : Block_struct.t) = match b with
