@@ -359,21 +359,51 @@ type ctx = {
 (* CR: what does "two vocabularies" means here? Vague *)
 (** Which rule each {!Bconfig} knob switches on. The single place the two
     vocabularies meet. *)
+(** Each rule paired with the {!Bconfig} knob that switches it on: the getter
+    for reading a config, the setter so a test can toggle one rule at a time.
+    The single place the two vocabularies meet. *)
+let rule_knobs :
+    (Rule.t * (Bconfig.t -> bool) * (bool -> Bconfig.t -> Bconfig.t)) list =
+  [
+    ( Rule.no_trailing_blank_line_in_blocks,
+      (fun c -> c.no_trailing_blank_line_in_blocks),
+      fun v c -> { c with no_trailing_blank_line_in_blocks = v } );
+    ( Rule.no_empty_paragraph,
+      (fun c -> c.no_empty_paragraph),
+      fun v c -> { c with no_empty_paragraph = v } );
+    ( Rule.no_empty_blocks,
+      (fun c -> c.no_empty_blocks),
+      fun v c -> { c with no_empty_blocks = v } );
+    ( Rule.no_empty_list,
+      (fun c -> c.no_empty_list),
+      fun v c -> { c with no_empty_list = v } );
+    ( Rule.no_list_item_leading_blank_prefix,
+      (fun c -> c.no_list_item_leading_blank_prefix),
+      fun v c -> { c with no_list_item_leading_blank_prefix = v } );
+    ( Rule.no_marker_colliding_thematic_break,
+      (fun c -> c.no_marker_colliding_thematic_break),
+      fun v c -> { c with no_marker_colliding_thematic_break = v } );
+    ( Rule.no_html_block_absorbing_successor,
+      (fun c -> c.no_html_block_absorbing_successor),
+      fun v c -> { c with no_html_block_absorbing_successor = v } );
+    ( Rule.no_ambiguous_indented_code_after_list,
+      (fun c -> c.no_ambiguous_indented_code_after_list),
+      fun v c -> { c with no_ambiguous_indented_code_after_list = v } );
+    ( Rule.no_adjacent_block_quotes,
+      (fun c -> c.no_adjacent_block_quotes),
+      fun v c -> { c with no_adjacent_block_quotes = v } );
+    ( Rule.no_html_block_starting_paragraph,
+      (fun c -> c.no_html_block_starting_paragraph),
+      fun v c -> { c with no_html_block_starting_paragraph = v } );
+  ]
+
 let enabled_rules (c : Bconfig.t) : Rule.t list =
-  List.filter_map
-    (fun (on, r) -> if on then Some r else None)
-    [
-      (c.no_trailing_blank_line_in_blocks, Rule.no_trailing_blank_line_in_blocks);
-      (c.no_empty_paragraph, Rule.no_empty_paragraph);
-      (c.no_empty_blocks, Rule.no_empty_blocks);
-      (c.no_empty_list, Rule.no_empty_list);
-      (c.no_list_item_leading_blank_prefix, Rule.no_list_item_leading_blank_prefix);
-      (c.no_marker_colliding_thematic_break, Rule.no_marker_colliding_thematic_break);
-      (c.no_html_block_absorbing_successor, Rule.no_html_block_absorbing_successor);
-      (c.no_ambiguous_indented_code_after_list, Rule.no_ambiguous_indented_code_after_list);
-      (c.no_adjacent_block_quotes, Rule.no_adjacent_block_quotes);
-      (c.no_html_block_starting_paragraph, Rule.no_html_block_starting_paragraph);
-    ]
+  List.filter_map (fun (r, get, _) -> if get c then Some r else None) rule_knobs
+
+(** Does [b] satisfy every rule [config] switches on? The checking side of the
+    same list the guards consult. *)
+let satisfies_enabled_rules (config : Bconfig.t) (b : Block.t) : bool =
+  List.for_all (fun r -> Rule.check r b = None) (enabled_rules config)
 
 let init_ctx ?(lead_exclude = []) (config : Bconfig.t) : ctx =
   {
@@ -610,9 +640,33 @@ let mk_gen_block ?(config = Bconfig.default) () : Block.t G.t =
   in
   (* [no_adjacent_block_quotes] is absent here on purpose: it is a guard in
      {!gen_block} now, not a repair. *)
-  if config.no_ambiguous_indented_code_after_list then
-    G.map fence_ambiguous_indented_code gen
-  else gen
+  let gen =
+    if config.no_ambiguous_indented_code_after_list then
+      G.map fence_ambiguous_indented_code gen
+    else gen
+  in
+  (* Keep shrinking inside the language.
+
+     This is a regression guard, not a fix: as of writing it never fires.
+     Measured over 300 failing properties under [typed_md], the invariant was
+     consulted 4699 times and rejected nothing.
+
+     The reason is worth knowing before anyone deletes it as dead weight, or
+     re-adds it believing it does more. QCheck2 shrinks the underlying random
+     tree and then re-runs the generator's bind continuations on the shrunk
+     input. Our guards live *inside* those continuations — [gen_block] reads
+     [ctx.prev] at each choice point, threaded by [let*] — so a shrink
+     candidate is produced by the same guarded code path an ordinary sample is,
+     and comes out satisfying the same rules. The surviving repair passes are
+     re-applied through [G.map] on the shrink path for the same reason.
+
+     What it protects against is a future rule enforced *outside* the
+     generator: a post-hoc [G.filter], a check applied to the finished value,
+     anything that shrinking would route around. Under such a rule minimal
+     counterexamples could leave the language, and reading one is a wasted
+     afternoon. The cost of holding the line here is one [Rule.check] per
+     shrink candidate, which is only paid when a property has already failed. *)
+  G.add_shrink_invariant (satisfies_enabled_rules config) gen
 
 let%expect_test "Default config should give a sensible distribution" =
   Pp_distr.pp_gen ~display:`Boxplot () Format.std_formatter (mk_gen_block ())
