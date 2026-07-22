@@ -259,73 +259,6 @@ let fence_ambiguous_indented_code (block : Block.t) : Block.t =
   in
   snd (rewrite false block)
 
-(** Insert an outside blank line between adjacent block-quote siblings.
-
-    Nested [Blocks] are transparent in render order, so the traversal carries
-    adjacency state through them. Actual containers are rewritten independently.
-    This preserves the two quote nodes and their inner block boundaries.
-
-    TODO: this is quite complicated and I am not entirely sure if this is the
-    best way *)
-let separate_adjacent_block_quotes (block : Block.t) : Block.t =
-  let blank = Block.Blank_line ("", Meta.none) in
-  let rec rewrite = function
-    | Block.Blocks (bs, meta) ->
-        let _, bs = rewrite_blocks false bs in
-        Block.Blocks (bs, meta)
-    | Block.Block_quote (bq, meta) ->
-        let block = rewrite (Block.Block_quote.block bq) in
-        let bq =
-          Block.Block_quote.make ~indent:(Block.Block_quote.indent bq) block
-        in
-        Block.Block_quote (bq, meta)
-    | Block.List (l, meta) ->
-        let rewrite_item (item, item_meta) =
-          let block = rewrite (Block.List_item.block item) in
-          let item =
-            Block.List_item.make
-              ~before_marker:(Block.List_item.before_marker item)
-              ~marker:(Block.List_item.marker item)
-              ~after_marker:(Block.List_item.after_marker item)
-              ?ext_task_marker:(Block.List_item.ext_task_marker item)
-              block
-          in
-          (item, item_meta)
-        in
-        let items = List.map rewrite_item (Block.List'.items l) in
-        let l =
-          Block.List'.make ~tight:(Block.List'.tight l) (Block.List'.type' l)
-            items
-        in
-        Block.List (l, meta)
-    | Block.Ext_footnote_definition (fn, meta) ->
-        let block = rewrite (Block.Footnote.block fn) in
-        let fn =
-          Block.Footnote.make ~indent:(Block.Footnote.indent fn)
-            ~defined_label:(Block.Footnote.defined_label fn)
-            (Block.Footnote.label fn) block
-        in
-        Block.Ext_footnote_definition (fn, meta)
-    | block -> block
-  and rewrite_blocks after_quote = function
-    | [] -> (after_quote, [])
-    | Block.Blocks (bs, meta) :: rest ->
-        let after_quote, bs = rewrite_blocks after_quote bs in
-        let block = Block.Blocks (bs, meta) in
-        let after_quote, rest = rewrite_blocks after_quote rest in
-        (after_quote, block :: rest)
-    | (Block.Block_quote _ as quote) :: rest ->
-        let quote = rewrite quote in
-        let prefix = if after_quote then [ blank; quote ] else [ quote ] in
-        let after_quote, rest = rewrite_blocks true rest in
-        (after_quote, prefix @ rest)
-    | block :: rest ->
-        let block = rewrite block in
-        let after_quote, rest = rewrite_blocks false rest in
-        (after_quote, block :: rest)
-  in
-  rewrite block
-
 let html_block_egs : Block.t list =
   [
     [ ("<div>", Meta.none) ];
@@ -520,6 +453,90 @@ type ctx = {
   config : Bconfig.t;
 }
 
+(* Rules as guards
+   =============== *)
+
+(** The constructor choices {!gen_block} picks between. A rule restricts this
+    list; it never rewrites what comes out of it. *)
+type choice = [ `Leaf | `Blocks | `Block_quote | `List ]
+
+let string_of_choice : choice -> string = function
+  | `Leaf -> "leaf"
+  | `Blocks -> "blocks"
+  | `Block_quote -> "block_quote"
+  | `List -> "list"
+
+(** How often each rule removed each candidate, keyed by [(rule, choice)].
+
+    Filtering a candidate reallocates its weight to the survivors, so a guard
+    bends the distribution declared in {!Bconfig} exactly as a repair pass did.
+    The difference is that a guard can say so. Without this table we would have
+    swapped one invisible distortion for another; see [DIRECTION.md]. *)
+let rejections : (string * string, int) Hashtbl.t = Hashtbl.create 16
+
+let reset_rejections () = Hashtbl.reset rejections
+
+let record_rejection ~(rule : string) ~(choice : choice) =
+  let key = (rule, string_of_choice choice) in
+  let n = Option.value ~default:0 (Hashtbl.find_opt rejections key) in
+  Hashtbl.replace rejections key (n + 1)
+
+let pp_rejections ppf () =
+  let rows =
+    Hashtbl.fold (fun (r, c) n acc -> (r, c, n) :: acc) rejections []
+    |> List.sort compare
+  in
+  match rows with
+  | [] -> Format.fprintf ppf "no candidate was rejected@."
+  | rows ->
+      List.iter
+        (fun (r, c, n) -> Format.fprintf ppf "%-28s %-12s %6d@." r c n)
+        rows
+
+(** Does an enabled rule forbid [c] here? Returns the rule's name so the
+    rejection can be attributed.
+
+    A guard only ever consults {!ctx}: everything non-local the rule depends on
+    has already been carried here as an attribute, which is the entire point of
+    the frame. *)
+let forbids (ctx : ctx) (c : choice) : string option =
+  let prev_is_quote =
+    match ctx.prev with
+    | Some s -> s.trailing_block_quote
+    | None -> false
+  in
+  match c with
+  | `Block_quote when ctx.config.no_adjacent_block_quotes && prev_is_quote ->
+      (* Two quote-marker runs with nothing between them parse as one block
+         quote, so the second node has no witness. [ctx.prev] is already in
+         render order, so a quote that would sit first inside a nested [Blocks]
+         is caught here too: {!gen_blocks} seeds its first child with its own
+         predecessor. *)
+      Some "no_adjacent_block_quotes"
+  | _ -> None
+
+(** Drop the candidates the enabled rules forbid.
+
+    [`Leaf] is the guaranteed candidate and no rule may forbid it: it is a
+    single leaf block, so no adjacency or containment rule has anything to say
+    about it. That is what keeps the list from going empty — repairs can never
+    get stuck, guards can, and the fallback is the price of the trade. If a
+    future rule does need to forbid a leaf, it belongs inside
+    {!gen_leaf_block_}'s weights, where the per-constructor choice still
+    leaves somewhere to go. *)
+let keep_allowed (ctx : ctx) (cands : (int * choice) list) : (int * choice) list
+    =
+  let allowed (_, c) =
+    match forbids ctx c with
+    | None -> true
+    | Some rule ->
+        record_rejection ~rule ~choice:c;
+        false
+  in
+  match List.filter allowed cands with
+  | [] -> [ (1, `Leaf) ]
+  | kept -> kept
+
 let init_ctx ?(lead_exclude = []) (config : Bconfig.t) : ctx =
   {
     lead_exclude;
@@ -590,16 +607,21 @@ let rec gen_block (ctx : ctx) n : (Block.t * summary) G.t =
         let bq = Block.(Block_quote (Block.Block_quote.make b, Meta.none)) in
         (bq, { summary_opaque with trailing_block_quote = true })
       in
-      oneof_weighted
-        [
-          (2, gen_leaf_block ctx);
-          (* The first child of [Blocks] inherits the leading position. *)
-          (1, gen_blocks ctx (n / 2));
-          (1, map block_quote_of_b (gen_block (enter_container ctx) (n / 2)));
-          (* A list is never a thematic break, so the leading position never
-             reaches it; it manages its own items' leading position. *)
-          (1, gen_list (enter_container ctx) n);
-        ]
+      let gen_of : choice -> (Block.t * summary) G.t = function
+        | `Leaf -> gen_leaf_block ctx
+        (* The first child of [Blocks] inherits the leading position, and its
+           predecessor in render order, so [ctx] passes through unchanged. *)
+        | `Blocks -> gen_blocks ctx (n / 2)
+        | `Block_quote ->
+            map block_quote_of_b (gen_block (enter_container ctx) (n / 2))
+        (* A list is never a thematic break, so the leading position never
+           reaches it; it manages its own items' leading position. *)
+        | `List -> gen_list (enter_container ctx) n
+      in
+      [ (2, `Leaf); (1, `Blocks); (1, `Block_quote); (1, `List) ]
+      |> keep_allowed ctx
+      |> List.map (fun (w, c) -> (w, gen_of c))
+      |> oneof_weighted
 
 and gen_list (ctx : ctx) n : (Block.t * summary) G.t =
   let config = ctx.config in
@@ -715,13 +737,10 @@ let mk_gen_block ?(config = Bconfig.default) () : Block.t G.t =
   let gen =
     G.(sized_size nat_small @@ fun n -> map fst (gen_block (init_ctx config) n))
   in
-  let gen =
-    if config.no_ambiguous_indented_code_after_list then
-      G.map fence_ambiguous_indented_code gen
-    else gen
-  in
-  if config.no_adjacent_block_quotes then
-    G.map separate_adjacent_block_quotes gen
+  (* [no_adjacent_block_quotes] is absent here on purpose: it is a guard in
+     {!gen_block} now, not a repair. *)
+  if config.no_ambiguous_indented_code_after_list then
+    G.map fence_ambiguous_indented_code gen
   else gen
 
 let%expect_test "Default config should give a sensible distribution" =
@@ -761,3 +780,26 @@ let%expect_test "Default config should give a sensible distribution" =
     │p5=0.00|p95=6.00|mu=2.48 │                                                            │
     └─────────────────────────┴────────────────────────────────────────────────────────────┘
     |}]
+
+(* How much a guard bends the declared weights.
+
+   [typed_md] enables [no_adjacent_block_quotes], so a `Block_quote` candidate
+   is dropped whenever the previous sibling in render order is already a quote.
+   The count below is that deviation, made legible: it is the number of times
+   the generator wanted a quote and the rule said no. Under the old repair pass
+   the same situation produced a silently-inserted [Blank_line] and no number at
+   all. *)
+let%expect_test "guards report how often they rejected a candidate" =
+  let sample config =
+    reset_rejections ();
+    let gen = mk_gen_block ~config () in
+    let rand = Random.State.make [| 42 |] in
+    for _ = 1 to 1000 do
+      ignore (QCheck2.Gen.generate1 ~rand gen)
+    done;
+    Format.printf "%a" pp_rejections ()
+  in
+  sample Bconfig.default;
+  [%expect {| no candidate was rejected |}];
+  sample Bconfig.typed_md;
+  [%expect {| no_adjacent_block_quotes     block_quote    2735 |}]
