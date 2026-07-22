@@ -10,8 +10,20 @@
     Both clauses read the same attributes — {!ctx} flowing down, {!summary}
     flowing across — and {!check} computes them with the same traversal the
     generator uses while building. That is what makes the two clauses testable
-    against each other rather than merely written next to each other; see
-    [DIRECTION.md].
+    against each other rather than merely written next to each other: every AST
+    from a generator honouring [forbids] must pass [violated], and disabling a
+    rule must eventually produce an AST that [violated] flags. Neither test is
+    expressible while the generating and checking sides are written separately.
+
+    Why attributes at all: a constraint becomes {e local} once the right
+    attribute exists, because everything non-local it depended on has been
+    carried to it. Each rule here is non-local only in needing one or two facts
+    about a parent or a previous sibling, so each becomes a guard on a choice
+    rather than a repair traversal after the fact. Guards compose — they only
+    ever remove candidates, so switching a rule on cannot break a rule that
+    already held — where repairs do not: an inserted separator can create the
+    very shape another repair forbids, and their composition order is
+    load-bearing and unchecked.
 
     This module sits below {!module:Gen} and knows nothing about configs. A rule
     says {e what} it forbids; whether it is switched on is a separate question,

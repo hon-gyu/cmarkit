@@ -223,7 +223,7 @@ module Bconfig = struct
         (** Adjacent quote-marker runs parse as one block quote. Insert an
             outside blank line to preserve two sibling quote containers. *)
     (* inline <-> block interaction rules
-    -------------------- *)
+    -------------------------------------- *)
     no_html_block_starting_paragraph : bool;
         (** A html tag at the start of a paragraph will be parsed to a HTML
             block. *)
@@ -356,6 +356,7 @@ type ctx = {
   rules : Rule.t list;  (** Enabled rules, resolved once from [config]. *)
 }
 
+(* CR: what does "two vocabularies" means here? Vague *)
 (** Which rule each {!Bconfig} knob switches on. The single place the two
     vocabularies meet. *)
 let enabled_rules (c : Bconfig.t) : Rule.t list =
@@ -391,8 +392,10 @@ let enter_container (ctx : ctx) : ctx =
 
     Filtering a candidate reallocates its weight to the survivors, so a guard
     bends the distribution declared in {!Bconfig} exactly as a repair pass did.
-    The difference is that a guard can say so. Without this table we would have
-    swapped one invisible distortion for another; see [DIRECTION.md]. *)
+    The difference is that a guard can say so, and this table is where it says
+    it: without a per-rule count we would have traded one invisible distortion
+    for another. {!Pp_distr} measures the distribution that came out; this
+    measures which rule bent it. *)
 let rejections : (string * string, int) Hashtbl.t = Hashtbl.create 16
 
 let reset_rejections () = Hashtbl.reset rejections
