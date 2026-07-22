@@ -63,10 +63,91 @@ let code_block_egs : Block.t list =
     ]
   |> List.map (fun cb -> Block.(Code_block (cb, Meta.none)))
 
+(* Synthesized attributes
+   ====================== *)
+
+(** What a subtree looks like from the outside, to whatever follows it in render
+    order.
+
+    Every sibling-adjacency rule needs one or two facts about the block before
+    it. Collecting them in one record is what lets those rules be stated as
+    guards at a choice point instead of as repair traversals after the fact; see
+    [DIRECTION.md]. The generator synthesizes this while building, and
+    {!summarize} recovers it from a finished [Block.t] so the checker can reach
+    the same facts without generating.
+
+    Peeling follows {e render order}, not tree structure: nested [Blocks] are
+    transparent, so a [Blocks]'s trailing edge is its last child's and its
+    leading edge is its first child's. [Block_quote], [List] and footnote
+    definitions are container boundaries and stop the peel. *)
+type summary = {
+  transparent : bool;
+      (** No render-order content at all: an empty [Blocks], or a [Blocks] of
+          nothing but those. Such a subtree neither establishes nor clears
+          context for its successor, so the fold in {!gen_blocks} passes the
+          previous summary straight through it. *)
+  trailing_block_quote : bool;
+      (** The last block in render order is a [Block_quote]. Two flush quote
+          markers parse as one quote; see {!Typing.no_adjacent_block_quotes}. *)
+  trailing_absorbing : bool;
+      (** The last block in render order is an html block left open at its last
+          line, which swallows whatever renders after it; see
+          {!Typing.no_html_block_absorbing_successor}. *)
+  leads_with_blank : bool;
+      (** The first block in render order is a [Blank_line]. A successor that
+          already starts blank needs no separator inserted before it. *)
+  list_continuation_indent : int option;
+      (** For a trailing [List], its final item's continuation indent. At most
+          four columns and a following indented code block is absorbed into the
+          item; see {!Typing.no_ambiguous_indented_code_after_list}. *)
+}
+
+let summary_nil =
+  {
+    transparent = true;
+    trailing_block_quote = false;
+    trailing_absorbing = false;
+    leads_with_blank = false;
+    list_continuation_indent = None;
+  }
+
+let summary_opaque = { summary_nil with transparent = false }
+
+(* Combine a [Blocks]'s children in render order: leading edge from the first
+   contentful child, trailing edges from the last. *)
+let summary_seq (ss : summary list) : summary =
+  match List.filter (fun s -> not s.transparent) ss with
+  | [] -> summary_nil
+  | first :: _ as ss ->
+      let last = List.nth ss (List.length ss - 1) in
+      { last with leads_with_blank = first.leads_with_blank }
+
+let rec summarize (b : Block.t) : summary =
+  match b with
+  | Block.Blocks (bs, _) -> summary_seq (List.map summarize bs)
+  | Block.Blank_line _ -> { summary_opaque with leads_with_blank = true }
+  | Block.Block_quote _ -> { summary_opaque with trailing_block_quote = true }
+  | Block.Html_block (lines, _) ->
+      {
+        summary_opaque with
+        trailing_absorbing = Common_.html_block_absorbs lines;
+      }
+  | Block.List (l, _) ->
+      {
+        summary_opaque with
+        list_continuation_indent = Common_.list_last_item_continuation_indent l;
+      }
+  | _ -> summary_opaque
+
 (* Render-order peeling for the html-block absorption rule
    ({!Typing.no_html_block_absorbing_successor}). Absorption only crosses
    [Blocks] siblings; a [Block_quote]/[List] boundary stops it, so we peel
-   [Blocks] tails/heads but no further. *)
+   [Blocks] tails/heads but no further.
+
+   TODO(migration): subsumed by {!summarize}, but not identical — these treat an
+   empty [Blocks] as opaque where {!summarize} treats it as transparent, which is
+   the correct reading and would move baselines. Delete each when the rule that
+   uses it becomes a guard. *)
 let rec trailing_absorbing : Block.t -> bool = function
   | Block.Blocks (bs, _) -> (
       match List.rev bs with
@@ -405,13 +486,28 @@ let gen_heading (config : Bconfig.t) : Block.t G.t =
       Block.(Heading (Block.Heading.make ~level inline, Meta.none)))
     G.(pair (int_range 1 6) (gen_inline ic))
 
-type block_gen_state = { foo : int }
+(* Inherited attributes
+   ==================== *)
 
-let init_state : block_gen_state = { foo = 0 }
+(** What a block needs to know about where it sits, carried down from its
+    parent. Read at every choice point and modified when descending; see
+    [DIRECTION.md].
 
-(* [lead_exclude] are characters a thematic break may not use here, because this
-   leaf sits at the leading (marker) line of a list item; see
-   {!gen_thematic_break}. *)
+    This is the reader half of the attribute grammar. It replaces the growing
+    list of one-optional-argument-per-rule that {!gen_block} used to take. *)
+type ctx = {
+  lead_exclude : char list;
+      (** Characters a thematic break may not use here, because this block sits
+          at the leading (marker) line of a list item and a break of the marker
+          char would collapse the item; see {!gen_thematic_break}. A
+          [Block_quote]'s [>] absorbs the leading position, so descending into
+          one clears this. *)
+  config : Bconfig.t;
+}
+
+let init_ctx ?(lead_exclude = []) (config : Bconfig.t) : ctx =
+  { lead_exclude; config }
+
 let gen_leaf_block_ ?(config = Bconfig.default) ?(rule_lead_exclude_chars = [])
     ?(w_blank_line = 1) ?(w_thematic_break = 1) ?(w_code_block = 1)
     ?(w_html_block = 1) ?(w_paragraph = 1) ?(w_heading = 1) () : Block.t G.t =
@@ -426,9 +522,11 @@ let gen_leaf_block_ ?(config = Bconfig.default) ?(rule_lead_exclude_chars = [])
   |> List.filter (fun (w, _) -> w > 0)
   |> G.oneof_weighted
 
-let gen_leaf_block ?(rule_lead_exclude_chars = []) (config : Bconfig.t) st =
+let gen_leaf_block (ctx : ctx) =
+  let config = ctx.config in
   let w_blank_line = if config.no_direct_blank_line then Some 0 else None in
-  gen_leaf_block_ ~config ~rule_lead_exclude_chars ?w_blank_line ()
+  gen_leaf_block_ ~config ~rule_lead_exclude_chars:ctx.lead_exclude ?w_blank_line
+    ()
 
 let limit_list_item_leading_blank_prefix (block : Block.t) : Block.t =
   let blank = function
@@ -446,28 +544,30 @@ let limit_list_item_leading_blank_prefix (block : Block.t) : Block.t =
       | _ -> block)
   | _ -> block
 
-let rec gen_block ?(rule_lead_exclude_chars = []) config st n =
+let rec gen_block (ctx : ctx) n =
   let open G in
+  (* Descending into a container: the [>] marker, or the item marker, absorbs
+     the leading position, so the marker collision cannot reach inside. *)
+  let inner = { ctx with lead_exclude = [] } in
   match n with
-  | 0 -> gen_leaf_block ~rule_lead_exclude_chars config st
+  | 0 -> gen_leaf_block ctx
   | n ->
       let block_quote_of_b b =
         Block.(Block_quote (Block.Block_quote.make b, Meta.none))
       in
       oneof_weighted
         [
-          (2, gen_leaf_block ~rule_lead_exclude_chars config st);
+          (2, gen_leaf_block ctx);
           (* The first child of [Blocks] inherits the leading position. *)
-          (1, gen_blocks ~rule_lead_exclude_chars config st (n / 2));
-          (* A block quote's [>] absorbs the leading position, so the marker
-             collision cannot reach inside; drop [lead_exclude]. *)
-          (1, map block_quote_of_b (gen_block config st (n / 2)));
+          (1, gen_blocks ctx (n / 2));
+          (1, map block_quote_of_b (gen_block inner (n / 2)));
           (* A list is never a thematic break, so the leading position never
              reaches it; it manages its own items' leading position. *)
-          (1, gen_list config st n);
+          (1, gen_list inner n);
         ]
 
-and gen_list config st n : Block.t G.t =
+and gen_list (ctx : ctx) n : Block.t G.t =
+  let config = ctx.config in
   let open G in
   (* Start integer for ordered lists; the renderer only keeps the first item's
      value, so a small spread is enough. *)
@@ -501,7 +601,7 @@ and gen_list config st n : Block.t G.t =
           else block
         in
         (Block.List_item.make block, Meta.none))
-      (gen_block ~rule_lead_exclude_chars:item_lead_exclude config st (n / 2))
+      (gen_block { ctx with lead_exclude = item_lead_exclude } (n / 2))
   in
   let gen_len =
     if config.no_empty_list then int_range 1 (max 1 (n / 2))
@@ -511,23 +611,26 @@ and gen_list config st n : Block.t G.t =
     (fun items -> Block.(List (Block.List'.make type' items, Meta.none)))
     (list_size gen_len gen_item)
 
-and gen_blocks ?(rule_lead_exclude_chars = []) config st n : Block.t G.t =
+and gen_blocks (ctx : ctx) n : Block.t G.t =
   let open G in
+  let config = ctx.config in
   let gen_len =
     if config.no_empty_blocks then int_range 1 (max 1 n) else int_bound n
   in
-  let config' =
+  let ctx =
     if config.no_trailing_blank_line_in_blocks then
-      { config with no_direct_blank_line = true }
-    else config
+      { ctx with config = { config with no_direct_blank_line = true } }
+    else ctx
   in
   (* Only the head sits at the leading position; the rest start fresh lines. *)
   let* len = gen_len in
   let* blocks =
     if len = 0 then return []
     else
-      let* head = gen_block ~rule_lead_exclude_chars config' st n in
-      let* tail = list_size (return (len - 1)) (gen_block config' st n) in
+      let* head = gen_block ctx n in
+      let* tail =
+        list_size (return (len - 1)) (gen_block { ctx with lead_exclude = [] } n)
+      in
       return (head :: tail)
   in
   let blocks =
@@ -538,7 +641,7 @@ and gen_blocks ?(rule_lead_exclude_chars = []) config st n : Block.t G.t =
   return (Block.Blocks (blocks, Meta.none))
 
 let mk_gen_block ?(config = Bconfig.default) () : Block.t G.t =
-  let gen = G.(sized_size nat_small @@ gen_block config init_state) in
+  let gen = G.(sized_size nat_small @@ gen_block (init_ctx config)) in
   let gen =
     if config.no_ambiguous_indented_code_after_list then
       G.map fence_ambiguous_indented_code gen
