@@ -502,11 +502,46 @@ type ctx = {
           char would collapse the item; see {!gen_thematic_break}. A
           [Block_quote]'s [>] absorbs the leading position, so descending into
           one clears this. *)
+  prev : summary option;
+      (** Summary of the previous sibling {e in render order}, which is not the
+          same as the previous sibling in the tree: a nested [Blocks] is
+          transparent, so its first child sees the [Blocks]'s own predecessor,
+          and a transparent subtree passes its predecessor through. [None] at
+          the start of a sequence and immediately inside a container, whose
+          marker breaks any adjacency with what came before it. *)
+  is_last : bool;  (** Last position of the enclosing render-order sequence. *)
+  at_root : bool;
+      (** This block is the whole generated tree, not a child of anything. *)
+  in_root_seq : bool;
+      (** The sequence this block belongs to is the document's root [Blocks], so
+          a trailing [Blank_line] here trails the document rather than sitting
+          inside a nested [Blocks]; see
+          {!Typing.no_trailing_blank_line_in_blocks}. *)
   config : Bconfig.t;
 }
 
 let init_ctx ?(lead_exclude = []) (config : Bconfig.t) : ctx =
-  { lead_exclude; config }
+  {
+    lead_exclude;
+    prev = None;
+    is_last = true;
+    at_root = true;
+    in_root_seq = false;
+    config;
+  }
+
+(* Descending through a container marker ([>], an item marker, a footnote
+   label). The marker absorbs the leading position and breaks adjacency with
+   whatever preceded the container, so the child starts a fresh sequence. *)
+let enter_container (ctx : ctx) : ctx =
+  {
+    ctx with
+    lead_exclude = [];
+    prev = None;
+    is_last = true;
+    at_root = false;
+    in_root_seq = false;
+  }
 
 let gen_leaf_block_ ?(config = Bconfig.default) ?(rule_lead_exclude_chars = [])
     ?(w_blank_line = 1) ?(w_thematic_break = 1) ?(w_code_block = 1)
@@ -522,11 +557,13 @@ let gen_leaf_block_ ?(config = Bconfig.default) ?(rule_lead_exclude_chars = [])
   |> List.filter (fun (w, _) -> w > 0)
   |> G.oneof_weighted
 
-let gen_leaf_block (ctx : ctx) =
+let gen_leaf_block (ctx : ctx) : (Block.t * summary) G.t =
   let config = ctx.config in
   let w_blank_line = if config.no_direct_blank_line then Some 0 else None in
-  gen_leaf_block_ ~config ~rule_lead_exclude_chars:ctx.lead_exclude ?w_blank_line
-    ()
+  G.map
+    (fun b -> (b, summarize b))
+    (gen_leaf_block_ ~config ~rule_lead_exclude_chars:ctx.lead_exclude
+       ?w_blank_line ())
 
 let limit_list_item_leading_blank_prefix (block : Block.t) : Block.t =
   let blank = function
@@ -544,29 +581,27 @@ let limit_list_item_leading_blank_prefix (block : Block.t) : Block.t =
       | _ -> block)
   | _ -> block
 
-let rec gen_block (ctx : ctx) n =
+let rec gen_block (ctx : ctx) n : (Block.t * summary) G.t =
   let open G in
-  (* Descending into a container: the [>] marker, or the item marker, absorbs
-     the leading position, so the marker collision cannot reach inside. *)
-  let inner = { ctx with lead_exclude = [] } in
   match n with
   | 0 -> gen_leaf_block ctx
   | n ->
-      let block_quote_of_b b =
-        Block.(Block_quote (Block.Block_quote.make b, Meta.none))
+      let block_quote_of_b (b, _) =
+        let bq = Block.(Block_quote (Block.Block_quote.make b, Meta.none)) in
+        (bq, { summary_opaque with trailing_block_quote = true })
       in
       oneof_weighted
         [
           (2, gen_leaf_block ctx);
           (* The first child of [Blocks] inherits the leading position. *)
           (1, gen_blocks ctx (n / 2));
-          (1, map block_quote_of_b (gen_block inner (n / 2)));
+          (1, map block_quote_of_b (gen_block (enter_container ctx) (n / 2)));
           (* A list is never a thematic break, so the leading position never
              reaches it; it manages its own items' leading position. *)
-          (1, gen_list inner n);
+          (1, gen_list (enter_container ctx) n);
         ]
 
-and gen_list (ctx : ctx) n : Block.t G.t =
+and gen_list (ctx : ctx) n : (Block.t * summary) G.t =
   let config = ctx.config in
   let open G in
   (* Start integer for ordered lists; the renderer only keeps the first item's
@@ -592,26 +627,36 @@ and gen_list (ctx : ctx) n : Block.t G.t =
     | `Unordered c when config.no_marker_colliding_thematic_break -> [ c ]
     | _ -> []
   in
+  let item_ctx = { (enter_container ctx) with lead_exclude = item_lead_exclude } in
   let gen_item =
     map
-      (fun block ->
+      (fun (block, _) ->
         let block =
           if config.no_list_item_leading_blank_prefix then
             limit_list_item_leading_blank_prefix block
           else block
         in
         (Block.List_item.make block, Meta.none))
-      (gen_block { ctx with lead_exclude = item_lead_exclude } (n / 2))
+      (gen_block item_ctx (n / 2))
   in
   let gen_len =
     if config.no_empty_list then int_range 1 (max 1 (n / 2))
     else int_bound (n / 2)
   in
   map
-    (fun items -> Block.(List (Block.List'.make type' items, Meta.none)))
+    (fun items ->
+      let l = Block.List'.make type' items in
+      let summary =
+        {
+          summary_opaque with
+          list_continuation_indent =
+            Common_.list_last_item_continuation_indent l;
+        }
+      in
+      (Block.(List (l, Meta.none)), summary))
     (list_size gen_len gen_item)
 
-and gen_blocks (ctx : ctx) n : Block.t G.t =
+and gen_blocks (ctx : ctx) n : (Block.t * summary) G.t =
   let open G in
   let config = ctx.config in
   let gen_len =
@@ -622,26 +667,54 @@ and gen_blocks (ctx : ctx) n : Block.t G.t =
       { ctx with config = { config with no_direct_blank_line = true } }
     else ctx
   in
-  (* Only the head sits at the leading position; the rest start fresh lines. *)
   let* len = gen_len in
-  let* blocks =
-    if len = 0 then return []
+  (* Left-to-right fold: each child is generated in a context that knows its
+     predecessor's summary and whether it closes the sequence. This is the
+     "across" half of the attribute grammar and the reason the adjacency rules
+     can become guards; a [list_size] cannot express it, because its elements
+     are independent.
+
+     The seed is [ctx.prev], not [None]: a nested [Blocks] is transparent in
+     render order, so its first child's predecessor is the [Blocks]'s own
+     predecessor. A transparent child likewise passes its predecessor along
+     rather than becoming one. That is exactly the distinction the repair
+     traversals below make when they peel [Blocks] but stop at containers. *)
+  let rec fold i prev acc =
+    if i >= len then return (List.rev acc)
     else
-      let* head = gen_block ctx n in
-      let* tail =
-        list_size (return (len - 1)) (gen_block { ctx with lead_exclude = [] } n)
+      let child_ctx =
+        {
+          ctx with
+          (* Only the head sits at the leading position; the rest start fresh
+             lines. *)
+          lead_exclude = (if i = 0 then ctx.lead_exclude else []);
+          prev;
+          is_last = i = len - 1;
+          at_root = false;
+          in_root_seq = ctx.at_root;
+        }
       in
-      return (head :: tail)
+      let* b, s = gen_block child_ctx n in
+      let prev = if s.transparent then prev else Some s in
+      fold (i + 1) prev (b :: acc)
   in
+  let* blocks = fold 0 ctx.prev [] in
   let blocks =
     if config.no_html_block_absorbing_successor then
       separate_absorbing_html blocks
     else blocks
   in
-  return (Block.Blocks (blocks, Meta.none))
+  (* TODO(migration): recomputed rather than folded up from the children's
+     summaries because [separate_absorbing_html] may have inserted blocks the
+     fold never saw. Becomes [summary_seq (List.map snd children)] once that
+     repair is a guard. *)
+  let block = Block.Blocks (blocks, Meta.none) in
+  return (block, summarize block)
 
 let mk_gen_block ?(config = Bconfig.default) () : Block.t G.t =
-  let gen = G.(sized_size nat_small @@ gen_block (init_ctx config)) in
+  let gen =
+    G.(sized_size nat_small @@ fun n -> map fst (gen_block (init_ctx config) n))
+  in
   let gen =
     if config.no_ambiguous_indented_code_after_list then
       G.map fence_ambiguous_indented_code gen
@@ -658,33 +731,33 @@ let%expect_test "Default config should give a sensible distribution" =
     {|
                                             Boxplot
     ┌─────────────────────────┬────────────────────────────────────────────────────────────┐
-    │n=1000                   │↓0                                                        8↓│
+    │n=1000                   │↓0                                                       10↓│
     ├─────────────────────────┼────────────────────────────────────────────────────────────┤
-    │blank_line               │[------------------+------------------------]               │
-    │p5=0.00|p95=6.00|mu=2.58 │                                                            │
+    │blank_line               │[-------------+--------------------------]                  │
+    │p5=0.00|p95=7.00|mu=2.50 │                                                            │
     ├─────────────────────────┼────────────────────────────────────────────────────────────┤
-    │block_quote              │[-----------------------------------------------------+----~│
-    │p5=0.00|p95=15.00|mu=7.35│                                                            │
+    │block_quote              │[----------------------------------------+-----------------~│
+    │p5=0.00|p95=19.00|mu=7.11│                                                            │
     ├─────────────────────────┼────────────────────────────────────────────────────────────┤
-    │blocks                   │[----------------------------------------------------+-----~│
-    │p5=0.00|p95=15.00|mu=7.30│                                                            │
+    │blocks                   │[----------------------------------------+-----------------~│
+    │p5=0.00|p95=20.00|mu=7.11│                                                            │
     ├─────────────────────────┼────────────────────────────────────────────────────────────┤
-    │code_block               │[------------------+------------------------]               │
-    │p5=0.00|p95=6.00|mu=2.64 │                                                            │
+    │code_block               │[--------------+-------------------]                        │
+    │p5=0.00|p95=6.00|mu=2.59 │                                                            │
     ├─────────────────────────┼────────────────────────────────────────────────────────────┤
-    │heading                  │[-----------------+-----------------]                       │
-    │p5=0.00|p95=5.00|mu=2.49 │                                                            │
+    │heading                  │[-------------+--------------------]                        │
+    │p5=0.00|p95=6.00|mu=2.45 │                                                            │
     ├─────────────────────────┼────────────────────────────────────────────────────────────┤
-    │html_block               │[-----------------+-------------------------]               │
-    │p5=0.00|p95=6.00|mu=2.51 │                                                            │
+    │html_block               │[-------------+--------------------------]                  │
+    │p5=0.00|p95=7.00|mu=2.48 │                                                            │
     ├─────────────────────────┼────────────────────────────────────────────────────────────┤
-    │list                     │[------------------------------------------------------+---~│
-    │p5=0.00|p95=16.00|mu=7.51│                                                            │
+    │list                     │[-----------------------------------------+----------------~│
+    │p5=0.00|p95=19.00|mu=7.23│                                                            │
     ├─────────────────────────┼────────────────────────────────────────────────────────────┤
-    │paragraph                │[------------------+------------------------]               │
-    │p5=0.00|p95=6.00|mu=2.60 │                                                            │
+    │paragraph                │[--------------+-------------------------]                  │
+    │p5=0.00|p95=7.00|mu=2.55 │                                                            │
     ├─────────────────────────┼────────────────────────────────────────────────────────────┤
-    │thematic_break           │[-----------------+-------------------------]               │
-    │p5=0.00|p95=6.00|mu=2.56 │                                                            │
+    │thematic_break           │[-------------+--------------------]                        │
+    │p5=0.00|p95=6.00|mu=2.48 │                                                            │
     └─────────────────────────┴────────────────────────────────────────────────────────────┘
     |}]
