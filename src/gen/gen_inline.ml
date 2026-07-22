@@ -91,6 +91,92 @@ let (raw_html_egs : Inline.t list) =
 
 (* TODO: extension strikethrough and math_span *)
 
+(* Djot symbols. Opaque leaves: no children, never span a line. They need no
+   separation rule — [:a:] and [:b:] flush against each other render [:a::b:],
+   and the scanner takes [:a:] then [:b:], recovering both. Requires the
+   parser's [colon_symbols]. *)
+let symbol_egs : Inline.t list =
+  [ "smile"; "+1"; "a_b" ]
+  |> List.map (fun n -> Inline.(Ext_symbol (Symbol.make n, Meta.none)))
+
+let mk_smart_punct ?(marker = false) kind =
+  Inline.(Ext_smart_punct (Smart_punct.make ~marker kind, Meta.none))
+
+(* Quoted spans. A quote is a delimiter: the parser pairs an opener with a closer
+   and the pair becomes [Ext_quoted]; only a quote that fails to pair is left as
+   a bare [Smart_punct] character. So the *container* is what the generator can
+   place, and a bare quote character is what it cannot — see [no_bare_smart_quotes].
+
+   [marked] puts braces on the delimiters ([{"]…["}]), for the same reason
+   [marked_emphasis] does on emphasis, and it buys the same two things.
+
+   It disambiguates nesting: bare [ "jia"jia"" ] is a quoted span holding a
+   quoted span at its end, but the parser pairs the first closer it meets with
+   the opener on top of the stack, and reads the pair the other way round.
+   Marked delimiters pair only with marked delimiters ([{"] with ["}]), so the
+   boundary is explicit.
+
+   It also lifts djot's [canOpen] restriction on a [Single] opener, which
+   otherwise only opens at the start of a line or after one of a small set of
+   characters (space, [-], [(], [[], a quote). Unmarked, whether a single-quoted
+   span roundtrips depends on the *rendered text to its left* — [ 'x' ] after a
+   word renders [ jia'x' ], whose quotes open nothing and come back two
+   apostrophes — and that is a property of the whole prefix, not of the node or
+   its neighbour, which the generator has no local way to state. So unmarked,
+   only [Double] is generated; marked, both kinds are. *)
+let mk_quoted_egs ~marked i =
+  let kinds =
+    if marked then Inline.Quoted.[ Single; Double ] else [ Inline.Quoted.Double ]
+  in
+  kinds
+  |> List.map (fun kind ->
+         Inline.(
+           Ext_quoted
+             ( Quoted.make ~open_marker:marked ~close_marker:marked kind i,
+               Meta.none )))
+
+(* An ellipsis needs no rule: [...] flush against [...] is six periods, which
+   divides back into exactly two ellipses. Dashes are the hazard — see
+   [no_adjacent_smart_dashes]. *)
+let smart_dash_egs : Inline.t list =
+  Inline.Smart_punct.[ Em_dash; En_dash ] |> List.map (fun k -> mk_smart_punct k)
+
+let smart_ellipsis_egs : Inline.t list = [ mk_smart_punct Inline.Smart_punct.Ellipsis ]
+
+(* A run of hyphens is divided by its *total length* alone, so the parser cannot
+   recover how the AST split it. [En_dash] then [Em_dash] renders [-----], which
+   divides back into em-then-en: the order flips. Even a uniform run is unsafe —
+   three [En_dash] render six hyphens, which come back as two [Em_dash]. So no
+   two dash nodes may render flush; unlike emphasis there is no marker escape.
+   Mirrors [drop_fusing_code_spans]. *)
+let rec starts_with_smart_dash = function
+  | Inline.Ext_smart_punct (sp, _) ->
+      (match Inline.Smart_punct.kind sp with
+       | Inline.Smart_punct.Em_dash | Inline.Smart_punct.En_dash -> true
+       | _ -> false)
+  | Inline.Inlines (i :: _, _) -> starts_with_smart_dash i
+  | _ -> false
+
+let rec ends_with_smart_dash = function
+  | Inline.Ext_smart_punct _ as i -> starts_with_smart_dash i
+  | Inline.Inlines (is, _) -> (
+      match List.rev is with
+      | last :: _ -> ends_with_smart_dash last
+      | [] -> false)
+  | _ -> false
+
+let drop_fusing_smart_dashes (is : Inline.t list) : Inline.t list =
+  let rec loop trailing_dash acc = function
+    | [] -> List.rev acc
+    | e :: es ->
+        let n = Inline.normalize e in
+        if Inline.is_empty n then loop trailing_dash (e :: acc) es
+        else if trailing_dash && starts_with_smart_dash n then
+          loop trailing_dash acc es
+        else loop (ends_with_smart_dash n) (e :: acc) es
+  in
+  loop false [] is
+
 (* Code spans have no witness when rendered flush against each other: the
    closing backtick fence of one and the opening fence of the next merge into a
    single longer run, which can't match either fence length, so the parser reads
@@ -140,6 +226,16 @@ module Iconfig = struct
     w_strong_emphasis : int;
     w_link : int;
     w_image : int;
+    w_symbol : int;
+    w_quoted : int;
+        (** Weight of an {!Inline.Ext_quoted} span. Requires the parser's
+            [smart_punctuation]. *)
+        (** Djot symbols. Defaults to 0: the node only has a witness when the
+            parser's [colon_symbols] is on, so a consumer must opt in on both
+            sides. *)
+    w_smart_punct : int;
+        (** Djot smart punctuation. Defaults to 0, and pairs with the parser's
+            [smart_punctuation] the same way [w_symbol] does. *)
     no_empty_inlines : bool;
     no_empty_emphasis : bool;
     no_html_block_start : bool;
@@ -165,6 +261,34 @@ module Iconfig = struct
             [Inlines]. Two adjacent code spans have no CommonMark witness — their
             backtick fences merge into a single run — and there is no marker
             escape as there is for emphasis. *)
+    no_adjacent_smart_dashes : bool;
+        (** Never place a smart-punctuation dash flush against a preceding one.
+            A hyphen run is divided by its total length alone, so the split the
+            AST intended is not recoverable: [En_dash] then [Em_dash] renders
+            [-----] and comes back em-then-en (the order flips), and three
+            [En_dash] render six hyphens, which come back as two [Em_dash]. Even
+            uniform runs are unsafe, and there is no marker escape. *)
+    marked_quotes : bool;
+        (** Put braces on every quoted span's delimiters ([{"]…["}]). Quotes
+            pair like emphasis, so they have emphasis's nesting ambiguity —
+            [ "a"b"" ] is read with the boundary in the wrong place — and marked
+            delimiters pair only with marked ones, which states it. It also
+            frees a single-quoted span from djot's [canOpen] restriction, which
+            otherwise makes its roundtrip depend on the text rendered to its
+            left. Pairs with the parser's [smart_punctuation]. *)
+    no_bare_smart_quotes : bool;
+        (** Never generate a bare quote character ([Left_double_quote] and the
+            three other quote kinds of [Smart_punct]). A quote is a delimiter,
+            not a character: the parser pairs openers with closers, and a bare
+            quote node is only what is *left over* when a quote fails to pair.
+            So a bare quote is not compositionally placeable — two of them in a
+            paragraph pair up and come back as one [Ext_quoted], and a lone
+            [Right_double_quote] renders a quote that has nothing to pair with
+            and comes back a *left* one (an unmatched double quote falls back to
+            the opening direction, an unmatched single one to an apostrophe).
+
+            Quoted spans are generated as [Ext_quoted] containers instead, which
+            do roundtrip; see [w_quoted]. *)
   }
 
   let default =
@@ -179,6 +303,9 @@ module Iconfig = struct
       w_strong_emphasis = 1;
       w_link = 1;
       w_image = 1;
+      w_symbol = 0;
+      w_smart_punct = 0;
+      w_quoted = 0;
       no_empty_inlines = false;
       no_empty_emphasis = false;
       no_html_block_start = false;
@@ -186,6 +313,9 @@ module Iconfig = struct
       different_delim_char_for_emph_and_strong_empha = false;
       marked_emphasis = false;
       no_adjacent_code_spans = false;
+      no_adjacent_smart_dashes = false;
+      marked_quotes = false;
+      no_bare_smart_quotes = false;
     }
 
   let typed =
@@ -196,7 +326,16 @@ module Iconfig = struct
       different_delim_char_for_emph_and_strong_empha = true;
       marked_emphasis = true;
       no_adjacent_code_spans = true;
+      no_adjacent_smart_dashes = true;
+      marked_quotes = true;
+      no_bare_smart_quotes = true;
     }
+
+  (** {!typed} with the djot inline extensions switched on. Kept separate
+      because the nodes only have a witness when the parser is given
+      [colon_symbols] and [smart_punctuation]; reparsing without those knobs
+      turns the rendered source back into plain text. *)
+  let typed_djot = { typed with w_symbol = 1; w_smart_punct = 1; w_quoted = 1 }
 end
 
 (**
@@ -208,12 +347,25 @@ end
    ]}
  *)
 let gen_leaf (ic : Iconfig.t) =
+  let smart_punct_egs =
+    let quotes =
+      if ic.no_bare_smart_quotes then []
+      else
+        Inline.Smart_punct.
+          [ Left_double_quote; Right_double_quote;
+            Left_single_quote; Right_single_quote ]
+        |> List.map (fun k -> mk_smart_punct k)
+    in
+    quotes @ smart_dash_egs @ smart_ellipsis_egs
+  in
   [
     (ic.w_text, G.oneof_list text_egs);
     (ic.w_code_span, G.oneof_list code_span_egs);
     (ic.w_autolink, G.oneof_list autolink_egs);
     ( (if ic.no_html_block_start then 0 else ic.w_raw_html),
       G.oneof_list raw_html_egs );
+    (ic.w_symbol, G.oneof_list symbol_egs);
+    (ic.w_smart_punct, G.oneof_list smart_punct_egs);
   ]
   |> List.filter (fun (w, _) -> w > 0)
   |> G.oneof_weighted
@@ -247,6 +399,10 @@ let gen_inline (ic : Iconfig.t) : Inline.t G.t =
     | n ->
         let inlines_of_is is =
           let is = if ic.no_adjacent_code_spans then drop_fusing_code_spans is else is in
+          let is =
+            if ic.no_adjacent_smart_dashes then drop_fusing_smart_dashes is
+            else is
+          in
           Inline.Inlines (is, Meta.none)
         in
         let emphasis_ic =
@@ -286,6 +442,13 @@ let gen_inline (ic : Iconfig.t) : Inline.t G.t =
             in
             map inlines_of_is gen_is );
           (ic.w_emphasis, emph_gen);
+          (* An empty span is not a span: [ "" ] is an empty pair, which djot
+             does not match (it is the rule that lets [ ''hi'' ] nest), so the
+             two quotes come back as bare characters. *)
+          ( ic.w_quoted,
+            bind
+              (child emphasis_ic (n - 1))
+              (fun i -> oneof_list @@ mk_quoted_egs ~marked:ic.marked_quotes i) );
           (ic.w_strong_emphasis, strong_emph_gen);
           (ic.w_link, map mk_link (child link_ic (n - 1)));
           (ic.w_image, map mk_image (child ic (n - 1)));
@@ -303,36 +466,42 @@ let%expect_test "Default config should give a sensible distribution" =
     {|
                                              Boxplot
     ┌──────────────────────────┬────────────────────────────────────────────────────────────┐
-    │n=1000                    │↓0                                                       28↓│
+    │n=1000                    │↓0                                                       17↓│
     ├──────────────────────────┼────────────────────────────────────────────────────────────┤
-    │text                      │[-------+----------------------------]                      │
+    │text                      │[------------+---------------------------------------------~│
     │p5=0.00|p95=18.00|mu=4.01 │                                                            │
     ├──────────────────────────┼────────────────────────────────────────────────────────────┤
-    │code_span                 │[-------+-------------------------------]                   │
+    │code_span                 │[-------------+--------------------------------------------~│
     │p5=0.00|p95=19.00|mu=4.07 │                                                            │
     ├──────────────────────────┼────────────────────────────────────────────────────────────┤
-    │autolink                  │[-------+-------------------------------]                   │
+    │autolink                  │[-------------+--------------------------------------------~│
     │p5=0.00|p95=19.00|mu=4.10 │                                                            │
     ├──────────────────────────┼────────────────────────────────────────────────────────────┤
     │break                     │+                                                           │
     │p5=0.00|p95=0.00|mu=0.00  │                                                            │
     ├──────────────────────────┼────────────────────────────────────────────────────────────┤
-    │raw_html                  │[-------+----------------------------]                      │
+    │raw_html                  │[-------------+--------------------------------------------~│
     │p5=0.00|p95=18.00|mu=4.09 │                                                            │
     ├──────────────────────────┼────────────────────────────────────────────────────────────┤
-    │emphasis                  │[-------------------------+--------------------------------~│
+    │emphasis                  │[------------------------------------------+---------------~│
     │p5=0.00|p95=60.00|mu=12.58│                                                            │
     ├──────────────────────────┼────────────────────────────────────────────────────────────┤
-    │strong_emphasis           │[-------------------------+--------------------------------~│
+    │strong_emphasis           │[------------------------------------------+---------------~│
     │p5=0.00|p95=56.00|mu=12.48│                                                            │
     ├──────────────────────────┼────────────────────────────────────────────────────────────┤
-    │link                      │[-------------------------+--------------------------------~│
+    │link                      │[------------------------------------------+---------------~│
     │p5=0.00|p95=60.00|mu=12.57│                                                            │
     ├──────────────────────────┼────────────────────────────────────────────────────────────┤
-    │image                     │[-------------------------+--------------------------------~│
+    │image                     │[------------------------------------------+---------------~│
     │p5=0.00|p95=55.00|mu=12.68│                                                            │
     ├──────────────────────────┼────────────────────────────────────────────────────────────┤
-    │inlines                   │[-------------------------+--------------------------------~│
+    │inlines                   │[------------------------------------------+---------------~│
     │p5=0.00|p95=55.00|mu=12.43│                                                            │
+    ├──────────────────────────┼────────────────────────────────────────────────────────────┤
+    │symbol                    │+                                                           │
+    │p5=0.00|p95=0.00|mu=0.00  │                                                            │
+    ├──────────────────────────┼────────────────────────────────────────────────────────────┤
+    │smart_punct               │+                                                           │
+    │p5=0.00|p95=0.00|mu=0.00  │                                                            │
     └──────────────────────────┴────────────────────────────────────────────────────────────┘
     |}]

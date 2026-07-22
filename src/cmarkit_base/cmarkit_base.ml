@@ -1,5 +1,6 @@
 (*---------------------------------------------------------------------------
    Copyright (c) 2021 The cmarkit programmers. All rights reserved.
+   Copyright (c) 2026 The oymarkit programmers. All rights reserved.
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
@@ -329,10 +330,18 @@ module Ascii = struct
 end
 
 module Text = struct
-  let _utf_8_clean_unesc_unref ~do_unesc buf s ~first ~last =
+  let nbsp = Uchar.of_int 0x00A0
+
+  let _utf_8_clean_unesc_unref ~do_unesc ~unref ~backslash_space_nbsp buf s ~first ~last
+    =
     (* This unescapes CommonMark escapes if [do_unesc] is true,
-       resolves entity and character references and replaces U+0000 or
-       UTF-8 decoding errors by U+FFFD *)
+       resolves entity and character references if [unref] is true and
+       replaces U+0000 or UTF-8 decoding errors by U+FFFD.
+
+       With [backslash_space_nbsp], a backslash before a space stands for a
+       non-breaking space; djot has no other syntax for one. Backslash before
+       ASCII punctuation is unchanged, and a backslash before anything else
+       stays literal in both. *)
     let get = String.get in
     let flush buf s last start k =
       if start <= last then Buffer.add_substring buf s start (k - start)
@@ -406,12 +415,17 @@ module Text = struct
       | '\\' when do_unesc ->
           if next > last then resolve ~do_unesc buf s last start next else
           let nc = get s next in
+          if backslash_space_nbsp && nc = ' ' then begin
+            let next' = next + 1 in
+            flush buf s last start k; Buffer.add_utf_8_uchar buf nbsp;
+            resolve ~do_unesc buf s last next' next'
+          end else
           if not (Ascii.is_punct nc)
           then resolve ~do_unesc buf s last start next else
           let next' = next + 1 in
           (flush buf s last start k; Buffer.add_char buf nc;
            resolve ~do_unesc buf s last next' next')
-      | '&' ->
+      | '&' when unref ->
           if k + 2 > last then resolve ~do_unesc buf s last start next else
           begin match get s next with
           | c when Ascii.is_letter c ->
@@ -444,7 +458,9 @@ module Text = struct
       match unsafe_get s k with
       | '\\' when do_unesc ->
           Buffer.reset buf; resolve ~do_unesc buf s last start k
-      | '&' | '\x00' ->
+      | '&' when unref ->
+          Buffer.reset buf; resolve ~do_unesc buf s last start k
+      | '\x00' ->
           Buffer.reset buf; resolve ~do_unesc buf s last start k
       | '\x01' .. '\x7F' ->
           check ~do_unesc buf s last start (k + 1)
@@ -460,11 +476,15 @@ module Text = struct
     let first = if first < 0 then 0 else first in
     check ~do_unesc buf s last first first
 
-  let utf_8_clean_unesc_unref buf s ~first ~last =
-    _utf_8_clean_unesc_unref ~do_unesc:true buf s ~first ~last
+  let utf_8_clean_unesc_unref ?(unref = true) ?(backslash_space_nbsp = false) buf s
+      ~first ~last
+    =
+    _utf_8_clean_unesc_unref ~do_unesc:true ~unref ~backslash_space_nbsp buf s ~first
+      ~last
 
-  let utf_8_clean_unref buf s ~first ~last =
-    _utf_8_clean_unesc_unref ~do_unesc:false buf s ~first ~last
+  let utf_8_clean_unref ?(unref = true) buf s ~first ~last =
+    _utf_8_clean_unesc_unref ~do_unesc:false ~unref ~backslash_space_nbsp:false buf s
+      ~first ~last
 
   let utf_8_clean_raw ?(pad = 0) buf s ~first ~last =
     let get = String.get in
@@ -968,8 +988,63 @@ let link_title ~next_line s lines ~line ~start =
       paren ~next_line s lines ~line ~prev_bslash start [] start
   | _ -> None
 
-let link_label b ~next_line s lines ~line ~start =
+(* The key of a link label: case-folded, with runs of white collapsed to a
+   single space and leading/trailing white dropped. [link_label] below builds
+   this incrementally while it scans; this is the same normalization for a
+   string that is already in hand (a djot heading's text, say), so that a
+   heading and a reference to it agree on their key. *)
+let label_key ?(djot = false) b s =
+  Buffer.reset b;
+  let max = String.length s - 1 in
+  let rec loop pending_white k =
+    if k > max then Buffer.contents b else
+    let c = s.[k] in
+    if Ascii.is_white c then loop true (k + 1) else
+    let () =
+      if pending_white && Buffer.length b <> 0 then Buffer.add_char b ' '
+    in
+    let d = String.get_utf_8_uchar s k in
+    let u = Uchar.utf_decode_uchar d in
+    let u = match Uchar.to_int u with 0x0000 -> Uchar.rep | _ -> u in
+    (* Djot label keys are case-sensitive; [link_label ~djot] keeps case the
+       same way, and a heading registered as a target must match. *)
+    let () = match if djot then None else Cmarkit_data.unicode_case_fold u with
+    | None -> Buffer.add_utf_8_uchar b u
+    | Some fold -> Buffer.add_string b fold
+    in
+    loop false (k + Uchar.utf_decode_length d)
+  in
+  loop false 0
+
+(* Djot auto-identifier for a heading, from its plain text: a run of
+   non-stripped bytes with internal whitespace/stripped punctuation collapsed to
+   a single '-'. Case is preserved (unlike the CommonMark [Inline.id]). Shared
+   so the parser (registering a heading as a link target) and the HTML renderer
+   (emitting the section id) derive byte-identical ids. *)
+let djot_id_base text =
+  let b = Buffer.create 32 in
+  let strip = function
+    | '[' | ']' | '~' | '!' | '@' | '#' | '$' | '%' | '^' | '&' | '*' | '(' | ')'
+    | '{' | '}' | '`' | ',' | '.' | '<' | '>' | '\\' | '|' | '=' | '+' | '/'
+    | '?' -> true
+    | c -> Ascii.is_white c
+  in
+  let flush_sep = ref false in
+  String.iter
+    (fun c ->
+      if strip c then (if Buffer.length b > 0 then flush_sep := true) else begin
+        if !flush_sep then (Buffer.add_char b '-'; flush_sep := false);
+        Buffer.add_char b c
+      end)
+    text;
+  Buffer.contents b
+
+let link_label ?(djot = false) b ~next_line s lines ~line ~start =
   (* https://spec.commonmark.org/current/#link-label *)
+  (* Djot label keys are case-sensitive: [ [Link][] ] does not find
+     [ [link]: /url ]. A reference may still span lines (the newline collapses to
+     a space); a *definition*'s label may not, which its caller enforces by
+     passing a [next_line] that stops at the line. *)
   let rec loop b ~next_line s lines ~line ~prev_byte start acc count k =
     if k > line.last then match next_line lines with
     | None -> None
@@ -1004,7 +1079,7 @@ let link_label b ~next_line s lines ~line ~start =
         let u = Uchar.utf_decode_uchar d in
         let u = match Uchar.to_int u with 0x0000 -> Uchar.rep | _ -> u in
         let k' = k + Uchar.utf_decode_length d in
-        let () = match Cmarkit_data.unicode_case_fold u with
+        let () = match if djot then None else Cmarkit_data.unicode_case_fold u with
         | None -> Buffer.add_utf_8_uchar b u
         | Some fold -> Buffer.add_string b fold
         in
@@ -1023,6 +1098,19 @@ let link_label b ~next_line s lines ~line ~start =
 type html_block_end_cond =
   [ `End_str of string | `End_cond_1 | `End_blank | `End_blank_7 ]
 
+(* Djot ordered list styles, see [list_marker]. The [alt] of an [`Ext_ordered]
+   is the marker's roman reading when its alpha reading is ambiguous. *)
+type ordered_style =
+[ `Decimal | `Alpha_lower | `Alpha_upper | `Roman_lower | `Roman_upper ]
+
+type ordered_delim = [ `Period | `Paren | `Parens ]
+
+type list_marker =
+[ `Ordered of int * char
+| `Unordered of char
+| `Ext_ordered of
+    ordered_style * ordered_delim * int * (ordered_style * int) option ]
+
 type line_type =
 | Atx_heading_line of heading_level * byte_pos * first * last
 | Blank_line
@@ -1030,21 +1118,38 @@ type line_type =
 | Fenced_code_block_line of first * last * (first * last) option
 | Html_block_line of html_block_end_cond
 | Indented_code_block_line
-| List_marker_line of ([ `Ordered of int * char | `Unordered of char ] * last)
+| List_marker_line of (list_marker * last)
 | Paragraph_line
 | Setext_underline_line of heading_level * last
 | Thematic_break_line of last
 | Ext_table_row of last
 | Ext_footnote_label of rev_spans * last * string
 | Ext_div_line of first * last * (first * last) option
+| Ext_definition_line of last (* the ':' *)
   (* Oymarkit djot div: colon fence span and optional class name span *)
 | Ext_jsx_block_line of first * last * last
   (* Oymarkit JSX block open: tag name span (first, last; an empty span with
      [last < first] denotes a fragment) and the terminating '>' index (last) *)
 | Nomatch
 
-let thematic_break s ~last ~start =
-  (* https://spec.commonmark.org/current/#thematic-breaks *)
+let thematic_break ?(djot = false) s ~last ~start =
+  (* https://spec.commonmark.org/current/#thematic-breaks
+
+     Djot differs on two points: the marker characters may be *mixed* (a line of
+     [*] and [-] together, e.g. [*-*-*-*], is a break), and [_] is not a marker
+     at all (a [_] break is ordinary text; the caller gates that separately). *)
+  if start > last then Nomatch else
+  if djot then
+    let rec loop count prev k =
+      if k > last
+      then (if count < 3 then Nomatch else Thematic_break_line prev) else
+      match s.[k] with
+      | '*' | '-' -> loop (count + 1) k (k + 1)
+      | ' ' | '\t' -> loop count prev (k + 1)
+      | _ -> Nomatch
+    in
+    (match s.[start] with '*' | '-' -> loop 0 start start | _ -> Nomatch)
+  else
   let rec loop s last count prev k =
     if k > last
     then (if count < 3 then Nomatch else Thematic_break_line prev) else
@@ -1052,12 +1157,14 @@ let thematic_break s ~last ~start =
     if s.[k] = ' ' || s.[k] = '\t' then loop s last count prev (k + 1) else
     Nomatch
   in
-  if start > last then Nomatch else match s.[start] with
+  match s.[start] with
   | '-' | '_' | '*' -> loop s last 1 start (start + 1)
   | _ -> Nomatch
 
-let atx_heading s ~last ~start =
+let atx_heading ?(closing_sequence = true) s ~last ~start =
   (* https://spec.commonmark.org/current/#atx-headings *)
+  (* Djot has no closing sequence: the trailing [##] of [ ## heading ## ] is part
+     of the heading's text. *)
   let rec skip_hashes s last k =
     if k > last then k else
     if s.[k] = '#' then skip_hashes s last (k + 1) else k
@@ -1072,6 +1179,7 @@ let atx_heading s ~last ~start =
     after_blank - 1 (* this could be the beginning of the end, trigger again *)
   in
   let rec content s last k =
+    if not closing_sequence then last else
     if k > last then k - 1 else
     if not (s.[k] = ' ' || s.[k] = '\t') then content s last (k + 1) else
     let end' = find_end s last k in
@@ -1087,6 +1195,7 @@ let atx_heading s ~last ~start =
     then Atx_heading_line (acc, k, last + 1, last) (* empty cases *) else
     if first = k then Nomatch (* need a blank *) else
     let last =
+      if not closing_sequence then last else
       if s.[first] <> '#' then content s last (first + 1) else
       let end' = find_end s last (first - 1 (* start on blank *)) in
       if end' > last then first - 1 else content s last end'
@@ -1112,8 +1221,10 @@ let setext_heading_underline s ~last ~start =
   if not (s.[start] = '-' || s.[start] = '=') then Nomatch else
   underline s last start (start + 1)
 
-let fenced_code_block_start s ~last ~start  =
+let fenced_code_block_start ?(tilde_fences = true) ?(djot = false) s ~last
+    ~start =
   (* https://spec.commonmark.org/current/#code-fence *)
+  (* Djot fences are backticks only; a [~~~] line is then ordinary text. *)
   let rec info s last nobt info_first k =
     if k > last then Some (info_first, last) else
     if nobt && s.[k] = '`' then raise_notrace Exit else
@@ -1121,6 +1232,7 @@ let fenced_code_block_start s ~last ~start  =
     then info s last nobt info_first (k + 1) else
     let after_blank = first_non_blank s ~last ~start:k in
     if after_blank > last then Some (info_first, k - 1) else
+    if djot then raise_notrace Exit else
     info s last nobt info_first after_blank
   in
   let rec fence s last fence_first k =
@@ -1136,10 +1248,11 @@ let fenced_code_block_start s ~last ~start  =
     in
     Fenced_code_block_line (fence_first, fence_last, info)
   in
+  let is_fence c = c = '`' || (tilde_fences && c = '~') in
   let rec loop s first last k =
     if k > last then Nomatch else
     if k - first + 1 < 4 && s.[k] = ' ' then loop s first last (k + 1) else
-    if not (s.[k] = '~' || s.[k] = '`') then Nomatch else
+    if not (is_fence s.[k]) then Nomatch else
     try fence s last k (k + 1) with
     | Exit (* backtick fence and info *) -> Nomatch
   in
@@ -1329,14 +1442,39 @@ let html_block_end ~end_cond s ~last ~start = match end_cond with
 | `End_cond_1 -> html_block_end_cond_1 s ~last ~start
 | `End_blank | `End_blank_7 -> first_non_blank s ~last ~start = last + 1
 
-let ext_table_row s ~last ~start =
+let ext_table_row ?(verbatim_span = false) s ~last ~start =
   if start > last || s.[start] <> '|' then Nomatch else
   let first = start + 1 in
   let last_nb = last_non_blank s ~first ~start:last in
   let before = last_nb - 1 in
   if last_nb < first || s.[last_nb] <> '|' ||
      (before >= first && s.[before] = '\\')
-  then Nomatch else Ext_table_row last_nb
+  then Nomatch else
+  let closing_pipe_is_verbatim_content =
+    let backtick_run k =
+      let rec loop n k =
+        if k < last_nb && s.[k] = '`' then loop (n + 1) (k + 1) else n, k
+      in
+      loop 0 k
+    in
+    let rec outside k =
+      if k >= last_nb then false else
+      match s.[k] with
+      | '\\' -> outside (k + 2)
+      | '`' ->
+          let count, next = backtick_run k in
+          inside count next
+      | _ -> outside (k + 1)
+    and inside count k =
+      if k >= last_nb then true else
+      if s.[k] <> '`' then inside count (k + 1) else
+      let close_count, next = backtick_run k in
+      if close_count = count then outside next else inside count next
+    in
+    outside first
+  in
+  if verbatim_span && closing_pipe_is_verbatim_content then Nomatch
+  else Ext_table_row last_nb
 
 let ext_footnote_label buf s ~line_pos ~last ~start =
   if start + 1 > last || s.[start] <> '[' || s.[start + 1] <> '^'
@@ -1363,14 +1501,128 @@ let could_be_link_reference_definition s ~last ~start =
 
 (* Container blocks *)
 
-let list_marker s ~last ~start =
+(* Djot ordered list styles: lower/upper alpha ([a.]), lower/upper roman ([iv.])
+   and the fully parenthesized delimiter ([(a)]), on top of CommonMark's decimal.
+
+   A single letter that is also a roman digit ([i], [v], [x], [l], [c], [d], [m]
+   and their uppercase) has two readings: [i.] is alpha 9 or roman 1. We report
+   the alpha reading plus the roman reading as [alt]; the parser picks [alt]
+   when the marker starts a list or continues a roman list. *)
+
+let roman_digit_value = function
+| 'i' | 'I' -> 1 | 'v' | 'V' -> 5 | 'x' | 'X' -> 10 | 'l' | 'L' -> 50
+| 'c' | 'C' -> 100 | 'd' | 'D' -> 500 | 'm' | 'M' -> 1000
+| _ -> 0
+
+let roman_value s ~first ~last =
+  (* Subtractive notation: a digit smaller than the one after it is subtracted.
+     We do not validate the spelling ([iiii] passes); djot does not either. *)
+  let rec loop acc k =
+    if k > last then Some acc else
+    let v = roman_digit_value s.[k] in
+    if v = 0 then None else
+    let next = if k + 1 > last then 0 else roman_digit_value s.[k + 1] in
+    loop (if v < next then acc - v else acc + v) (k + 1)
+  in
+  if first > last then None else loop 0 first
+
+let is_roman_string s ~first ~last =
+  let rec loop k =
+    if k > last then true else
+    if roman_digit_value s.[k] = 0 then false else loop (k + 1)
+  in
+  first <= last && loop first
+
+let list_marker ?(extended_styles = false) s ~last ~start =
   (* https://spec.commonmark.org/current/#list-marker *)
+  (* [word_last] is the last byte of the number, [close] the last byte of the
+     whole marker (they differ for the [(a)] form). *)
+  let ext_marker s ~first ~word_last ~delim ~close =
+    let text_len = word_last - first + 1 in
+    let upper = Ascii.is_upper s.[first] in
+    let is_alpha = text_len = 1 && Ascii.is_letter s.[first] in
+    let alpha_value () =
+      let base = if upper then Char.code 'A' else Char.code 'a' in
+      Char.code s.[first] - base + 1
+    in
+    let roman () =
+      if not (is_roman_string s ~first ~last:word_last) then None else
+      match roman_value s ~first ~last:word_last with
+      | None -> None
+      | Some v ->
+          Some ((if upper then `Roman_upper else `Roman_lower), v)
+    in
+    let mk (style, start') alt =
+      Some (List_marker_line (`Ext_ordered (style, delim, start', alt), close))
+    in
+    if is_alpha then
+      let alpha =
+        ((if upper then `Alpha_upper else `Alpha_lower), alpha_value ())
+      in
+      mk alpha (roman ())
+    else match roman () with
+    | Some roman -> mk roman None
+    | None ->
+        (* Decimal, which only reaches here for the [(1)] form: the [1.] and
+           [1)] forms are CommonMark's and stay [`Ordered]. *)
+        let rec digits acc k =
+          if k > word_last then Some acc else
+          match s.[k] with
+          | '0' .. '9' as c -> digits ((acc * 10) + (Char.code c - 0x30)) (k + 1)
+          | _ -> None
+        in
+        match digits 0 first with
+        | None -> None
+        | Some v -> mk (`Decimal, v) None
+  in
+  (* [(word)] : the fully parenthesized djot form. *)
+  let parens s ~start =
+    let first = start + 1 in
+    let rec scan k =
+      if k > last then None else
+      if s.[k] = ')' then (if k = first then None else Some k) else
+      if Ascii.is_alphanum s.[k] then scan (k + 1) else None
+    in
+    match scan first with
+    | None -> Nomatch
+    | Some close ->
+        let next = close + 1 in
+        if next <= last && not (Ascii.is_blank s.[next]) then Nomatch else
+        match
+          ext_marker s ~first ~word_last:(close - 1) ~delim:`Parens ~close
+        with
+        | None -> Nomatch
+        | Some m -> m
+  in
+  (* [word.] or [word)] with an alphabetic word: the djot alpha/roman forms. *)
+  let alpha_or_roman s ~start =
+    let rec scan k =
+      if k > last then Nomatch else
+      match s.[k] with
+      | c when Ascii.is_letter c -> scan (k + 1)
+      | '.' | ')' as c ->
+          if k = start then Nomatch else
+          let next = k + 1 in
+          if next <= last && not (Ascii.is_blank s.[next]) then Nomatch else
+          let delim = if c = '.' then `Period else `Paren in
+          begin match
+            ext_marker s ~first:start ~word_last:(k - 1) ~delim ~close:k
+          with
+          | None -> Nomatch
+          | Some m -> m
+          end
+      | _ -> Nomatch
+    in
+    scan start
+  in
   if start > last then Nomatch else match s.[start] with
   | '-' | '+' | '*' as c ->
       let next = start + 1 in
       if next > last || Ascii.is_blank s.[next]
       then List_marker_line (`Unordered c, start)
       else Nomatch
+  | '(' when extended_styles -> parens s ~start
+  | 'a' .. 'z' | 'A' .. 'Z' when extended_styles -> alpha_or_roman s ~start
   | '0' .. '9' as c ->
       let[@inline] digit c = Char.code c - 0x30 in
       let rec loop s last count acc k =
@@ -1386,6 +1638,16 @@ let list_marker s ~last ~start =
       in
       loop s last 1 (digit c) (start + 1)
   | _ -> Nomatch
+
+(* Djot definition list: a [:] followed by a space or the end of the line. The
+   term is the rest of the line and the definition is the indented blocks under
+   it. A [:::] div fence is not one: its [:] is followed by a [:]. *)
+let definition_list_marker s ~last ~start =
+  if start > last then Nomatch else
+  if s.[start] <> ':' then Nomatch else
+  let next = start + 1 in
+  if next > last || Ascii.is_blank s.[next] then Ext_definition_line start
+  else Nomatch
 
 let ext_task_marker s ~last ~start =
   if start + 1 > last then None else

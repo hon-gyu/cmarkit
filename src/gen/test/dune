@@ -6,7 +6,8 @@
   test_leaf_inline
   test_inline_config
   test_block_config
-  test_typing_rules)
+  test_typing_rules
+  test_djot_inline_rules)
  (libraries
   cmarkit_
   cmarkit_generator

@@ -1,10 +1,14 @@
+type key = Id | Class | Key_value of string
+
 type t =
   { id : string option;
     classes : string list;
     key_values : (string * string) list;
+    order : key list;
     source : string option }
 
-let empty = { id = None; classes = []; key_values = []; source = None }
+let empty =
+  { id = None; classes = []; key_values = []; order = []; source = None }
 
 (* An attribute carrying no id, classes or key-values, regardless of its
    [source]. A comment-only specifier (e.g. [{% a comment %}]) or a bare
@@ -17,10 +21,40 @@ let classes a = a.classes
 let key_values a = a.key_values
 let source a = a.source
 
+let bindings a =
+  let binding = function
+  | Id -> Option.map (fun id -> `Id id) a.id
+  | Class -> if a.classes = [] then None else Some (`Class a.classes)
+  | Key_value key ->
+      Option.map (fun value -> `Key_value (key, value))
+        (List.assoc_opt key a.key_values)
+  in
+  List.filter_map binding a.order
+
+let add_order key order = if List.mem key order then order else order @ [key]
+
+let set_key_value key value key_values =
+  let rec loop acc = function
+  | [] -> List.rev ((key, value) :: acc)
+  | (k, _) :: rest when k = key -> List.rev_append acc ((key, value) :: rest)
+  | kv :: rest -> loop (kv :: acc) rest
+  in
+  loop [] key_values
+
 let merge a b =
+  (* A key given on both sides takes [b]'s value: merging is an override, not an
+     accumulation, so [ {title=foo} ] on a reference definition and [ {title=bar} ]
+     on the link that uses it yield one [title], the link's. Classes do
+     accumulate, as they do in HTML. *)
+  let key_values =
+    List.fold_left
+      (fun kvs (key, value) -> set_key_value key value kvs)
+      a.key_values b.key_values
+  in
   { id = (match b.id with None -> a.id | Some _ as id -> id);
     classes = a.classes @ b.classes;
-    key_values = a.key_values @ b.key_values;
+    key_values;
+    order = List.fold_left (fun order key -> add_order key order) a.order b.order;
     source = None }
 
 let is_name_char = function
@@ -44,15 +78,21 @@ let of_string s =
     let last = loop i in
     if last = i then None else Some (String.sub s i (last - i), last)
   in
+  (* A quoted value may span lines. Djot folds any run of space, CR or LF to a
+     single space (a tab is left alone), so a value broken over several lines is
+     one space-separated string. This mirrors [inline.ts]'s [/[ \r\n]+/g] pass. *)
   let quoted i =
     let b = Buffer.create 16 in
+    let in_ws = ref false in
+    let add_ws () = if not !in_ws then (Buffer.add_char b ' '; in_ws := true) in
+    let add c = in_ws := false; Buffer.add_char b c in
     let rec loop k =
       if k >= len then None else
       match s.[k] with
       | '"' -> Some (Buffer.contents b, k + 1)
-      | '\\' when k + 1 < len ->
-          Buffer.add_char b s.[k + 1]; loop (k + 2)
-      | c -> Buffer.add_char b c; loop (k + 1)
+      | ' ' | '\r' | '\n' -> add_ws (); loop (k + 1)
+      | '\\' when k + 1 < len -> add s.[k + 1]; loop (k + 2)
+      | c -> add c; loop (k + 1)
     in
     loop i
   in
@@ -63,12 +103,16 @@ let of_string s =
     | '.' ->
         begin match name (i + 1) with
         | None -> None
-        | Some (c, next) -> loop { a with classes = a.classes @ [c] } next
+        | Some (c, next) ->
+            let order = add_order Class a.order in
+            loop { a with classes = a.classes @ [c]; order } next
         end
     | '#' ->
         begin match name (i + 1) with
         | None -> None
-        | Some (id, next) -> loop { a with id = Some id } next
+        | Some (id, next) ->
+            let order = add_order Id a.order in
+            loop { a with id = Some id; order } next
         end
     | _ ->
         begin match name i with
@@ -79,13 +123,17 @@ let of_string s =
               begin match quoted (value + 1) with
               | None -> None
               | Some (v, next) ->
-                  loop { a with key_values = a.key_values @ [key, v] } next
+                  let order = add_order (Key_value key) a.order in
+                  let key_values = set_key_value key v a.key_values in
+                  loop { a with key_values; order } next
               end
             else
               begin match name value with
               | None -> None
               | Some (v, next) ->
-                  loop { a with key_values = a.key_values @ [key, v] } next
+                  let order = add_order (Key_value key) a.order in
+                  let key_values = set_key_value key v a.key_values in
+                  loop { a with key_values; order } next
               end
         | Some _ -> None
         end
@@ -107,16 +155,15 @@ let add_escaped_value b value =
 let to_string a =
   let b = Buffer.create 32 in
   let sep () = if Buffer.length b > 0 then Buffer.add_char b ' ' in
-  begin match a.id with
-  | None -> ()
-  | Some id -> Buffer.add_char b '#'; Buffer.add_string b id
-  end;
   List.iter
-    (fun c -> sep (); Buffer.add_char b '.'; Buffer.add_string b c)
-    a.classes;
-  List.iter
-    (fun (key, value) ->
-      sep (); Buffer.add_string b key; Buffer.add_char b '=';
-      add_escaped_value b value)
-    a.key_values;
+    (function
+      | `Id id -> sep (); Buffer.add_char b '#'; Buffer.add_string b id
+      | `Class classes ->
+          List.iter
+            (fun c -> sep (); Buffer.add_char b '.'; Buffer.add_string b c)
+            classes
+      | `Key_value (key, value) ->
+          sep (); Buffer.add_string b key; Buffer.add_char b '=';
+          add_escaped_value b value)
+    (bindings a);
   Buffer.contents b

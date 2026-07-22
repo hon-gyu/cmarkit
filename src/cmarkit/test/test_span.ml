@@ -8,11 +8,11 @@ open Sexplib0
    It is a *fallback*: link/image resolution keeps CommonMark precedence. *)
 
 let html s =
-  let doc = Doc.of_string ~strict:false ~djot_inline_attributes:true s in
+  let doc = Doc.of_string ~strict:false ~inline_attributes:true s in
   print_string (Cmarkit_html.of_doc ~safe:false doc)
 
 let sexp s =
-  let doc = Doc.of_string ~strict:false ~djot_inline_attributes:true s in
+  let doc = Doc.of_string ~strict:false ~inline_attributes:true s in
   Format.printf "%a@." Sexp.pp_hum ((make_sexp_of ()).doc doc)
 
 let%expect_test "span: djot reference example" =
@@ -47,7 +47,7 @@ let%expect_test "span: fallback -- CommonMark link resolution wins" =
     {|
     <p><span class="c">foo</span></p>
 
-    <p><span class="c"><a href="/url">foo</a></span></p>
+    <p><a href="/url" class="c">foo</a></p>
     |}]
 
 let%expect_test "span: attributes attach to real links/images too" =
@@ -56,9 +56,9 @@ let%expect_test "span: attributes attach to real links/images too" =
   html "[foo][bar]{.c}\n\n[bar]: /b";
   [%expect
     {|
-    <p>See <span class="big"><a href="http://x">this link</a></span>.</p>
+    <p>See <a href="http://x" class="big">this link</a>.</p>
 
-    <p><span class="c"><a href="/b">foo</a></span></p>
+    <p><a href="/b" class="c">foo</a></p>
     |}]
 
 let%expect_test "span: not a span (no adjacent non-empty attribute)" =
@@ -71,7 +71,7 @@ let%expect_test "span: not a span (no adjacent non-empty attribute)" =
   html "[word]{% just a comment %}";
   [%expect
     {|
-    <p>[word] {.cls}</p>
+    <p>[word] </p>
 
     <p>[word]</p>
 
@@ -80,4 +80,4 @@ let%expect_test "span: not a span (no adjacent non-empty attribute)" =
 
 let%expect_test "span: adjacent specifiers merge" =
   html "[word]{.a}{#i}";
-  [%expect {| <p><span id="i" class="a">word</span></p> |}]
+  [%expect {| <p><span class="a" id="i">word</span></p> |}]

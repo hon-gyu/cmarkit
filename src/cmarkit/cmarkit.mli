@@ -1,5 +1,8 @@
+[@@@ocamlformat "disable"]
+
 (*---------------------------------------------------------------------------
    Copyright (c) 2021 The cmarkit programmers. All rights reserved.
+   Copyright (c) 2026 The oymarkit programmers. All rights reserved.
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
@@ -268,6 +271,9 @@ module Attribute : sig
   val id : t -> string option
   val classes : t -> string list
   val key_values : t -> (string * string) list
+  val bindings :
+    t -> [ `Id of string | `Class of string list |
+           `Key_value of string * string ] list
   val source : t -> string option
   val merge : t -> t -> t
   val of_string : string -> t option
@@ -565,12 +571,21 @@ module Link_definition : sig
 
   val make :
     ?layout:layout -> ?defined_label:Label.t option -> ?label:Label.t ->
-    ?dest:string node -> ?title:Block_line.tight list -> unit -> t
+    ?dest:string node -> ?title:Block_line.tight list ->
+    ?attributes:Attribute.t -> unit -> t
   (** [make ()] is a link reference with given parameters. If [dest] is
       given and [layout] is not, the latter is computed with
       {!layout_for_dest}. [label] is a label if the link is defined
       via a link reference definition. [defined_label] defaults to
-      [label]. *)
+      [label]. [attributes] are the djot {{!attributes}attributes} written above
+      a reference definition, which merge onto the links that reference it. *)
+
+  val attributes : t -> Attribute.t option
+  (** [attributes ld] are the djot attributes written above the reference
+      definition [ld], if any. They merge onto every link referencing it. *)
+
+  val with_attributes : Attribute.t option -> t -> t
+  (** [with_attributes attrs ld] is [ld] with attributes [attrs]. *)
 
   val layout : t -> layout
   (** [layout ld] is the layout of [ld]. *)
@@ -681,15 +696,18 @@ module Inline : sig
     (** The type for
           {{:https://spec.commonmark.org/0.31.2/#code-spans}code spans}. *)
 
-    val make : backtick_count:Layout.count -> Block_line.tight list -> t
+    val make :
+      ?djot:bool -> backtick_count:Layout.count ->
+      Block_line.tight list -> t
     (** [make ~backtick_count code_layout] is a code span with given
-        parameters.
+        parameters. [djot] (defaults to [false]) selects djot's rule for
+        stripping the span's padding spaces, see {!code}.
 
         {b Warning.} Nothing is made to ensure correctness of the
         data, use {!of_string} to compute the right amount of
         backticks. *)
 
-    val of_string : ?meta:Meta.t -> string -> t
+    val of_string : ?meta:Meta.t -> ?djot:bool -> string -> t
     (** [of_string s] is a code span for [s]. [s] can start with or
         include backticks; the appropriate minimal backtick count and
         possible needed leading and trailing space are computed
@@ -701,7 +719,18 @@ module Inline : sig
     (** [backtick_count cs] is the number of delimiting backticks. *)
 
     val code : t -> string
-    (** [code cs] computes from {!code_layout} the code in the span [cs]. *)
+    (** [code cs] computes from {!code_layout} the code in the span [cs].
+
+        A padding space is stripped from each end when both are present and the
+        content is not all spaces
+        ({{:https://spec.commonmark.org/0.31.2/#code-spans}CommonMark}), or, if
+        {!djot} is [true], only where the space is what lets the content
+        start or end with a backtick (djot). So [ ` a ` ] is ["a"] under the
+        first rule and [" a "] under the second. *)
+
+    val djot : t -> bool
+    (** [djot cs] is [true] if [cs] strips its padding spaces with djot's
+        rule, see {!code}. *)
 
     val code_layout : t -> Block_line.tight list
     (** [code_layout cs] is the code data in a form that allows layout
@@ -898,6 +927,11 @@ module Inline : sig
       val explicit : t
       (** [explicit] enables every extra inline container with compulsory
           curly braces. *)
+
+      val djot : t
+      (** [djot] is djot's spelling: highlight, inserted and deleted are written with
+          compulsory curly braces ([ {=x=} ], [ {+x+} ], [ {-x-} ]); superscript and
+          subscript may be written without them ([ ^x^ ], [ ~x~ ]). *)
     end
 
     type t
@@ -911,6 +945,71 @@ module Inline : sig
 
     val inline : t -> inline
     (** [inline c] is [c]'s contained inline. *)
+  end
+
+  (** Djot quoted spans. *)
+  module Quoted : sig
+    type inline := t
+
+    type kind = Single | Double
+    (** The kind of quote a span is delimited by: a single or a double one. *)
+
+    type t
+    (** The type for
+        {{:https://htmlpreview.github.io/?https://github.com/jgm/djot/blob/master/doc/syntax.html#smart-punctuation}quoted spans}.
+
+        A quote is a delimiter, not a character whose direction is decided from
+        its neighbours: an opener is paired with a closer by the same matching
+        pass that resolves emphasis, and the pair becomes this container. A
+        quote that pass leaves unmatched is not a container, it degrades to a
+        single {!Inline.Smart_punct} character — a lone ['] is an apostrophe, a
+        lone double quote a left double quote. *)
+
+    val make : ?open_marker:bool -> ?close_marker:bool -> kind -> inline -> t
+    (** [make kind i] is [i] quoted with [kind]. [open_marker] and
+        [close_marker] indicate an explicit brace override on the respective
+        delimiter, [{'] and ['}], which forces its role regardless of context;
+        both default to [false]. *)
+
+    val kind : t -> kind
+    (** [kind q] is [q]'s quote kind. *)
+
+    val inline : t -> inline
+    (** [inline q] is [q]'s quoted inline. *)
+
+    val open_marker : t -> bool
+    (** [open_marker q] is [true] if [q]'s opening quote was written with a
+        brace override. *)
+
+    val close_marker : t -> bool
+    (** [close_marker q] is [true] if [q]'s closing quote was written with a
+        brace override. *)
+
+    val quote_char : kind -> char
+    (** [quote_char kind] is the source character of [kind]. *)
+
+    val utf_8_delims : kind -> string * string
+    (** [utf_8_delims kind] are the UTF-8 encoded curly quotes [kind] resolves
+        to, opening and closing. *)
+  end
+
+  (** Djot non-breaking space. *)
+  module Nbsp : sig
+    type t
+    (** The type for djot's escaped space [\ ], a non-breaking space.
+
+        This is a node rather than a U+00A0 in the text because a literal
+        U+00A0 in the source {e is} ordinary text: without the distinction a
+        render back to djot could not tell which of the two was written. *)
+
+    val make : unit -> t
+    (** [make ()] is a non-breaking space. *)
+
+    val to_source : t -> string
+    (** [to_source n] is [n] in source form, ["\\ "]. *)
+
+    val to_utf_8 : t -> string
+    (** [to_utf_8 n] is [n] as UTF-8, ["\u{00A0}"]. *)
   end
 
   module Attributes : sig
@@ -944,6 +1043,100 @@ module Inline : sig
 
         The acual code data is the tight block lines concatenated and
         separated by space. The {!tex} function does that for you. *)
+  end
+
+  (* CR: include an example in following docstring *)
+  (** Djot raw inline. *)
+  module Raw_inline : sig
+    type t
+    (** The type for {{!Cmarkit.ext_raw}raw inlines}: a verbatim span whose
+        content is passed through verbatim to one output format. *)
+
+    val make : format:string -> Code_span.t -> t
+    (** [make ~format code_span] is raw content for the output format [format]
+        (e.g. ["html"]), written in the source as [code_span] followed by a
+        [ {=format} ] specifier. *)
+
+    val format : t -> string
+    (** [format r] is the output format [r] is destined for. A renderer whose
+        output format is not [format] drops [r]. *)
+
+    val code_span : t -> Code_span.t
+    (** [code_span r] is the verbatim span holding the raw content. *)
+
+    val code : t -> string
+    (** [code r] is the raw content of [r]. *)
+  end
+
+  [@@@ocamlformat "enable"]
+
+  (** Djot smart punctuation. *)
+  module Smart_punct : sig
+    type kind =
+    | Left_double_quote | Right_double_quote
+    | Left_single_quote | Right_single_quote
+    | Ellipsis (** [...] *)
+    | Em_dash (** [---] *)
+    | En_dash (** [--] *)
+    (** The type for kinds of
+        {{:https://htmlpreview.github.io/?https://github.com/jgm/djot/blob/master/doc/syntax.html#smart-punctuation}smart punctuation}. *)
+
+    type t
+    (** The type for smart punctuation. *)
+
+    val make : ?marker:bool -> kind -> t
+    (** [make kind] is smart punctuation of kind [kind]. [marker] indicates a
+        quote written with an explicit brace override, [{"] or ["}]; it
+        defaults to [false] and is meaningless for the other kinds. *)
+
+    val kind : t -> kind
+    (** [kind sp] is the kind of [sp]. *)
+
+    val marker : t -> bool
+    (** [marker sp] is [true] if [sp] is a quote whose direction was forced by
+        an explicit [{"] or ["}] brace override rather than inferred from
+        context. *)
+
+    val to_source : t -> string
+    (** [to_source sp] is [sp] in its source form, brace override included.
+        Note that a marked quote must keep its braces to survive a roundtrip: a
+        bare quote may curl the other way when re-parsed, since direction is
+        otherwise inferred from context. *)
+
+    val to_utf_8 : t -> string
+    (** [to_utf_8 sp] is the UTF-8 encoded character [sp] denotes, e.g. ["\u{2014}"]
+        for {!Em_dash}. *)
+
+    val divide_hyphens : int -> int * int
+    (** [divide_hyphens n] is the [(em, en)] count of em- and en-dashes a run of
+        [n] hyphens becomes: uniformly if it can, preferring em-dashes when
+        either would be uniform. So [4] is two en-dashes and [6] is two
+        em-dashes. A run of [1] is [(0, 0)]: a lone hyphen is left alone. The
+        counts always account for the whole run, [3 * em + 2 * en = n]. *)
+  end
+
+  [@@@ocamlformat "disable"]
+
+  (** Djot symbols. *)
+  module Symbol : sig
+    type t
+    (** The type for {{:https://htmlpreview.github.io/?https://github.com/jgm/djot/blob/master/doc/syntax.html#symbols}djot symbols}:
+        a word surrounded by [:], as in [:smile:].
+
+        A symbol carries no meaning of its own. Djot renders it literally and
+        leaves interpretation (mapping it to an emoji, say) to a downstream
+        filter; the renderers here do the same. *)
+
+    val make : string -> t
+    (** [make name] is a symbol named [name], which is the text between the
+        two [:]. *)
+
+    val name : t -> string
+    (** [name s] is the name of [s], without the delimiting [:]. *)
+
+    val to_source : t -> string
+    (** [to_source s] is [s] in its source form, [:name:]. This is also how
+        [s] renders, since a symbol renders literally. *)
   end
 
   (** Obsidian wikilinks. *)
@@ -1043,8 +1236,14 @@ module Inline : sig
   type t +=
   | Ext_strikethrough of Strikethrough.t node
   | Ext_extra_inline_container of Extra_inline_container.t node
+  | Ext_quoted of Quoted.t node (** djot {{!Inline.Quoted}quoted span} *)
   | Ext_attributes of Attributes.t node
   | Ext_math_span of Math_span.t node
+  | Ext_nbsp of Nbsp.t node (** djot {{!Inline.Nbsp}non-breaking space} *)
+  | Ext_raw_inline of Raw_inline.t node (** djot {{!Inline.Raw_inline}raw inline} *)
+  | Ext_smart_punct of Smart_punct.t node
+    (** djot {{!Inline.Smart_punct}smart punctuation} *)
+  | Ext_symbol of Symbol.t node (** djot {{!Inline.Symbol}symbol} *)
   | Ext_wikilink of Wikilink.t node
   | Ext_jsx_expr of Jsx_expr.t node
   | Ext_jsx_element of Jsx_element.t node
@@ -1080,9 +1279,13 @@ module Inline : sig
       [ext] is called on cases not defined in this module. The default
       raises [Invalid_argument].  *)
 
+  val is_footnote_reference : Link.t -> bool
+  (** [is_footnote_reference l] is [true] if [l] is a djot footnote reference,
+      i.e. a link whose referenced label key starts with ['^']. *)
+
   val to_plain_text :
-    ?ext:(break_on_soft:bool -> t -> t) -> break_on_soft:bool ->
-    t -> string list list
+    ?ext:(break_on_soft:bool -> t -> t) -> ?skip_link:(Link.t -> bool) ->
+    break_on_soft:bool -> t -> string list list
     (** [to_plain_text ~ext ~break_on_soft i] has the plain text of [i]
         as a sequence of lines represented by a list of strings to be
         concatenated. If [break_on_soft] is [true] soft line breaks
@@ -1191,6 +1394,11 @@ module Block : sig
     (** [language_of_info_string s] extracts a (non-empty) language,
         the first word of [s] and a trimmed remainder. Assumes [s] is
         {!String.trim}ed which is what {!info_string} gives you. *)
+
+    val raw_format_of_info_string : string node option -> string option
+    (** [raw_format_of_info_string i] is [Some format] if [i] is [=format], the
+        info string of a djot {{!Block.Raw_block}raw block}. The format is the
+        info string's only word: [=html extra] is not one. *)
   end
 
   (** Headings. *)
@@ -1302,12 +1510,34 @@ module Block : sig
   (** Lists. *)
   module List' : sig
 
+    type ordered_style =
+    [ `Decimal | `Alpha_lower | `Alpha_upper | `Roman_lower | `Roman_upper ]
+    (** The type for djot ordered list numbering styles. *)
+
+    type ordered_delim = [ `Period | `Paren | `Parens ]
+    (** The type for djot ordered list delimiters: [1.], [1)] and [(1)]. *)
+
     type type' =
     [ `Unordered of Layout.char (** with given marker. *)
     | `Ordered of int * Layout.char
       (** starting at given integer, markers ending with given character
-          ([')'] or ['.']). *) ]
+          ([')'] or ['.']). *)
+    | `Ext_ordered of ordered_style * ordered_delim * int
+      (** djot {{!ext_djot_list_styles}ordered list}, numbered in the given
+          style with the given delimiter, starting at the given integer.
+          CommonMark's decimal [1.] and [1)] stay [`Ordered]: only the styles
+          and the delimiter djot adds go here, so a document parsed without
+          [extended_ordered_list_styles] keeps the AST it always had. *) ]
     (** The type for list types. *)
+
+    val ordered_number : ordered_style -> int -> string
+    (** [ordered_number style n] is [n] written in [style], e.g. [4] in
+        [`Roman_lower] is ["iv"]. Alpha stops at [z] and roman has no zero, so a
+        number out of a style's range falls back to decimal. *)
+
+    val ordered_marker : ordered_style -> ordered_delim -> int -> string
+    (** [ordered_marker style delim n] is the source marker for the [n]th item,
+        e.g. ["(iv)"] for [`Roman_lower] and [`Parens]. *)
 
     type t
     (** The type for {{:https://spec.commonmark.org/0.31.2/#lists}lists}. *)
@@ -1488,6 +1718,69 @@ module Block : sig
 
       See the description of {{!Cmarkit.extensions}extensions}. *)
 
+  (** Djot definition list. *)
+  module Definition_list : sig
+    type block := t
+
+    type item
+    (** The type for {{!Cmarkit.ext_djot_definition_lists}definition list}
+        items: a term and the blocks that define it. *)
+
+    type t
+    (** The type for definition lists. *)
+
+    val make_item :
+      ?before_marker:Layout.indent -> ?marker:Layout.string node ->
+      ?after_marker:Layout.indent -> term:Inline.t -> block -> item
+    (** [make_item ~term definition] is an item defining [term] as
+        [definition]. *)
+
+    val make : ?tight:bool -> item node list -> t
+    (** [make items] is a definition list of [items]. [tight] defaults to
+        [true] but should be computed from [items] in practice. *)
+
+    val tight : t -> bool
+    (** [tight d] is [true] if the list is tight. *)
+
+    val items : t -> item node list
+    (** [items d] are the items of [d]. *)
+
+    val item_term : item -> Inline.t
+    (** [item_term i] is the term [i] defines. *)
+
+    val item_definition : item -> block
+    (** [item_definition i] is the definition of {!item_term}. *)
+
+    val item_before_marker : item -> Layout.indent
+    (** [item_before_marker i] is the indent before the [:] marker. *)
+
+    val item_marker : item -> Layout.string node
+    (** [item_marker i] is the [:] marker. *)
+
+    val item_after_marker : item -> Layout.indent
+    (** [item_after_marker i] is the indent between the marker and the term. *)
+  end
+
+  (** Djot raw block. *)
+  module Raw_block : sig
+    type t
+    (** The type for {{!Cmarkit.ext_raw}raw blocks}: a code block whose content
+        is passed through verbatim to one output format. *)
+
+    val make : format:string -> Code_block.t -> t
+    (** [make ~format code_block] is raw content for the output format [format]
+        (e.g. ["html"]), written in the source as a code fence whose info string
+        is [=format]. *)
+
+    val format : t -> string
+    (** [format r] is the output format [r] is destined for. A renderer whose
+        output format is not [format] drops [r]. *)
+
+    val code_block : t -> Code_block.t
+    (** [code_block r] is the code block holding the raw content, info string
+        included. *)
+  end
+
   (** Tables. *)
   module Table : sig
 
@@ -1509,11 +1802,30 @@ module Block : sig
         found in rows in the document. You need to pad them on the
         right with more columns to reach the table's {!col_count}. *)
 
+    type caption
+    (** The type for djot {{!Cmarkit.ext_djot_table_captions}table captions}. A
+        caption is inline content attached to the table, not a row: it is not
+        part of the grid and has no cells. *)
+
     type t
     (** The type for {{!Cmarkit.ext_tables}tables}. *)
 
-    val make : ?indent:Layout.indent -> (row node * Layout.blanks) list -> t
+    val make :
+      ?indent:Layout.indent -> ?caption:caption node ->
+      (row node * Layout.blanks) list -> t
     (** [make rows] is a table row [rows]. *)
+
+    val make_caption : ?caption_indent:Layout.indent -> Inline.t -> caption
+    (** [make_caption i] is a caption with content [i]. *)
+
+    val caption : t -> caption node option
+    (** [caption t] is the table's caption, if any. *)
+
+    val caption_inline : caption -> Inline.t
+    (** [caption_inline c] is the caption's inline content. *)
+
+    val caption_indent : caption -> Layout.indent
+    (** [caption_indent c] is the indent of the caption's [^] marker. *)
 
     val indent : t -> Layout.indent
     (** [indent t] is the indentation to the first pipe found on the
@@ -1630,6 +1942,9 @@ module Block : sig
 
   type t +=
   | Ext_math_block of Code_block.t node
+  | Ext_definition_list of Definition_list.t node
+    (** djot {{!Block.Definition_list}definition list} *)
+  | Ext_raw_block of Raw_block.t node (** djot {{!Block.Raw_block}raw block} *)
     (** {{!Cmarkit.ext_math_display}display math}*)
   | Ext_table of Table.t node (** *)
   | Ext_footnote_definition of Footnote.t node (** *)
@@ -1687,6 +2002,10 @@ module Doc : sig
   type t = Cmarkit_.Doc.t
   (** The type for CommonMark documents. *)
 
+  type list_indent = [ `Content_column | `Marker_plus_one ]
+  type list_tightness = [ `Any_blank | `Non_list_boundary_blank ]
+  type verbatim_style = [ `Code_span | `Verbatim_span ]
+
   val nl : t -> Layout.string
   (** [nl d] is the first newline found in the text during parsing
       or ["\n"] if there was none. *)
@@ -1713,12 +2032,30 @@ module Doc : sig
   val of_string :
     ?defs:Label.defs -> ?resolver:Label.resolver -> ?nested_links:bool ->
     ?heading_auto_ids:bool -> ?layout:bool -> ?locs:bool ->
-    ?file:Textloc.fpath -> ?emphasis_delims:char list ->
+    ?file:Textloc.fpath -> ?djot:bool -> ?emphasis_delims:char list ->
     ?strong_emphasis_delims:char list -> ?intraword_emphasis:bool ->
     ?marked_emphasis_delims:bool -> ?strong_emphasis_width:int ->
     ?extra_inline_containers:Inline.Extra_inline_container.Config.t ->
-    ?block_id:bool -> ?djot_inline_attributes:bool ->
-    ?djot_block_attributes:bool -> ?div:bool -> ?wikilink:bool ->
+    ?block_id:bool -> ?inline_attributes:bool ->
+    ?block_attributes:bool -> ?underscore_thematic_break:bool ->
+    ?colon_symbols:bool -> ?backslash_space_nbsp:bool ->
+    ?hard_break_trailing_blanks:bool -> ?two_space_hard_break:bool ->
+    ?format_raw_content:bool ->
+    ?extended_ordered_list_styles:bool -> ?definition_lists:bool ->
+    ?backtick_math:bool -> ?table_captions:bool ->
+    ?verbatim_style:verbatim_style -> ?multiline_atx_headings:bool ->
+    ?atx_closing_sequence:bool ->
+    ?heading_implicit_targets:bool -> ?djot_links:bool ->
+    ?case_sensitive_labels:bool ->
+    ?simple_emphasis_flanking:bool -> ?blocks_interrupt_paragraph:bool ->
+    ?list_marker_interrupts_paragraph:bool ->
+    ?list_indent:list_indent -> ?list_tightness:list_tightness ->
+    ?smart_punctuation:bool ->
+    ?indented_code:bool -> ?setext_headings:bool ->
+    ?lazy_continuation:bool -> ?raw_html:bool -> ?entity_refs:bool ->
+    ?tilde_code_fences:bool -> ?whitespace_free_info_string:bool ->
+    ?block_quote_marker_space:bool ->
+    ?div:bool -> ?wikilink:bool ->
     ?jsx_expr:bool -> ?jsx_element:bool ->
     ?callout:Block.Callout.Config.t ->
     ?strict:bool -> string -> t
@@ -1727,7 +2064,16 @@ module Doc : sig
 
     {ul
     {- If [strict] is [true] (default) the CommonMark specification is
-       followed. If [false] these {{!extensions}extensions} are enabled.}
+       followed. If [false] these {{!extensions}extensions} are enabled.
+       With [djot] it defaults to [false], since djot's tables, footnotes,
+       task lists and math are cmarkit extensions.}
+    {- If [djot] is [true] (defaults to [false]) every knob below that has a
+       djot meaning takes its djot value rather than its CommonMark one, which
+       is the
+       {{:https://htmlpreview.github.io/?https://github.com/jgm/djot/blob/master/doc/syntax.html}djot}
+       configuration in a single expression. A knob given explicitly still wins,
+       so the preset can be used as a base with individual features dialed back,
+       e.g. [~djot:true ~indented_code:true].}
     {- [file] is the file path from which [s] is assumed to have been read
        (defaults to {!Textloc.file_none}), used in the {!Textloc.t}
        values iff [locs] is [true].}
@@ -1788,12 +2134,162 @@ module Doc : sig
       attached to the paragraph metadata as a {!Block.Block_id.t}. The marker
       remains part of the paragraph inline content. The default is [false],
       which preserves CommonMark behavior.}
-   {- If [djot_inline_attributes] is [true], Djot [{...}] attribute
+   {- If [inline_attributes] is [true], Djot [{...}] attribute
       specifiers immediately following inline content are represented by
       {!Inline.Ext_attributes}.}
-   {- If [djot_block_attributes] is [true], Djot attribute lines immediately
+   {- If [block_attributes] is [true], Djot attribute lines immediately
       preceding a block are represented by {!Block.Ext_attributes}. Continued
       lines inside a block attribute must be indented.}
+   {- If [underscore_thematic_break] is [true], [_] may delimit a thematic
+      break, as it does in CommonMark. If [false], only [*] and [-] may delimit
+      one. The default is [true]; the [djot] preset disables it. Arbitrary
+      indentation is controlled independently by [indented_code].}
+   {- If [colon_symbols] is [true], [:name:] is represented by
+      {!Inline.Ext_symbol}, where [name] is a non-empty run of ASCII
+      alphanumerics, ['_'], ['+'] or ['-']. An unterminated run stays text.
+      Like djot, the renderers emit a symbol literally: giving [:smile:] a
+      meaning is a consumer's job. The default is [false], which preserves
+      CommonMark behavior.}
+   {- If [smart_punctuation] is [true], straight quotes, [...], [--] and [---]
+      are represented by {!Inline.Ext_smart_punct}. A quote curls according to
+      context: it closes when it is right-flanking, which is also what turns
+      the apostrophes of [don't] and [Socrates'] the right way. Braces override
+      the inference, [{"] forcing an opener and ["}] a closer, and a
+      backslash-escaped quote stays straight. The default is [false], which
+      preserves CommonMark behavior.}
+   {- If [indented_code] is [false], a line indented by four or more columns no
+      longer opens an
+      {{:https://spec.commonmark.org/0.31.2/#indented-code-blocks}indented code
+      block}; it is dispatched like any other line. Fenced code blocks are
+      unaffected. Djot has no indented code blocks. The default is [true],
+      which preserves CommonMark behavior.}
+   {- If [setext_headings] is [false],
+      {{:https://spec.commonmark.org/0.31.2/#setext-headings}setext heading}
+      underlines are not recognized, so [---] under a paragraph is free to be
+      read as a thematic break instead of an [<h2>]. Djot has no setext
+      headings. The default is [true], which preserves CommonMark behavior.}
+   {- If [lazy_continuation] is [false], a paragraph inside a block quote or a
+      list item is not continued by a
+      {{:https://spec.commonmark.org/0.31.2/#lazy-continuation-line}lazy line}:
+      a line that carries neither the [>] marker nor the item's indentation
+      closes the container instead of continuing the paragraph in it. Djot,
+      despite what its prose suggests, does have lazy lines, so the [djot] preset
+      leaves this on. The default is [true], which preserves CommonMark
+      behavior.}
+   {- If [raw_html] is [false], neither
+      {{:https://spec.commonmark.org/0.31.2/#raw-html}inline raw HTML} nor
+      {{:https://spec.commonmark.org/0.31.2/#html-blocks}HTML blocks} are
+      recognized: [<div>] is text. Autolinks are unaffected. Djot parses no raw
+      HTML; HTML is written with its raw syntax instead. The default is [true],
+      which preserves CommonMark behavior.}
+   {- If [entity_refs] is [false], HTML
+      {{:https://spec.commonmark.org/0.31.2/#entity-and-numeric-character-references}entity
+      and character references} are left literal: [&amp;] is the five characters
+      it is written with. Djot escapes with backslashes only. The default is
+      [true], which preserves CommonMark behavior.}
+   {- If [tilde_code_fences] is [false], a
+      {{:https://spec.commonmark.org/0.31.2/#fenced-code-blocks}code fence} can
+      only be written with backticks: [~~~] is ordinary text. Djot fences with
+      tildes too, so the [djot] preset leaves this on. The default is [true],
+      which preserves CommonMark behavior.}
+   {- If [block_quote_marker_space] is [true], a
+      {{:https://spec.commonmark.org/0.31.2/#block-quote-marker}block quote
+      marker} must be a [>] followed by a space or the end of the line, so
+      [>text] is a paragraph rather than a quote. This is djot's rule. The
+      default is [false], which preserves CommonMark behavior.}
+   {- If [format_raw_content] is [true], djot {{!ext_raw}raw content} is parsed: a verbatim
+      span followed by [ {=format} ] gets into an
+      {!Inline.extension-Ext_raw_inline} node and a code fence whose info string
+      is [=format] into an {!Block.extension-Ext_raw_block} block. The default is
+      [false], which preserves CommonMark behavior.}
+   {- If [simple_emphasis_flanking] is [true], emphasis delimiters are classified djot's
+      way rather than CommonMark's: a delimiter run may open if it is not
+      followed by whitespace and may close if it is not preceded by whitespace,
+      with no
+      {{:https://spec.commonmark.org/0.31.2/#left-flanking-delimiter-run}flanking}
+      classification and no extra clauses for [_]. [intraword_emphasis] stays
+      orthogonal: it is what keeps [snake_case] intact, which CommonMark folds
+      into its [_] rules. The default is [false], which preserves CommonMark
+      behavior.}
+   {- If [whitespace_free_info_string] is [true], a code fence info string
+      cannot contain whitespace: a line such as [``` not a fence] is parsed as
+      inline verbatim text instead. The default is [false], which preserves
+      CommonMark behavior; the [djot] preset enables it.}
+   {- If [blocks_interrupt_paragraph] is [false], no block start interrupts a
+      paragraph: only a blank line ends one, so a [#], [```] or [>] line under a
+      paragraph is more of that paragraph's text rather than the start of a
+      heading, code block or quote. Djot ends a paragraph only at a blank line.
+      This subsumes [list_marker_interrupts_paragraph], which stays available for
+      forbidding only lists. The default is [true], which preserves CommonMark
+      behavior.}
+   {- If [djot_links] is [true], links have no titles: everything between the
+      [(] and the matching [)] is the destination, so the quoted trailer of
+      [ [a](url "title") ] is just more URL, and the destination may be split
+      over lines (the newlines are removed). A reference definition likewise has
+      no title: the rest of the line is the destination, continued on indented
+      lines. The default is [false], which preserves CommonMark behavior.}
+   {- If [case_sensitive_labels] is [true], link-reference label keys preserve
+      case, so [[Link][]] does not resolve a definition named [[link]]. The
+      default is [false], which preserves CommonMark behavior; the [djot]
+      preset enables it.}
+   {- If [multiline_atx_headings] is [true], a heading runs until a blank line: the lines
+      after the [#] line continue its inline content, whether or not they repeat
+      the [#] (which is stripped when they do). The default is [false], which
+      preserves CommonMark behavior.}
+   {- If [atx_closing_sequence] is [true], a trailing run of [#] may close an
+      ATX heading and is excluded from its text. If [false], it remains heading
+      text. The default is [true]; the [djot] preset disables it.}
+   {- If [heading_implicit_targets] is [true], a heading becomes an implicit
+      link-reference target, so [[Some Heading][]] links to it, and auto heading
+      IDs use Djot's case-preserving algorithm. Resolving the target needs
+      [heading_auto_ids], which emits the ID the link points at. An explicit
+      link-reference definition of the same label wins. The default is [false];
+      the [djot] preset enables it.}
+   {- [verbatim_style] selects [`Code_span] or [`Verbatim_span]. A code span
+      requires a matching closing backtick run and applies CommonMark's
+      symmetric padding rule. A verbatim span may run to the end of its block
+      and strips padding only at an edge where it protects a backtick. The
+      default is [`Code_span]; the [djot] preset selects [`Verbatim_span].}
+   {- If [backtick_math] is [true], a verbatim span prefixed with [$] or [$$] is
+      djot {{!ext_djot_math}math}, producing the same
+      {!Inline.extension-Ext_math_span} as the pandoc [$...$] spelling. The
+      default is [false], which preserves CommonMark behavior.}
+   {- If [table_captions] is [true], a [^ text] line after a table is a
+      djot {{!ext_djot_table_captions}table caption}, available on
+      {!Block.Table.caption}. The default is [false], which preserves CommonMark
+      behavior.}
+   {- If [definition_lists] is [true], a [: term] line followed by the
+      blocks indented under it is a djot
+      {{!ext_djot_definition_lists}definition list}, represented by
+      {!Block.extension-Ext_definition_list}. The default is [false], which
+      preserves CommonMark behavior.}
+   {- If [extended_ordered_list_styles] is [true], an ordered list may be numbered in
+      the djot {{!ext_djot_list_styles}styles} — lower or upper alpha, lower or
+      upper roman — and delimited by [(1)] as well as [1.] and [1)]. Such a list
+      gets into an [`Ext_ordered] {!Block.List'.type'}; CommonMark's decimal
+      lists are unaffected. The default is [false], which preserves CommonMark
+      behavior.}
+   {- If [backslash_space_nbsp] is [true], a backslash before a space stands for
+      a non-breaking space (U+00A0). Backslash before ASCII punctuation is
+      unchanged. The default is [false]; the [djot] preset enables it.}
+   {- If [hard_break_trailing_blanks] is [true], blanks may follow the trailing
+      backslash that creates a hard line break. The final unescaped backslash
+      and surrounding blanks are layout. The default is [false]; the [djot]
+      preset enables it.}
+   {- If [two_space_hard_break] is [true], two or more trailing spaces are a
+      hard line break. If [false], trailing spaces remain text. The default is
+      [true], which preserves CommonMark behavior; the [djot] preset disables
+      it.}
+   {- [list_indent] selects the minimum indentation for list-item content.
+      [`Content_column] requires continuation lines to reach the first content
+      column; [`Marker_plus_one] accepts any indentation past the marker. The
+      default is [`Content_column]; the [djot] preset selects
+      [`Marker_plus_one].}
+   {- [list_tightness] selects which blanks make a list loose. [`Any_blank]
+      applies CommonMark's rule. [`Non_list_boundary_blank] ignores blanks at a
+      nested-list or item boundary but still loosens for a blank between two
+      ordinary blocks. The default is [`Any_blank]; the [djot] preset selects
+      [`Non_list_boundary_blank].}
    {- If [wikilink] is [true], Obsidian {{!ext_wikilink}wikilinks} [ [[...]] ]
       and embeds [ ![[...]] ] are represented by {!Inline.Ext_wikilink}. The
       default is [false]. This knob is independent of [strict].}
@@ -2191,6 +2687,118 @@ end
     {{:https://spec.commonmark.org/0.31.2/#unicode-whitespace-character}
     Unicode whitespace}. When a closer can close multiple openers, the
     neareast opener is closed. Strikethrough inlines can be nested.
+
+    {2:ext_djot_math Djot math}
+
+    According to
+    {{:https://htmlpreview.github.io/?https://github.com/jgm/djot/blob/master/doc/syntax.html#math}djot},
+    behind the [backtick_math] knob of {!Doc.of_string}.
+
+    {v Inline $`e=mc^2` and display $$`\int_0^1 x`. v}
+
+    A verbatim span prefixed with [$] is inline math and one prefixed with [$$]
+    is display math. Both get into the {!Inline.extension-Ext_math_span} node
+    the pandoc [$...$] {{!ext_math}spelling} produces, so the two are surface
+    syntax for one node and can be enabled together. A backslash-escaped [\$]
+    is not a prefix.
+
+    {2:ext_djot_table_captions Table captions}
+
+    According to
+    {{:https://htmlpreview.github.io/?https://github.com/jgm/djot/blob/master/doc/syntax.html#table}djot},
+    behind the [table_captions] knob of {!Doc.of_string}.
+
+{v
+| a | b |
+|---|---|
+| 1 | 2 |
+^ The caption, whose continuation
+  lines are indented.
+v}
+
+    A [^] followed by a space or the end of the line, on the line after a
+    {{!ext_tables}table}, opens a caption; its continuation lines are indented.
+    The caption is inline content attached to the table ({!Block.Table.caption}),
+    not a row: it has no cells and is not part of the grid. In HTML it is the
+    table's [<caption>].
+
+    {2:ext_djot_definition_lists Definition lists}
+
+    According to
+    {{:https://htmlpreview.github.io/?https://github.com/jgm/djot/blob/master/doc/syntax.html#definition-list}djot},
+    behind the [definition_lists] knob of {!Doc.of_string}.
+
+{v
+: apple
+  A fruit.
+
+: onion
+  A vegetable.
+v}
+
+    A [:] followed by a space or the end of the line opens an item: the term is
+    the rest of that line and the definition is the blocks indented under it.
+    The list gets into a {!Block.extension-Ext_definition_list} block.
+
+    A [:::] div fence is not a definition marker — its [:] is
+    followed by another [:] — so the two can be enabled together. Unlike a list
+    item, the definition's indent is not fixed by the marker: the first line of
+    the definition fixes it and later lines must reach it. Tightness works as it
+    does for lists: a blank line between two blocks of a definition makes the
+    list loose.
+
+    {2:ext_djot_list_styles Ordered list styles}
+
+    According to
+    {{:https://htmlpreview.github.io/?https://github.com/jgm/djot/blob/master/doc/syntax.html#ordered-list}djot},
+    behind the [extended_ordered_list_styles] knob of {!Doc.of_string}.
+
+{v
+a. lower alpha
+b. and so on
+
+(iv) roman, fully parenthesized
+(v) and so on
+v}
+
+    On top of CommonMark's decimal numbering, an ordered list may be numbered in
+    lower or upper alpha ([a.]) or lower or upper roman ([iv.]), and may be
+    delimited by [1.], [1)] or [(1)]. Such a list gets into a
+    {!Block.List'.type'} of [`Ext_ordered]; CommonMark's [1.] and [1)] stay
+    [`Ordered].
+
+    A style change starts a new list. A marker that is a single roman letter is
+    ambiguous — [i.] is alpha 9 or roman 1 — and resolves by context: it is
+    roman only if it continues a roman list, and alpha otherwise (in particular
+    when it opens one).
+
+    {2:ext_raw Raw content}
+
+    According to
+    {{:https://htmlpreview.github.io/?https://github.com/jgm/djot/blob/master/doc/syntax.html#raw-content}djot},
+    behind the [format_raw_content] knob of {!Doc.of_string}.
+
+{v
+Here is `<a href="x">a link</a>`{=html} in HTML only.
+
+```=html
+<p>A whole raw block.</p>
+```
+v}
+
+    A verbatim span followed by a [ {=format} ] specifier gets into an
+    {!Inline.extension-Ext_raw_inline} node, and a code fence whose info string
+    is [=format] into an {!Block.extension-Ext_raw_block} block. A renderer
+    passes the content through verbatim when [format] is its own output format
+    and drops it otherwise, so the same document can carry both HTML and LaTeX
+    output and render correctly to each.
+
+    The specifier is not attribute syntax — {!Attribute.of_string} rejects a
+    spec starting with ['='] — and [ {=html} ] is raw content only when it is
+    adjacent to a verbatim span and the braces hold nothing but the format.
+    Elsewhere it stays text. This is how djot asks
+    for raw output, having no raw HTML of its own (see the [raw_html] knob of
+    {!Doc.of_string}).
 
     {2:ext_math Math}
 

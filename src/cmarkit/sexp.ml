@@ -100,12 +100,43 @@ let sexp_of_inline_core : inline_sexp =
       in
       m, Sexp.List [ Atom "Extra_inline_container"; Atom kind;
                      recurse (Inline.Extra_inline_container.inline c) ]
+    | Inline.Ext_quoted (q, m) ->
+      let kind = match Inline.Quoted.kind q with
+        | Inline.Quoted.Single -> "single" | Inline.Quoted.Double -> "double"
+      in
+      let marker name = function true -> [ Sexp.Atom name ] | false -> [] in
+      let markers =
+        marker "open_marker" (Inline.Quoted.open_marker q)
+        @ marker "close_marker" (Inline.Quoted.close_marker q)
+      in
+      m, Sexp.List (Sexp.Atom "Quoted" :: Sexp.Atom kind :: markers
+                    @ [ recurse (Inline.Quoted.inline q) ])
+    | Inline.Ext_nbsp (_, m) -> m, Sexp.List [ Atom "Nbsp" ]
     | Inline.Ext_attributes (a, m) ->
       let attrs = Attribute.to_string (Inline.Attributes.attributes a) in
       m, Sexp.List [ Atom "Attributes"; Atom attrs;
                      recurse (Inline.Attributes.inline a) ]
     | Inline.Ext_math_span (ms, m) ->
       m, Sexp.List [ Atom "Math_span"; Atom (Inline.Math_span.tex ms) ]
+    | Inline.Ext_raw_inline (r, m) ->
+      m, Sexp.List [ Atom "Raw_inline"; Atom (Inline.Raw_inline.format r);
+                     Atom (Inline.Raw_inline.code r) ]
+    | Inline.Ext_smart_punct (sp, m) ->
+      let kind = match Inline.Smart_punct.kind sp with
+        | Inline.Smart_punct.Left_double_quote -> "left_double_quote"
+        | Inline.Smart_punct.Right_double_quote -> "right_double_quote"
+        | Inline.Smart_punct.Left_single_quote -> "left_single_quote"
+        | Inline.Smart_punct.Right_single_quote -> "right_single_quote"
+        | Inline.Smart_punct.Ellipsis -> "ellipsis"
+        | Inline.Smart_punct.Em_dash -> "em_dash"
+        | Inline.Smart_punct.En_dash -> "en_dash"
+      in
+      let marker =
+        if Inline.Smart_punct.marker sp then [ Sexp.Atom "marker" ] else []
+      in
+      m, Sexp.List (Atom "Smart_punct" :: Atom kind :: marker)
+    | Inline.Ext_symbol (s, m) ->
+      m, Sexp.List [ Atom "Symbol"; Atom (Inline.Symbol.name s) ]
     | Inline.Ext_jsx_expr (j, m) ->
       m, Sexp.List [ Atom "Jsx_expr"; Atom (Inline.Jsx_expr.expr j) ]
     | Inline.Ext_jsx_element (e, m) ->
@@ -182,6 +213,17 @@ let sexp_of_block_core : block_sexp =
       with_meta meta
         (Sexp.List
            (Sexp.Atom "Div" :: class' @ [ recurse_block (Block.Div.block d) ]))
+    | Block.Ext_definition_list (d, meta) ->
+      let item (i, _) =
+        Sexp.List
+          [ Sexp.Atom "Item";
+            recurse_inline (Block.Definition_list.item_term i);
+            recurse_block (Block.Definition_list.item_definition i) ]
+      in
+      with_meta meta
+        (Sexp.List
+           (Sexp.Atom "Definition_list"
+            :: List.map ~f:item (Block.Definition_list.items d)))
     | Block.Ext_jsx_block (j, meta) ->
       let close = match Block.Jsx_block.raw_close j with
         | None -> [] | Some (c, _) -> [ Sexp.Atom c ]

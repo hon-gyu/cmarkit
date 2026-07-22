@@ -1,6 +1,21 @@
 (library
   (name test_block_pp)
   (libraries cmarkit_)
+  (modules test_block_pp test_div_pp)
   (inline_tests)
   (preprocess (pps ppx_expect ppx_inline_test))
+)
+
+(test
+  (name spec_conformance)
+  (modules spec_conformance)
+  (libraries cmarkit_ cmarkit_html cmarkit_renderer yojson)
+  (deps ./spec.json)
+)
+
+(test
+  (name djot_conformance)
+  (modules djot_conformance)
+  (libraries cmarkit_ cmarkit_html)
+  (deps (source_tree ../vendor/djot.js/test))
 )

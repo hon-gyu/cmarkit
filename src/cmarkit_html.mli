@@ -1,5 +1,6 @@
 (*---------------------------------------------------------------------------
    Copyright (c) 2021 The cmarkit programmers. All rights reserved.
+   Copyright (c) 2026 The oymarkit programmers. All rights reserved.
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
@@ -16,13 +17,15 @@
 
 (** {1:rendering Rendering} *)
 
-val of_doc : ?backend_blocks:bool -> safe:bool -> Cmarkit.Doc.t -> string
+val of_doc :
+  ?backend_blocks:bool -> ?djot:bool -> safe:bool -> Cmarkit.Doc.t -> string
 (** [of_doc ~safe d] is an HTML fragment for [d]. See {!renderer}
     for more details and documentation about rendering options. *)
 
 (** {1:renderers Renderers} *)
 
-val renderer : ?backend_blocks:bool -> safe:bool -> unit -> Cmarkit_renderer.t
+val renderer :
+  ?backend_blocks:bool -> ?djot:bool -> safe:bool -> unit -> Cmarkit_renderer.t
 (** [renderer ~safe ()] is the default HTML renderer. This renders the
     strict CommonMark abstract syntax tree and the supported Cmarkit
     {{!Cmarkit.extensions}extensions}.
@@ -53,7 +56,7 @@ val renderer : ?backend_blocks:bool -> safe:bool -> unit -> Cmarkit_renderer.t
     selectively override the renderer. *)
 
 val xhtml_renderer :
-  ?backend_blocks:bool -> safe:bool -> unit -> Cmarkit_renderer.t
+  ?backend_blocks:bool -> ?djot:bool -> safe:bool -> unit -> Cmarkit_renderer.t
 (** [xhtml_renderer] is like {!val-renderer} but explicitely closes
     empty tags to possibly make the output valid XML. Note that it
     still renders HTML blocks and inline raw HTML unless {!safe} is

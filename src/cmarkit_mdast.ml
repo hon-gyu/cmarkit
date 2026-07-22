@@ -130,18 +130,12 @@ let footnote_identifier label =
   else k
 
 let hproperties_of_attributes a =
-  let id =
-    match Attribute.id a with
-    | None -> []
-    | Some id -> [ ("id", Str id) ]
-  in
-  let classes =
-    match Attribute.classes a with
-    | [] -> []
-    | cs -> [ class_name cs ]
-  in
-  let kvs = List.map (fun (k, v) -> (k, Str v)) (Attribute.key_values a) in
-  id @ classes @ kvs
+  List.map
+    (function
+      | `Id id -> "id", Str id
+      | `Class classes -> class_name classes
+      | `Key_value (key, value) -> key, Str value)
+    (Attribute.bindings a)
 
 (* Inlines ==================================================================*)
 
@@ -253,6 +247,11 @@ let rec inline defs (i : Inline.t) : json list =
   | Inline.Raw_html (h, meta) ->
       let s = String.concat "\n" (List.map (fun (_, (h, _)) -> h) h) in
       [ node ~meta "html" [ ("value", Str s) ] ]
+  (* Djot raw inline. mdast/hast can only carry HTML, so that is the only format
+     we keep; content aimed at another backend is dropped, as djot specifies. *)
+  | Inline.Ext_raw_inline (r, meta) ->
+      if Inline.Raw_inline.format r <> "html" then []
+      else [ node ~meta "html" [ ("value", Str (Inline.Raw_inline.code r)) ] ]
   | Inline.Ext_strikethrough (s, meta) ->
       [
         node ~meta "delete"
@@ -264,6 +263,12 @@ let rec inline defs (i : Inline.t) : json list =
           ~children:(inline defs (Inline.Extra_inline_container.inline ic))
           (extra_inline_tag ic);
       ]
+  | Inline.Ext_quoted (q, meta) ->
+      (* Resolved text: mdast has no quoted span, so the curly quotes surround
+         the children as text, which is what a consumer would render anyway. *)
+      let open', close = Inline.Quoted.utf_8_delims (Inline.Quoted.kind q) in
+      let text s = node ~meta "text" [ ("value", Str s) ] in
+      (text open' :: inline defs (Inline.Quoted.inline q)) @ [ text close ]
   | Inline.Ext_attributes (a, meta) ->
       let props = hproperties_of_attributes (Inline.Attributes.attributes a) in
       inline_with_attributes defs ~meta ~props (Inline.Attributes.inline a)
@@ -277,6 +282,24 @@ let rec inline defs (i : Inline.t) : json list =
           ~properties:[ class_name [ "math"; cls ] ]
           ~children:[ node ~meta "text" [ ("value", Str tex) ] ]
           "span";
+      ]
+  | Inline.Ext_nbsp (n, meta) ->
+      (* Resolved text, as for smart punctuation: the node is a djot parsing
+         distinction, mdast consumers want the character. *)
+      [ node ~meta "text" [ ("value", Str (Inline.Nbsp.to_utf_8 n)) ] ]
+  | Inline.Ext_smart_punct (sp, meta) ->
+      (* Resolved text: mdast consumers expect the curly character, not [--]. *)
+      [ node ~meta "text" [ ("value", Str (Inline.Smart_punct.to_utf_8 sp)) ] ]
+  | Inline.Ext_symbol (s, meta) ->
+      (* Literal text, as in djot. The name is kept in [data] so a downstream
+         filter can give the symbol a meaning (an emoji, say) without having to
+         re-scan the text for [:...:]. *)
+      let data =
+        Obj [ ("oySymbol", Obj [ ("name", Str (Inline.Symbol.name s)) ]) ]
+      in
+      [
+        node ~meta "text"
+          [ ("value", Str (Inline.Symbol.to_source s)); ("data", data) ];
       ]
   | Inline.Ext_wikilink (wl, meta) ->
       let target = Option.value ~default:"" (Inline.Wikilink.target wl) in
@@ -513,6 +536,24 @@ let rec block defs (b : Block.t) : json list =
             ]
           "div";
       ]
+  | Block.Ext_definition_list (d, meta) ->
+      let item (i, imeta) =
+        [ element ~meta:imeta
+            ~children:(inline defs (Block.Definition_list.item_term i)) "dt";
+          element ~meta:imeta
+            ~children:(block defs (Block.Definition_list.item_definition i))
+            "dd" ]
+      in
+      [ element ~meta
+          ~children:
+            (List.concat_map item (Block.Definition_list.items d))
+          "dl" ]
+  (* Djot raw block, see the raw inline case above. *)
+  | Block.Ext_raw_block (r, meta) ->
+      if Block.Raw_block.format r <> "html" then []
+      else
+        let value = code_block_value (Block.Raw_block.code_block r) in
+        [ node ~meta "html" [ ("value", Str value) ] ]
   | Block.Ext_jsx_block (j, meta) ->
       let open' =
         [
@@ -554,7 +595,7 @@ and list defs ~meta l =
   let ordered, start =
     match Block.List'.type' l with
     | `Unordered _ -> (false, Null)
-    | `Ordered (start, _) -> (true, Int start)
+    | `Ordered (start, _) | `Ext_ordered (_, _, start) -> (true, Int start)
   in
   let tight = Block.List'.tight l in
   let item (i, item_meta) =
@@ -610,7 +651,17 @@ and table defs ~meta t =
             None)
       (Block.Table.rows t)
   in
-  node ~meta "table" [ ("align", Arr !align); ("children", Arr rows) ]
+  (* mdast's [table] has no caption field. Dropping the caption would lose
+     content, so it rides along as an extra property rather than silently
+     disappearing; consumers that do not know it will ignore it. *)
+  let caption =
+    match Block.Table.caption t with
+    | None -> []
+    | Some (c, _) ->
+        [ ("caption", Arr (inline defs (Block.Table.caption_inline c))) ]
+  in
+  node ~meta "table"
+    ([ ("align", Arr !align); ("children", Arr rows) ] @ caption)
 
 (* Obsidian callout: a blockquote carrying [callout]/[callout-title]/
    [callout-content] structure, mirroring the HTML backend. Foldable callouts

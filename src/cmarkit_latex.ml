@@ -2,6 +2,7 @@
 
 (*---------------------------------------------------------------------------
    Copyright (c) 2021 The cmarkit programmers. All rights reserved.
+   Copyright (c) 2026 The oymarkit programmers. All rights reserved.
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
@@ -217,6 +218,21 @@ let text c t = latex_escaped_string c t
 let strikethrough c s =
   C.string c "\\sout{"; C.inline c (Inline.Strikethrough.inline s); C.byte c '}'
 
+(* Djot raw content. LaTeX is our output format here, so [latex] (and its [tex]
+   spelling) passes through verbatim; content aimed at another backend is
+   dropped, as djot specifies. *)
+
+let is_latex_format = function "latex" | "tex" -> true | _ -> false
+
+let raw_inline c r =
+  if not (is_latex_format (Inline.Raw_inline.format r)) then () else
+  C.string c (Inline.Raw_inline.code r)
+
+let raw_block c r =
+  if not (is_latex_format (Block.Raw_block.format r)) then () else
+  let line l = C.string c (Block_line.to_string l); newline c in
+  List.iter line (Block.Code_block.code (Block.Raw_block.code_block r))
+
 let math_span c ms =
   let tex = Inline.Math_span.tex_layout ms in
   C.string c (if Inline.Math_span.display ms then "\\[" else "\\(");
@@ -267,6 +283,31 @@ let inline c = function
 | Inline.Ext_extra_inline_container (ic, _) -> extra_inline_container c ic; true
 | Inline.Ext_attributes (a, _) -> inline_attributes c a; true
 | Inline.Ext_math_span (ms, _) -> math_span c ms; true
+| Inline.Ext_raw_inline (r, _) -> raw_inline c r; true
+| Inline.Ext_quoted (q, _) ->
+    (* TeX's own quote spellings, as for the smart punctuation below. *)
+    let open', close = match Inline.Quoted.kind q with
+    | Inline.Quoted.Single -> "`", "'"
+    | Inline.Quoted.Double -> "``", "''"
+    in
+    C.string c open'; C.inline c (Inline.Quoted.inline q); C.string c close;
+    true
+| Inline.Ext_nbsp (_, _) -> C.string c "~"; true
+| Inline.Ext_smart_punct (sp, _) ->
+    (* TeX's own spellings rather than the Unicode characters, which would need
+       a Unicode-aware engine or inputenc to typeset. *)
+    C.string c
+      begin match Inline.Smart_punct.kind sp with
+      | Inline.Smart_punct.Left_double_quote -> "``"
+      | Inline.Smart_punct.Right_double_quote -> "''"
+      | Inline.Smart_punct.Left_single_quote -> "`"
+      | Inline.Smart_punct.Right_single_quote -> "'"
+      | Inline.Smart_punct.Ellipsis -> "\\ldots{}"
+      | Inline.Smart_punct.Em_dash -> "---"
+      | Inline.Smart_punct.En_dash -> "--"
+      end;
+    true
+| Inline.Ext_symbol (s, _) -> text c (Inline.Symbol.to_source s); true
 | Inline.Ext_wikilink (wl, _) -> text c (Inline.Wikilink.to_plain_text wl); true
 | Inline.Ext_jsx_expr _ -> comment c "JSX expression omitted"; true
 | Inline.Ext_jsx_element (e, _) ->
@@ -370,6 +411,20 @@ let list_item c (i, _meta) =
   end;
   C.block c (Block.List_item.block i)
 
+let definition_list c d =
+  let item (i, _) =
+    newline c;
+    C.string c "\\item[";
+    C.inline c (Block.Definition_list.item_term i);
+    C.string c "]";
+    C.block c (Block.Definition_list.item_definition i)
+  in
+  newline c;
+  C.string c "\\begin{description}"; newline c;
+  List.iter item (Block.Definition_list.items d);
+  C.string c "\\end{description}";
+  newline c
+
 let list c l = match Block.List'.type' l with
 | `Unordered _ ->
     newline c;
@@ -377,7 +432,9 @@ let list c l = match Block.List'.type' l with
     List.iter (list_item c) (Block.List'.items l);
     C.string c "\\end{itemize}";
     newline c
-| `Ordered (start, _) ->
+| `Ordered (start, _) | `Ext_ordered (_, _, start) ->
+    (* Plain [enumerate] has no numbering style; giving it one needs [enumitem],
+       which we do not require, so the style is dropped. *)
     newline c;
     C.string c "\\begin{enumerate}";
     if start <> 1
@@ -473,6 +530,8 @@ let block c = function
 | Block.Paragraph (p, _) -> paragraph c p; true
 | Block.Thematic_break _ -> thematic_break c; true
 | Block.Ext_math_block (cb, _)-> math_block c cb; true
+| Block.Ext_raw_block (r, _) -> raw_block c r; true
+| Block.Ext_definition_list (d, _) -> definition_list c d; true
 | Block.Ext_table (t, _)-> table c t; true
 | Block.Ext_div (d, _) -> div c d; true
 | Block.Ext_jsx_block (j, _) ->

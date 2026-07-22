@@ -20,3 +20,139 @@
   (inline_tests)
   (preprocess (pps ppx_expect))
 )
+
+(library
+  (name test_thematic_break)
+  (libraries cmarkit_ cmarkit_commonmark cmarkit_html)
+  (modules test_thematic_break)
+  (inline_tests)
+  (preprocess (pps ppx_expect))
+)
+
+(library
+  (name test_djot_compat)
+  (libraries cmarkit_ cmarkit_commonmark cmarkit_html)
+  (modules test_djot_compat)
+  (inline_tests)
+  (preprocess (pps ppx_expect))
+)
+
+(library
+  (name test_djot_raw)
+  (libraries cmarkit_ cmarkit_commonmark cmarkit_html cmarkit_latex sexplib0)
+  (modules test_djot_raw)
+  (inline_tests)
+  (preprocess (pps ppx_expect))
+)
+
+(library
+  (name test_djot_list_styles)
+  (libraries cmarkit_ cmarkit_commonmark cmarkit_html)
+  (modules test_djot_list_styles)
+  (inline_tests)
+  (preprocess (pps ppx_expect))
+)
+
+(library
+  (name test_djot_definition_lists)
+  (libraries cmarkit_ cmarkit_commonmark cmarkit_html)
+  (modules test_djot_definition_lists)
+  (inline_tests)
+  (preprocess (pps ppx_expect))
+)
+
+(library
+  (name test_djot_math)
+  (libraries cmarkit_ cmarkit_commonmark cmarkit_html)
+  (modules test_djot_math)
+  (inline_tests)
+  (preprocess (pps ppx_expect))
+)
+
+(library
+  (name test_djot_table_captions)
+  (libraries cmarkit_ cmarkit_commonmark cmarkit_html)
+  (modules test_djot_table_captions)
+  (inline_tests)
+  (preprocess (pps ppx_expect))
+)
+
+(library
+  (name test_djot_verbatim)
+  (libraries cmarkit_ cmarkit_commonmark cmarkit_html)
+  (modules test_djot_verbatim)
+  (inline_tests)
+  (preprocess (pps ppx_expect))
+)
+
+(library
+  (name test_blocks_interrupt_paragraph)
+  (libraries cmarkit_ cmarkit_commonmark cmarkit_html)
+  (modules test_blocks_interrupt_paragraph)
+  (inline_tests)
+  (preprocess (pps ppx_expect))
+)
+
+(library
+  (name test_djot_headings)
+  (libraries cmarkit_ cmarkit_commonmark cmarkit_html)
+  (modules test_djot_headings)
+  (inline_tests)
+  (preprocess (pps ppx_expect))
+)
+
+(library
+  (name test_djot_links)
+  (libraries cmarkit_ cmarkit_commonmark cmarkit_html)
+  (modules test_djot_links)
+  (inline_tests)
+  (preprocess (pps ppx_expect))
+)
+
+(library
+  (name test_djot_footnotes)
+  (libraries cmarkit_ cmarkit_html)
+  (modules test_djot_footnotes)
+  (inline_tests)
+  (preprocess (pps ppx_expect))
+)
+
+(library
+  (name test_djot_multiline_attributes)
+  (libraries cmarkit_ cmarkit_commonmark cmarkit_html)
+  (modules test_djot_multiline_attributes)
+  (inline_tests)
+  (preprocess (pps ppx_expect))
+)
+
+(library
+  (name test_djot_emphasis)
+  (libraries cmarkit_ cmarkit_commonmark cmarkit_html)
+  (modules test_djot_emphasis)
+  (inline_tests)
+  (preprocess (pps ppx_expect))
+)
+
+(library
+  (name test_djot_ref_def_attributes)
+  (libraries cmarkit_ cmarkit_commonmark cmarkit_html)
+  (modules test_djot_ref_def_attributes)
+  (inline_tests)
+  (preprocess (pps ppx_expect))
+)
+
+(library
+  (name test_smart_punct)
+  (libraries cmarkit_ cmarkit_commonmark cmarkit_html cmarkit_latex)
+  (modules test_smart_punct)
+  (inline_tests)
+  (preprocess (pps ppx_expect))
+)
+
+(library
+  (name test_symbol)
+  (libraries cmarkit_ cmarkit_commonmark cmarkit_html sexplib0)
+  (modules test_symbol)
+  (inline_tests)
+  (preprocess (pps ppx_expect ppx_sexp_conv))
+)

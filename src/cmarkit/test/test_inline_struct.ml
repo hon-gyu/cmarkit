@@ -85,6 +85,15 @@ module Inline_struct = struct
   }
   [@@deriving sexp_of]
 
+  type quoted_marks = Inline_struct_.quoted_marks = {
+    start : byte_pos;
+    char : char;
+    curly : bool;
+    may_open : bool;
+    may_close : bool;
+  }
+  [@@deriving sexp_of]
+
   type attribute_spec = Inline_struct_.attribute_spec = {
     start : byte_pos;
     attribute : Attribute.t;
@@ -107,6 +116,7 @@ module Inline_struct = struct
     | Backticks of { start : byte_pos; count : int; escaped : bool }
     | Emphasis_marks of emphasis_marks
     | Extra_inline_container_marks of extra_inline_container_marks
+    | Quoted_marks of quoted_marks
     | Inline of {
         start : byte_pos;
         inline : inline;
@@ -177,7 +187,7 @@ let tokens_of_string ?intraword_emphasis ?marked_emphasis_delims
   let p, lines = (parser, line_spans) in
   let _layout, _meta, lines = strip_paragraph p lines in
   let _cidx, toks, _first_line =
-    tokenize ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i lines
+    tokenize ~p ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i lines
   in
   toks
 
@@ -208,7 +218,7 @@ let () =
         let p, lines = (parser, line_spans) in
         let layout, meta, lines = strip_paragraph p lines in
         let cidx, toks, first_line =
-          tokenize ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i lines
+          tokenize ~p ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i lines
         in
         p.cidx <- cidx;
         let toks, _had_link = first_pass p toks first_line in
@@ -251,7 +261,7 @@ let () =
     with_output ~h2:true ~title
       ~f:(fun () ->
         markdown
-        |> Inline_parse_api.of_string ~djot_inline_attributes:true
+        |> Inline_parse_api.of_string ~inline_attributes:true
         |> sexp_of.inline
         |> print_sexp)
       ()
@@ -260,7 +270,7 @@ let () =
     with_output ~h2:true ~title
       ~f:(fun () ->
         markdown
-        |> Doc.of_string ~djot_block_attributes:true
+        |> Doc.of_string ~block_attributes:true
         |> sexp_of.doc
         |> print_sexp)
       ()
@@ -270,7 +280,7 @@ let () =
   with_output ~h2:true ~title:"extra container attributes"
     ~f:(fun () ->
       "{=text=}{.marked}"
-      |> Inline_parse_api.of_string ~djot_inline_attributes:true
+      |> Inline_parse_api.of_string ~inline_attributes:true
            ~extra_inline_containers:Extra_config.explicit
       |> sexp_of.inline
       |> print_sexp)
@@ -419,7 +429,7 @@ let () =
     let p, lines = (parser, line_spans) in
     let _layout, _meta, lines = strip_paragraph p lines in
     let _cidx, toks, _first_line =
-      tokenize ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i lines
+      tokenize ~p ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i lines
     in
     toks
   in

@@ -69,7 +69,9 @@ let code_block_egs : Block.t list =
    [Blocks] tails/heads but no further. *)
 let rec trailing_absorbing : Block.t -> bool = function
   | Block.Blocks (bs, _) -> (
-      match List.rev bs with last :: _ -> trailing_absorbing last | [] -> false)
+      match List.rev bs with
+      | last :: _ -> trailing_absorbing last
+      | [] -> false)
   | Block.Html_block (lines, _) -> Common_.html_block_absorbs lines
   | _ -> false
 
@@ -100,8 +102,8 @@ let separate_absorbing_html (bs : Block.t list) : Block.t list =
     block at the current container level was a list whose final item accepts a
     four-space continuation line. Blank lines and nested [Blocks] preserve this
     state because neither establishes a CommonMark container boundary.
-    [Block_quote], [List], and footnote contents are rewritten independently,
-    so their boundaries reset the outer state.
+    [Block_quote], [List], and footnote contents are rewritten independently, so
+    their boundaries reset the outer state.
 
     When such a list is followed by an [`Indented] code block, only the code
     block's layout is changed to the default fenced layout. Its content,
@@ -112,8 +114,8 @@ let separate_absorbing_html (bs : Block.t list) : Block.t list =
     disabled. That would avoid this repair traversal, but it would thread
     render-order state through the recursive [gen_block]/[gen_blocks] API,
     including nested [Blocks]. This post-generation rewrite keeps the core
-    generator compositional while retaining the generated code block rather
-    than filtering out the entire AST. *)
+    generator compositional while retaining the generated code block rather than
+    filtering out the entire AST. *)
 let fence_ambiguous_indented_code (block : Block.t) : Block.t =
   let rec rewrite after_list = function
     | Block.Blocks (bs, meta) ->
@@ -179,13 +181,11 @@ let fence_ambiguous_indented_code (block : Block.t) : Block.t =
 (** Insert an outside blank line between adjacent block-quote siblings.
 
     Nested [Blocks] are transparent in render order, so the traversal carries
-    adjacency state through them. Actual containers are rewritten
-    independently. This preserves the two quote nodes and their inner block
-    boundaries.
+    adjacency state through them. Actual containers are rewritten independently.
+    This preserves the two quote nodes and their inner block boundaries.
 
-    TODO: this is quite complicated and I am not entirely sure if this is
-    the best way
-    *)
+    TODO: this is quite complicated and I am not entirely sure if this is the
+    best way *)
 let separate_adjacent_block_quotes (block : Block.t) : Block.t =
   let blank = Block.Blank_line ("", Meta.none) in
   let rec rewrite = function
@@ -290,6 +290,13 @@ module Bconfig = struct
         (** A html tag at the start of a paragraph will be parsed to a HTML
             block. *)
     no_break_in_atx_heading : bool;
+    no_thematic_break_shaped_paragraph : bool;
+        (** A paragraph whose rendering is a thematic break line is not a
+            paragraph on reparse: block structure wins. The only inline that can
+            do this is a lone [Em_dash], which renders [---]; there is no
+            witness for it and no escape, so the paragraph is repaired by
+            prefixing a text leaf. Costs a reparse per paragraph, so it is only
+            worth setting where smart-punctuation dashes are generated. *)
     (* Pure inline rules
     -------------------- *)
     inline : Iconfig.t;
@@ -309,6 +316,7 @@ module Bconfig = struct
       no_adjacent_block_quotes = false;
       no_html_block_starting_paragraph = true;
       no_break_in_atx_heading = false;
+      no_thematic_break_shaped_paragraph = false;
       inline = Iconfig.typed;
     }
 
@@ -339,7 +347,32 @@ module Bconfig = struct
       (* *)
       no_trailing_blank_line_in_blocks = false;
     }
+
+  (** {!typed_md} with the djot inline extensions switched on. Reparsing must
+      supply [colon_symbols] and [smart_punctuation], or the rendered source
+      comes back as plain text. *)
+  let typed_djot_md =
+    {
+      typed_md with
+      inline = Iconfig.typed_djot;
+      no_thematic_break_shaped_paragraph = true;
+    }
 end
+
+(* A paragraph whose rendering is a thematic break line loses to block structure
+   on reparse: [Paragraph (Em_dash)] renders [---] and comes back a
+   [Thematic_break]. There is no witness and no escape, so repair by prefixing a
+   text leaf — [jia---] is a paragraph again, and the dash still roundtrips. The
+   test is a reparse rather than a match on [Em_dash] so that it keeps holding if
+   the leaf corpus grows another inline that can render a bare break line. *)
+let paragraph_collapses_to_thematic_break (inline : Inline.t) : bool =
+  let p = Block.(Paragraph (Block.Paragraph.make inline, Meta.none)) in
+  let rec has_break = function
+    | Block.Thematic_break _ -> true
+    | Block.Blocks (bs, _) -> List.exists has_break bs
+    | _ -> false
+  in
+  has_break (Common_.reparse ~smart_punctuation:true p)
 
 let gen_paragraph (config : Bconfig.t) : Block.t G.t =
   let ic =
@@ -349,8 +382,17 @@ let gen_paragraph (config : Bconfig.t) : Block.t G.t =
       no_html_block_start = config.no_html_block_starting_paragraph;
     }
   in
+  let repair inline =
+    if
+      config.no_thematic_break_shaped_paragraph
+      && paragraph_collapses_to_thematic_break inline
+    then Inline.Inlines ([ List.hd text_egs; inline ], Meta.none)
+    else inline
+  in
   G.map
-    (fun inline -> Block.(Paragraph (Block.Paragraph.make inline, Meta.none)))
+    (fun inline ->
+      let inline = repair inline in
+      Block.(Paragraph (Block.Paragraph.make inline, Meta.none)))
     (gen_inline ic)
 
 let gen_heading (config : Bconfig.t) : Block.t G.t =
@@ -394,14 +436,13 @@ let limit_list_item_leading_blank_prefix (block : Block.t) : Block.t =
     | _ -> false
   in
   let rec leading_blanks acc = function
-  | b :: bs when blank b -> leading_blanks (b :: acc) bs
-  | rest -> (List.rev acc, rest)
+    | b :: bs when blank b -> leading_blanks (b :: acc) bs
+    | rest -> (List.rev acc, rest)
   in
   match Block.normalize block with
   | Block.Blocks (bs, meta) -> (
       match leading_blanks [] bs with
-      | _ :: _ :: _, (_ :: _ as rest) ->
-          Block.Blocks (List.hd bs :: rest, meta)
+      | _ :: _ :: _, (_ :: _ as rest) -> Block.Blocks (List.hd bs :: rest, meta)
       | _ -> block)
   | _ -> block
 
@@ -430,7 +471,9 @@ and gen_list config st n : Block.t G.t =
   let open G in
   (* Start integer for ordered lists; the renderer only keeps the first item's
      value, so a small spread is enough. *)
-  let gen_start = oneof_list_weighted [ (6, 1); (1, 0); (1, 2); (1, 9); (1, 42) ] in
+  let gen_start =
+    oneof_list_weighted [ (6, 1); (1, 0); (1, 2); (1, 9); (1, 42) ]
+  in
   let* type' =
     oneof_weighted
       [

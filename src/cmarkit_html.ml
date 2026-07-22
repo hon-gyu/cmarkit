@@ -2,6 +2,7 @@
 
 (*---------------------------------------------------------------------------
    Copyright (c) 2021 The cmarkit programmers. All rights reserved.
+   Copyright (c) 2026 The oymarkit programmers. All rights reserved.
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
@@ -14,6 +15,7 @@ module String_set = Set.Make (String)
 type state =
   { safe : bool;
     backend_blocks : bool;
+    djot : bool;
     mutable ids : String_set.t;
     mutable footnote_count : int;
     mutable footnotes :
@@ -23,9 +25,10 @@ type state =
 let state : state C.State.t = C.State.make ()
 let safe c = (C.State.get c state).safe
 let backend_blocks c = (C.State.get c state).backend_blocks
-let init_context ?(backend_blocks = false) ~safe c _ =
+let djot c = (C.State.get c state).djot
+let init_context ?(backend_blocks = false) ?(djot = false) ~safe c _ =
   let ids = String_set.empty and footnotes = Label.Map.empty in
-  let st = { safe; backend_blocks; ids; footnote_count = 0; footnotes } in
+  let st = { safe; backend_blocks; djot; ids; footnote_count = 0; footnotes } in
   C.State.set c state (Some st)
 
 let unique_id c id =
@@ -42,18 +45,41 @@ let footnote_id label =
   let make_label l = String.map (function ' ' | '\t' -> '-' | c -> c) l in
   "fn-" ^ (make_label (String.sub label 1 (String.length label - 1)))
 
+(* Djot names a note by the order in which it is first referenced, not by its
+   label: [fn1] and [fnref1]. *)
+let djot_footnote_id n = "fn" ^ Int.to_string n
+let djot_footnote_ref_id n = "fnref" ^ Int.to_string n
+
 let footnote_ref_id fnid c = String.concat "-" ["ref"; Int.to_string c; fnid]
 
 let make_footnote_ref_ids c label fn =
   let st = C.State.get c state in
+  let djot = st.djot in
   match Label.Map.find_opt label st.footnotes with
-  | Some (text, id, refc, _) -> incr refc; (text, id, footnote_ref_id id !refc)
+  | Some (text, id, refc, _) ->
+      incr refc;
+      let ref_id =
+        (* Deliberate divergence from djot.js, which puts the same [fnref]
+           id on *every* reference to the note — duplicate ids, invalid
+           HTML. We give only the first reference the id; the corpus never
+           references a note twice, so conformance does not see this. *)
+        if djot then ""
+        else footnote_ref_id id !refc
+      in
+      (text, id, ref_id)
   | None ->
       st.footnote_count <- st.footnote_count + 1;
-      let text = String.concat "" ["["; Int.to_string st.footnote_count;"]"] in
-      let id = footnote_id label in
+      let n = st.footnote_count in
+      let text =
+        if djot then Int.to_string n
+        else String.concat "" ["["; Int.to_string n; "]"]
+      in
+      let id = if djot then djot_footnote_id n else footnote_id label in
       st.footnotes <- Label.Map.add label (text, id, ref 1, fn) st.footnotes;
-      text, id, footnote_ref_id id 1
+      let ref_id =
+        if djot then djot_footnote_ref_id n else footnote_ref_id id 1
+      in
+      text, id, ref_id
 
 (* Escaping *)
 
@@ -68,7 +94,10 @@ let buffer_add_html_escaped_uchar b u = match Uchar.to_int u with
 
 let html_escaped_uchar c s = buffer_add_html_escaped_uchar (C.buffer c) s
 
-let buffer_add_html_escaped_string b s =
+(* [quot] escapes the double quote. It has to be escaped inside an attribute
+   value, which is what delimits one; in text it is unambiguous, and djot leaves
+   it alone there. *)
+let buffer_add_escaped_string ?(quot = true) b s =
   let string = Buffer.add_string in
   let len = String.length s in
   let max_idx = len - 1 in
@@ -85,31 +114,39 @@ let buffer_add_html_escaped_string b s =
     | '<' -> flush b start i; string b "&lt;"; loop next next
     | '>' -> flush b start i; string b "&gt;"; loop next next
 (*    | '\'' -> flush c start i; string c "&apos;"; loop next next *)
-    | '\"' -> flush b start i; string b "&quot;"; loop next next
+    | '\"' when quot -> flush b start i; string b "&quot;"; loop next next
     | c -> loop start next
   in
   loop 0 0
 
+let buffer_add_html_escaped_string b s = buffer_add_escaped_string b s
 let html_escaped_string c s = buffer_add_html_escaped_string (C.buffer c) s
 
+(* Djot writes a non-breaking space as an entity: as a raw U+00A0 it would be
+   indistinguishable from a space in the output. It leaves the double quote
+   alone: text is not an attribute value, so nothing needs escaping there. *)
+(* Djot leaves the double quote alone in text, and a literal U+00A0 is ordinary
+   text: only [\ ] is a non-breaking space, and that is an {!Inline.Ext_nbsp}
+   node by the time we get here. *)
+let djot_escaped_string c s =
+  buffer_add_escaped_string ~quot:false (C.buffer c) s
+
+let text_string c s =
+  if djot c then djot_escaped_string c s else html_escaped_string c s
+
 let attributes c a =
-  begin match Attribute.id a with
-  | None -> ()
-  | Some id ->
-      C.string c " id=\""; html_escaped_string c id; C.byte c '"'
-  end;
-  begin match Attribute.classes a with
-  | [] -> ()
-  | classes ->
-      C.string c " class=\"";
-      html_escaped_string c (String.concat " " classes);
-      C.byte c '"'
-  end;
   List.iter
-    (fun (key, value) ->
-      C.byte c ' '; html_escaped_string c key; C.string c "=\"";
-      html_escaped_string c value; C.byte c '"')
-    (Attribute.key_values a)
+    (function
+      | `Id id ->
+          C.string c " id=\""; html_escaped_string c id; C.byte c '"'
+      | `Class classes ->
+          C.string c " class=\"";
+          html_escaped_string c (String.concat " " classes);
+          C.byte c '"'
+      | `Key_value (key, value) ->
+          C.byte c ' '; html_escaped_string c key; C.string c "=\"";
+          html_escaped_string c value; C.byte c '"')
+    (Attribute.bindings a)
 
 let buffer_add_pct_encoded_string b s = (* Percent encoded + HTML escaped *)
   let byte = Buffer.add_char and string = Buffer.add_string in
@@ -147,6 +184,9 @@ let buffer_add_pct_encoded_string b s = (* Percent encoded + HTML escaped *)
   loop b s (String.length s - 1) 0 0
 
 let pct_encoded_string c s = buffer_add_pct_encoded_string (C.buffer c) s
+
+let link_destination_string c s =
+  if djot c then html_escaped_string c s else pct_encoded_string c s
 
 (* Rendering functions *)
 
@@ -188,6 +228,26 @@ let code_span c cs =
   html_escaped_string c (Inline.Code_span.code cs);
   C.string c "</code>"
 
+(* Djot raw content. Only [html] is our output format, so that is the only one
+   we pass through; anything targeted at another backend is dropped, as djot
+   specifies. In [safe] mode passing it through would defeat the point of the
+   mode, so it becomes a comment like the other raw HTML paths. *)
+
+let raw_inline c r =
+  if Inline.Raw_inline.format r <> "html" then () else
+  if safe c then comment c "raw HTML omitted" else
+  C.string c (Inline.Raw_inline.code r)
+
+let raw_block c r =
+  if Block.Raw_block.format r <> "html" then () else
+  if safe c then (comment c "raw HTML block omitted"; C.byte c '\n') else
+  match Block.Code_block.code (Block.Raw_block.code_block r) with
+  | [] -> ()
+  | lines ->
+      (* [block_lines] separates lines, it does not terminate them; a raw block
+         stands on its own, so it ends with a newline like any other block. *)
+      block_lines c lines; C.byte c '\n'
+
 let emphasis c e =
   C.string c "<em>"; C.inline c (Inline.Emphasis.inline e); C.string c "</em>"
 
@@ -208,7 +268,7 @@ let link_dest_and_title c ld =
   in
   dest, title
 
-let image ?(close = " >") c i =
+let image ?(close = " >") ?attrs c i =
   match Inline.Link.reference_definition (C.get_defs c) i with
   | Some (Link_definition.Def (ld, _)) ->
       let plain_text c i =
@@ -216,13 +276,23 @@ let image ?(close = " >") c i =
         String.concat "\n" (List.map (String.concat "") lines)
       in
       let link, title = link_dest_and_title c ld in
-      C.string c "<img src=\""; pct_encoded_string c link;
-      C.string c "\" alt=\"";
-      html_escaped_string c (plain_text c (Inline.Link.text i));
-      C.byte c '\"';
+      (* Djot writes [alt] first and closes with [>]; both are cosmetic, but the
+         corpus compares bytes. *)
+      let djot = djot c in
+      let alt c =
+        C.string c " alt=\"";
+        html_escaped_string c (plain_text c (Inline.Link.text i));
+        C.byte c '\"'
+      in
+      let src c =
+        C.string c " src=\""; link_destination_string c link; C.byte c '\"'
+      in
+      C.string c "<img";
+      if djot then (alt c; src c) else (src c; alt c);
       if title <> ""
       then (C.string c " title=\""; html_escaped_string c title; C.byte c '\"');
-      C.string c close
+      (match attrs with None -> () | Some a -> attributes c a);
+      C.string c (if djot then ">" else close)
   | Some (Block.Footnote.Def _) -> comment_foonote_image c i
   | None -> comment_undefined_label c i
   | Some _ -> comment_unknown_def_type c i
@@ -230,6 +300,14 @@ let image ?(close = " >") c i =
 let link_footnote c l fn =
   let key = Label.key (Option.get (Inline.Link.referenced_label l)) in
   let text, label, ref = make_footnote_ref_ids c key fn in
+  if djot c then begin
+    C.string c "<a";
+    if ref <> "" then
+      (C.string c " id=\""; html_escaped_string c ref; C.byte c '"');
+    C.string c " href=\"#"; pct_encoded_string c label;
+    C.string c "\" role=\"doc-noteref\"><sup>";
+    C.string c text; C.string c "</sup></a>"
+  end else
   let is_full_ref = match Inline.Link.reference l with
   | `Ref (`Full, _, _) -> true | _ -> false
   in
@@ -245,13 +323,26 @@ let link_footnote c l fn =
     C.string c text; C.string c "</a></sup>"
   end
 
-let link c l = match Inline.Link.reference_definition (C.get_defs c) l with
+let link ?attrs c l = match Inline.Link.reference_definition (C.get_defs c) l with
 | Some (Link_definition.Def (ld, _)) ->
     let link, title = link_dest_and_title c ld in
-    C.string c "<a href=\""; pct_encoded_string c link;
+    C.string c "<a href=\""; link_destination_string c link;
     if title <> "" then (C.string c "\" title=\""; html_escaped_string c title);
-    C.string c "\">"; C.inline c (Inline.Link.text l); C.string c "</a>"
+    C.byte c '\"';
+    (match attrs with None -> () | Some a -> attributes c a);
+    C.byte c '>'; C.inline c (Inline.Link.text l); C.string c "</a>"
 | Some (Block.Footnote.Def (fn, _)) -> link_footnote c l fn
+| None when djot c && (match Inline.Link.referenced_label l with
+                       | Some d -> Label.key d <> "" && (Label.key d).[0] = '^'
+                       | None -> false) ->
+    let label = Option.get (Inline.Link.referenced_label l) in
+    link_footnote c l (Block.Footnote.make label Block.empty)
+| None when djot c ->
+    (* Djot still makes an anchor of an unresolved reference, just without an
+       [href]. *)
+    C.string c "<a";
+    (match attrs with None -> () | Some a -> attributes c a);
+    C.byte c '>'; C.inline c (Inline.Link.text l); C.string c "</a>"
 | None -> C.inline c (Inline.Link.text l); comment_undefined_label c l
 | Some _ -> C.inline c (Inline.Link.text l); comment_unknown_def_type c l
 
@@ -275,9 +366,25 @@ let math_span c ms =
   in
   let tex = Inline.Math_span.tex_layout ms in
   if tex = [] then () else
-  (C.string c (if Inline.Math_span.display ms then "\\[" else "\\(");
-   tex_lines c tex;
-   C.string c (if Inline.Math_span.display ms then "\\]" else "\\)"))
+  let display = Inline.Math_span.display ms in
+  (* Djot marks the math up so a consumer can find it: the TeX delimiters alone
+     leave nothing to select on. *)
+  let djot = djot c in
+  if djot then begin
+    C.string c "<span class=\"math ";
+    C.string c (if display then "display" else "inline");
+    C.string c "\">"
+  end;
+  C.string c (if display then "\\[" else "\\(");
+  tex_lines c tex;
+  C.string c (if display then "\\]" else "\\)");
+  if djot then C.string c "</span>"
+
+let quoted c q =
+  let open', close = Inline.Quoted.utf_8_delims (Inline.Quoted.kind q) in
+  C.string c open';
+  C.inline c (Inline.Quoted.inline q);
+  C.string c close
 
 let extra_inline_container c ic =
   let tag =
@@ -323,6 +430,8 @@ let inline_attributes c a =
       C.byte c '<'; C.string c tag; attributes c attrs; C.byte c '>';
       C.inline c (Inline.Extra_inline_container.inline ic);
       C.string c "</"; C.string c tag; C.byte c '>'
+  | Inline.Link (l, _) -> link ~attrs c l
+  | Inline.Image (i, _) -> image ~attrs c i
   | inline ->
       C.string c "<span"; attributes c attrs; C.byte c '>';
       C.inline c inline; C.string c "</span>"
@@ -356,11 +465,19 @@ let inline c = function
 | Inline.Link (l, _) -> link c l; true
 | Inline.Raw_html (html, _) -> raw_html c html; true
 | Inline.Strong_emphasis (e, _) -> strong_emphasis c e; true
-| Inline.Text (t, _) -> html_escaped_string c t; true
+| Inline.Text (t, _) -> text_string c t; true
 | Inline.Ext_strikethrough (s, _) -> strikethrough c s; true
 | Inline.Ext_extra_inline_container (ic, _) -> extra_inline_container c ic; true
+| Inline.Ext_quoted (q, _) -> quoted c q; true
 | Inline.Ext_attributes (a, _) -> inline_attributes c a; true
 | Inline.Ext_math_span (ms, _) -> math_span c ms; true
+| Inline.Ext_nbsp (_, _) -> C.string c "&nbsp;"; true
+| Inline.Ext_raw_inline (r, _) -> raw_inline c r; true
+| Inline.Ext_smart_punct (sp, _) ->
+    C.string c (Inline.Smart_punct.to_utf_8 sp); true
+| Inline.Ext_symbol (s, _) ->
+    (* Djot renders a symbol literally; a filter may give it a meaning. *)
+    html_escaped_string c (Inline.Symbol.to_source s); true
 | Inline.Ext_wikilink (wl, _) -> wikilink c wl; true
 | Inline.Ext_jsx_expr _ -> true (* opaque JSX expression: no HTML rendering *)
 | Inline.Ext_jsx_element (e, _) ->
@@ -406,7 +523,7 @@ let callout c co bq =
   C.string c "</div>\n";
   C.string c "</"; C.string c outer; C.string c ">\n"
 
-let code_block c cb =
+let code_block ?attrs c cb =
   let i = Option.map fst (Block.Code_block.info_string cb) in
   let lang = Option.bind i Block.Code_block.language_of_info_string in
   let line (l, _) = html_escaped_string c l; C.byte c '\n' in
@@ -415,7 +532,9 @@ let code_block c cb =
       if lang = "=html" && not (safe c)
       then block_lines c (Block.Code_block.code cb) else ()
   | _ ->
-      C.string c "<pre><code";
+      C.string c "<pre";
+      (match attrs with None -> () | Some a -> attributes c a);
+      C.string c "><code";
       begin match lang with
       | None -> ()
       | Some (lang, _env) ->
@@ -425,6 +544,47 @@ let code_block c cb =
       C.byte c '>';
       List.iter line (Block.Code_block.code cb);
       C.string c "</code></pre>\n"
+
+(* Djot identifiers. The base is the heading's text with punctuation and
+   whitespace runs turned into single [-], case preserved (so [Foo bar] is
+   [Foo-bar], not [foo-bar]). Uniqueness is against every id in the document,
+   explicit ones included, by appending [-1], [-2], …; an empty base becomes
+   [s-1]. Djot assigns these while parsing, in document order, which is also the
+   order we render in — so registering ids as we go gives the same answer. *)
+
+let djot_id_base = Cmarkit_base.djot_id_base
+
+let register_id c id =
+  let st = C.State.get c state in
+  st.ids <- String_set.add id st.ids
+
+let djot_unique_id c base =
+  let st = C.State.get c state in
+  (* An empty base becomes [s-1], [s-2], … — djot's fallback name. *)
+  let base' = if base = "" then "s" else base in
+  let rec loop i =
+    let id = if i = 0 then base else base' ^ "-" ^ Int.to_string i in
+    if id = "" || String_set.mem id st.ids then loop (i + 1) else id
+  in
+  let id = loop (if base = "" then 1 else 0) in
+  register_id c id; id
+
+(* The heading's own id, if it was given one explicitly, else a fresh djot one
+   from its text. *)
+let djot_heading_id c ~attrs h =
+  let heading_text h =
+    (* Footnote references contribute nothing to a heading's id, matching djot
+       and [register_heading_labels]. *)
+    Inline.to_plain_text ~skip_link:Inline.is_footnote_reference
+      ~break_on_soft:false (Block.Heading.inline h)
+    |> List.map (String.concat "") |> String.concat " "
+  in
+  match attrs with
+  | Some a ->
+      (match Attribute.id a with
+       | Some id -> register_id c id; id
+       | None -> djot_unique_id c (djot_id_base (heading_text h)))
+  | None -> djot_unique_id c (djot_id_base (heading_text h))
 
 let heading c h =
   let level = string_of_int (Block.Heading.level h) in
@@ -439,6 +599,59 @@ let heading c h =
   end;
   C.inline c (Block.Heading.inline h);
   C.string c "</h"; C.string c level; C.string c ">\n"
+
+(* Djot sections. A heading opens a [<section>] that runs until a heading of the
+   same or a higher level; sections therefore nest by level. The id goes on the
+   section, not on the heading. *)
+
+let djot_heading c h =
+  let level = string_of_int (Block.Heading.level h) in
+  C.string c "<h"; C.string c level; C.byte c '>';
+  C.inline c (Block.Heading.inline h);
+  C.string c "</h"; C.string c level; C.string c ">\n"
+
+(* A djot heading that is not opening a section -- inside a block quote, a list
+   item, … -- carries its id on the [<h>] itself, since there is no section to
+   put it on. *)
+let djot_heading_with_id c h =
+  let id = djot_heading_id c ~attrs:None h in
+  let level = string_of_int (Block.Heading.level h) in
+  C.string c "<h"; C.string c level;
+  C.string c " id=\""; html_escaped_string c id; C.string c "\">";
+  C.inline c (Block.Heading.inline h);
+  C.string c "</h"; C.string c level; C.string c ">\n"
+
+let heading_of = function
+| Block.Heading (h, _) -> Some (h, None)
+| Block.Ext_attributes (a, _) ->
+    (match Block.Attributes.block a with
+     | Block.Heading (h, _) -> Some (h, Some (Block.Attributes.attributes a))
+     | _ -> None)
+| _ -> None
+
+let rec djot_sections c = function
+| [] -> ()
+| b :: bs ->
+    match heading_of b with
+    | None -> C.block c b; djot_sections c bs
+    | Some (h, attrs) ->
+        let level = Block.Heading.level h in
+        let id = djot_heading_id c ~attrs h in
+        let rec split acc = function
+        | b :: bs as rest ->
+            begin match heading_of b with
+            | Some (h, _) when Block.Heading.level h <= level ->
+                List.rev acc, rest
+            | _ -> split (b :: acc) bs
+            end
+        | [] -> List.rev acc, []
+        in
+        let inside, after = split [] bs in
+        C.string c "<section id=\""; html_escaped_string c id; C.string c "\">\n";
+        djot_heading c h;
+        djot_sections c inside;
+        C.string c "</section>\n";
+        djot_sections c after
 
 let paragraph c p =
   C.string c "<p>"; C.inline c (Block.Paragraph.inline p); C.string c "</p>\n"
@@ -464,6 +677,43 @@ let rec item_block ~tight c = function
     loop c true bs
 | b -> C.byte c '\n'; C.block c b
 
+(* Djot list items. The content always sits on its own lines:
+   [<li>\ncontent\n</li>], tight or loose, and a task marker is an [<input>] line
+   before the content. *)
+
+let ensure_nl c =
+  let b = C.buffer c in
+  let n = Buffer.length b in
+  if n > 0 && Buffer.nth b (n - 1) <> '\n' then C.byte c '\n'
+
+let djot_list_item ~tight c (i, _) =
+  C.string c "<li>\n";
+  begin match Block.List_item.ext_task_marker i with
+  | None -> ()
+  | Some (mark, _) ->
+      let checked = match Block.List_item.task_status_of_task_marker mark with
+      | `Unchecked -> "" | `Checked | `Other _ | `Cancelled -> " checked=\"\""
+      in
+      C.string c "<input disabled=\"\" type=\"checkbox\"";
+      C.string c checked; C.string c "/>\n"
+  end;
+  (* [item_block] prepends a newline before a block child, which would double the
+     one we just wrote after [<li>]. *)
+  let child c = function
+  | Block.Blank_line _ -> ()
+  (* A tight item's paragraphs lose their wrapper, as in a CommonMark tight
+     list; the newline is ours, not [item_block]'s, which would double the one
+     after [<li>]. *)
+  | Block.Paragraph (p, _) when tight ->
+      C.inline c (Block.Paragraph.inline p); ensure_nl c
+  | b -> C.block c b; ensure_nl c
+  in
+  begin match Block.List_item.block i with
+  | Block.Blocks (bs, _) -> List.iter (child c) bs
+  | b -> child c b
+  end;
+  C.string c "</li>\n"
+
 let list_item ~tight c (i, _) = match Block.List_item.ext_task_marker i with
 | None ->
     C.string c "<li>";
@@ -488,8 +738,37 @@ let list_item ~tight c (i, _) = match Block.List_item.ext_task_marker i with
     item_block ~tight c (Block.List_item.block i);
     C.string c close
 
-let list c l =
+let list ?attrs c l =
   let tight = Block.List'.tight l in
+  if djot c then begin
+    let items = Block.List'.items l in
+    let is_task (i, _) = Block.List_item.ext_task_marker i <> None in
+    let task_class = if List.exists is_task items then " class=\"task-list\"" else "" in
+    let attrs c = match attrs with None -> () | Some a -> attributes c a in
+    let close = match Block.List'.type' l with
+    | `Unordered _ ->
+        C.string c "<ul"; C.string c task_class; attrs c; C.string c ">\n";
+        "</ul>\n"
+    | `Ordered (start, _) | `Ext_ordered (_, _, start) as t ->
+        C.string c "<ol"; C.string c task_class;
+        if start <> 1
+        then (C.string c " start=\""; C.string c (string_of_int start);
+              C.string c "\"");
+        begin match t with
+        | `Ext_ordered (style, _, _) ->
+            let ty = match style with
+            | `Decimal -> "" | `Alpha_lower -> "a" | `Alpha_upper -> "A"
+            | `Roman_lower -> "i" | `Roman_upper -> "I"
+            in
+            if ty <> ""
+            then (C.string c " type=\""; C.string c ty; C.string c "\"")
+        | `Ordered _ -> ()
+        end;
+        attrs c; C.string c ">\n"; "</ol>\n"
+    in
+    List.iter (djot_list_item ~tight c) items;
+    C.string c close
+  end else
   match Block.List'.type' l with
   | `Unordered _ ->
       C.string c "<ul>\n";
@@ -502,28 +781,80 @@ let list c l =
        C.string c "\">\n");
       List.iter (list_item ~tight c) (Block.List'.items l);
       C.string c "</ol>\n"
+  | `Ext_ordered (style, _, start) ->
+      (* The djot numbering style maps onto the [type] attribute; the delimiter
+         has no HTML rendering, browsers always write a period. *)
+      C.string c "<ol";
+      begin match style with
+      | `Decimal -> ()
+      | `Alpha_lower -> C.string c " type=\"a\""
+      | `Alpha_upper -> C.string c " type=\"A\""
+      | `Roman_lower -> C.string c " type=\"i\""
+      | `Roman_upper -> C.string c " type=\"I\""
+      end;
+      if start = 1 then C.string c ">\n" else
+      (C.string c " start=\""; C.string c (string_of_int start);
+       C.string c "\">\n");
+      List.iter (list_item ~tight c) (Block.List'.items l);
+      C.string c "</ol>\n"
+
+let definition_list c d =
+  let tight = Block.Definition_list.tight d in
+  let rec empty_definition = function
+  | Block.Blank_line _ -> true
+  | Block.Blocks (blocks, _) -> List.for_all empty_definition blocks
+  | _ -> false
+  in
+  let item (i, _) =
+    C.string c "<dt>";
+    C.inline c (Block.Definition_list.item_term i);
+    C.string c "</dt>\n<dd>";
+    (* A tight definition drops the paragraph wrapper around its content, as a
+       tight list item does. *)
+    let definition = Block.Definition_list.item_definition i in
+    if empty_definition definition then C.byte c '\n'
+    else item_block ~tight c definition;
+    C.string c "</dd>\n"
+  in
+  C.string c "<dl>\n";
+  List.iter item (Block.Definition_list.items d);
+  C.string c "</dl>\n"
 
 let html_block c lines =
   let line (l, _) = C.string c l; C.byte c '\n' in
   if safe c then (comment c "CommonMark HTML block omitted"; C.byte c '\n') else
   List.iter line lines
 
-let thematic_break c = C.string c "<hr>\n"
+let thematic_break ?attrs c =
+  C.string c "<hr";
+  (match attrs with None -> () | Some a -> attributes c a);
+  C.string c ">\n"
 
 let math_block c cb =
   let line l = html_escaped_string c (Block_line.to_string l); C.byte c '\n' in
+  let djot = djot c in
+  if djot then C.string c "<span class=\"math display\">";
   C.string c "\\[\n";
   List.iter line (Block.Code_block.code cb);
-  C.string c "\\]\n"
+  C.string c "\\]";
+  if djot then C.string c "</span>";
+  C.byte c '\n'
 
 let table c t =
+  (* Djot writes the alignment as an inline style and does not wrap the table in
+     the scroll region cmarkit adds. *)
+  let djot = djot c in
   let start c align tag =
     C.byte c '<'; C.string c tag;
     match align with
     | None -> C.byte c '>';
-    | Some `Left -> C.string c " class=\"left\">"
-    | Some `Center -> C.string c " class=\"center\">"
-    | Some `Right -> C.string c " class=\"right\">"
+    | Some a ->
+        let a = match a with
+        | `Left -> "left" | `Center -> "center" | `Right -> "right"
+        in
+        if djot then begin
+          C.string c " style=\"text-align: "; C.string c a; C.string c ";\">"
+        end else (C.string c " class=\""; C.string c a; C.string c "\">")
   in
   let close c tag = C.string c "</"; C.string c tag; C.string c ">\n" in
   let rec cols c tag ~align count cs = match align, cs with
@@ -556,12 +887,21 @@ let table c t =
   | ((`Sep align, _), _) :: rs -> rows c col_count ~align rs
   | [] -> ()
   in
-  C.string c "<div role=\"region\"><table>\n";
+  C.string c (if djot then "<table>\n" else "<div role=\"region\"><table>\n");
+  begin match Block.Table.caption t with
+  | None -> ()
+  | Some (caption, _) ->
+      (* HTML wants [caption] to be the table's first child. *)
+      C.string c "<caption>";
+      C.inline c (Block.Table.caption_inline caption);
+      C.string c "</caption>\n"
+  end;
   rows c (Block.Table.col_count t) ~align:[] (Block.Table.rows t);
-  C.string c "</table></div>"
+  C.string c (if djot then "</table>\n" else "</table></div>")
 
-let div c d =
+let div ?attrs c d =
   C.string c "<div";
+  (match attrs with None -> () | Some a -> attributes c a);
   begin match Block.Div.class' d with
   | None -> ()
   | Some (cls, _) ->
@@ -581,7 +921,15 @@ let jsx_block c j =
 
 let block_attributes c a =
   let attrs = Block.Attributes.attributes a in
+  (* Djot dedupes heading ids against every id in the document, explicit ones
+     included, and assigns them in document order. Registering as we render
+     keeps a later heading from stealing an id an explicit one already took. *)
+  if djot c then
+    (match Attribute.id attrs with None -> () | Some id -> register_id c id);
   match Block.Attributes.block a with
+  (* Attributes detached from their block by a blank line. They are in the AST
+     for round-tripping only: there is no element to put them on. *)
+  | Block.Blocks ([], _) -> ()
   | Block.Paragraph (p, _) ->
       C.string c "<p"; attributes c attrs; C.byte c '>';
       C.inline c (Block.Paragraph.inline p); C.string c "</p>\n"
@@ -589,6 +937,15 @@ let block_attributes c a =
       C.string c "<blockquote"; attributes c attrs; C.string c ">\n";
       C.block c (Block.Block_quote.block bq);
       C.string c "</blockquote>\n"
+  | Block.Thematic_break _ -> thematic_break ~attrs c
+  | Block.Code_block (cb, _) -> code_block ~attrs c cb
+  | Block.List (l, _) -> list ~attrs c l
+  (* A div already is the element the attributes belong on: wrapping it in
+     another one would nest two divs. *)
+  | Block.Ext_div (d, _) -> div ~attrs c d
+  (* Raw content is passed through as-is; there is no element to hang the
+     attributes on, and djot drops them rather than inventing a wrapper. *)
+  | Block.Ext_raw_block (r, _) -> raw_block c r
   | block ->
       C.string c "<div"; attributes c attrs; C.string c ">\n";
       C.block c block; C.string c "</div>\n"
@@ -599,14 +956,18 @@ let block c = function
      | Some co -> callout c co bq
      | None -> block_quote c bq);
     true
+| Block.Blocks (bs, _) when djot c -> djot_sections c bs; true
 | Block.Blocks (bs, _) -> List.iter (C.block c) bs; true
 | Block.Code_block (cb, _) -> code_block c cb; true
+| Block.Heading (h, _) when djot c -> djot_heading_with_id c h; true
 | Block.Heading (h, _) -> heading c h; true
 | Block.Html_block (h, _) -> html_block c h; true
 | Block.List (l, _) -> list c l; true
 | Block.Paragraph (p, _) -> paragraph c p; true
 | Block.Thematic_break (_, _) -> thematic_break c; true
 | Block.Ext_math_block (cb, _) -> math_block c cb; true
+| Block.Ext_raw_block (r, _) -> raw_block c r; true
+| Block.Ext_definition_list (d, _) -> definition_list c d; true
 | Block.Ext_table (t, _) -> table c t; true
 | Block.Ext_div (d, _) -> div c d; true
 | Block.Ext_jsx_block (j, _) -> jsx_block c j; true
@@ -632,9 +993,65 @@ let xhtml_inline c = function
 
 (* Document rendering *)
 
+(* Djot's endnotes. The notes are listed in the order they were first referenced
+   (which is the order [footnote_count] assigned their ids), and the backlink is
+   tucked into the note's last paragraph rather than appended after it — so we
+   render the note, then reopen its final [</p>]. A note with no paragraph to end
+   on (or no content at all, for a reference whose definition is missing) gets a
+   paragraph of its own for the backlink. *)
+let djot_footnotes c _fns =
+  let number id =
+    (* [fnN] *)
+    match int_of_string_opt (String.sub id 2 (String.length id - 2)) with
+    | Some n -> n | None -> 0
+  in
+  let footnote c (_, id, _, fn) =
+    C.string c "<li id=\""; html_escaped_string c id; C.string c "\">\n";
+    let backlink =
+      let n = number id in
+      String.concat ""
+        [ "<a href=\"#"; djot_footnote_ref_id n;
+          "\" role=\"doc-backlink\">\xe2\x86\xa9\xef\xb8\x8e</a>" ]
+    in
+    let b = C.buffer c in
+    let start = Buffer.length b in
+    C.block c (Block.Footnote.block fn);
+    let content = Buffer.sub b start (Buffer.length b - start) in
+    Buffer.truncate b start;
+    let close = "</p>\n" in
+    let ends_with_p =
+      let n = String.length content and m = String.length close in
+      n >= m && String.equal (String.sub content (n - m) m) close
+    in
+    if ends_with_p then begin
+      C.string c (String.sub content 0 (String.length content - String.length close));
+      C.string c backlink; C.string c close
+    end else begin
+      C.string c content;
+      C.string c "<p>"; C.string c backlink; C.string c "</p>\n"
+    end;
+    C.string c "</li>\n"
+  in
+  C.string c "<section role=\"doc-endnotes\">\n<hr>\n<ol>\n";
+  let rec render_number n =
+    let st = C.State.get c state in
+    let fn =
+      Label.Map.fold
+        (fun _ ((_, id, _, _) as fn) found ->
+          if number id = n then Some fn else found)
+        st.footnotes None
+    in
+    match fn with
+    | None -> ()
+    | Some fn -> footnote c fn; render_number (n + 1)
+  in
+  render_number 1;
+  C.string c "</ol>\n</section>\n"
+
 let footnotes c fns =
   (* XXX we could do something about recursive footnotes and footnotes in
      footnotes here. *)
+  if djot c then djot_footnotes c fns else
   let fns = Label.Map.fold (fun _ fn acc -> fn :: acc) fns [] in
   let fns = List.sort Stdlib.compare fns in
   let footnote c (_, id, refc, fn) =
@@ -663,14 +1080,14 @@ let doc c d =
 
 (* Renderer *)
 
-let renderer ?backend_blocks ~safe () =
-  let init_context = init_context ?backend_blocks ~safe in
+let renderer ?backend_blocks ?djot ~safe () =
+  let init_context = init_context ?backend_blocks ?djot ~safe in
   Cmarkit_renderer.make ~init_context ~inline ~block ~doc ()
 
-let xhtml_renderer ?backend_blocks ~safe () =
-  let init_context = init_context ?backend_blocks ~safe in
+let xhtml_renderer ?backend_blocks ?djot ~safe () =
+  let init_context = init_context ?backend_blocks ?djot ~safe in
   let inline = xhtml_inline and block = xhtml_block in
   Cmarkit_renderer.make ~init_context ~inline ~block ~doc ()
 
-let of_doc ?backend_blocks ~safe d =
-  Cmarkit_renderer.doc_to_string (renderer ?backend_blocks ~safe ()) d
+let of_doc ?backend_blocks ?djot ~safe d =
+  Cmarkit_renderer.doc_to_string (renderer ?backend_blocks ?djot ~safe ()) d

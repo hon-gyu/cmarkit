@@ -1,6 +1,6 @@
 (tests
  (names normalize_idempotent render_roundtrip no_trailing_blank_in_blocks
-   struct_props)
+   struct_props djot_inline_roundtrip)
  (libraries cmarkit_ cmarkit_generator qcheck-core.runner fmt)
  (preprocess
   (pps ppx_jane ppx_expect)))

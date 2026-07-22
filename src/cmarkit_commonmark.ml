@@ -2,6 +2,7 @@
 
 (*---------------------------------------------------------------------------
    Copyright (c) 2023 The cmarkit programmers. All rights reserved.
+   Copyright (c) 2026 The oymarkit programmers. All rights reserved.
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
@@ -197,7 +198,10 @@ let break c b =
   let layout_after = fst (Inline.Break.layout_after b) in
   let before, after = match Inline.Break.type' b with
   | `Soft -> layout_before, layout_after
-  | `Hard -> (if layout_before = "" then "  " else layout_before), layout_after
+  (* With no source layout to reproduce, spell a hard break with a trailing
+     backslash rather than two spaces: both are hard breaks in CommonMark, but
+     djot only reads the backslash one, so this round-trips in either dialect. *)
+  | `Hard -> (if layout_before = "" then "\\" else layout_before), layout_after
   in
   C.string c before; newline c; indent c; C.string c after
 
@@ -280,6 +284,16 @@ let strikethrough c s =
   let i = Inline.Strikethrough.inline s in
   C.string c "~~"; C.inline c i; C.string c "~~"
 
+(* Back to source, markers included: a bare quote may pair differently when
+   re-parsed, and the markers are what pin its role. *)
+let quoted c q =
+  let quote = Inline.Quoted.quote_char (Inline.Quoted.kind q) in
+  if Inline.Quoted.open_marker q then C.byte c '{';
+  C.byte c quote;
+  C.inline c (Inline.Quoted.inline q);
+  C.byte c quote;
+  if Inline.Quoted.close_marker q then C.byte c '}'
+
 let extra_inline_container c ic =
   let delim =
     match Inline.Extra_inline_container.kind ic with
@@ -307,6 +321,14 @@ let inline_attributes c a =
   C.inline c (Inline.Attributes.inline a);
   List.iter (attribute_spec c) (Inline.Attributes.specs a)
 
+(* Djot raw content back to source: the code span or fence is unchanged (the
+   fence keeps its [=format] info string), the inline only regains its
+   specifier. *)
+
+let raw_inline c r =
+  code_span c (Inline.Raw_inline.code_span r);
+  C.string c "{="; C.string c (Inline.Raw_inline.format r); C.byte c '}'
+
 let math_span c ms =
   let sep = if Inline.Math_span.display ms then "$$" else "$" in
   C.string c sep;
@@ -328,6 +350,14 @@ let inline c = function
 | Inline.Ext_extra_inline_container (ic, _) -> extra_inline_container c ic; true
 | Inline.Ext_attributes (a, _) -> inline_attributes c a; true
 | Inline.Ext_math_span (m, _) -> math_span c m; true
+| Inline.Ext_raw_inline (r, _) -> raw_inline c r; true
+| Inline.Ext_quoted (q, _) -> quoted c q; true
+| Inline.Ext_nbsp (n, _) -> C.string c (Inline.Nbsp.to_source n); true
+| Inline.Ext_smart_punct (sp, _) ->
+    (* Back to source, markers included: a bare quote could curl the other way
+       when re-parsed, since direction is inferred from context. *)
+    C.string c (Inline.Smart_punct.to_source sp); true
+| Inline.Ext_symbol (s, _) -> C.string c (Inline.Symbol.to_source s); true
 | Inline.Ext_wikilink (wl, _) -> C.string c (Inline.Wikilink.to_commonmark wl); true
 | Inline.Ext_jsx_expr (j, _) ->
     C.byte c '{'; C.string c (Inline.Jsx_expr.expr j); C.byte c '}'; true
@@ -499,6 +529,20 @@ let ordered_item c sep num (i, _) =
   pop_indent c;
   num + 1
 
+let ext_ordered_item c style delim num (i, _) =
+  let before = Block.List_item.before_marker i in
+  let marker = fst (Block.List_item.marker i) in
+  let marker =
+    if marker = "" then Block.List'.ordered_marker style delim num else marker
+  in
+  let after = Block.List_item.after_marker i in
+  let continuation_extra = list_item_continuation_extra after i in
+  let task = Option.map fst (Block.List_item.ext_task_marker i) in
+  push_indent c (`L (before, marker, after, continuation_extra, task));
+  C.block c (Block.List_item.block i);
+  pop_indent c;
+  num + 1
+
 let list c l = match Block.List'.type' l with
 | `Unordered marker ->
     let marker = match marker with '*' | '-' | '+' -> marker | _ -> '*' in
@@ -508,6 +552,25 @@ let list c l = match Block.List'.type' l with
     let sep = if sep <> '.' && sep <> ')' then '.' else sep in
     let sep = String.make 1 sep in
     ignore (List.fold_left (ordered_item c sep) start (Block.List'.items l))
+| `Ext_ordered (style, delim, start) ->
+    ignore
+      (List.fold_left (ext_ordered_item c style delim) start
+         (Block.List'.items l))
+
+let definition_list c d =
+  let item (i, _) =
+    let before = Block.Definition_list.item_before_marker i in
+    let after = Block.Definition_list.item_after_marker i in
+    newline c; indent c; nchars c before ' ';
+    C.string c ":"; nchars c (Int.max 1 after) ' ';
+    C.inline c (Block.Definition_list.item_term i);
+    (* The definition is indented under the term; two columns is the shortest
+       indent that is unambiguously past the colon. *)
+    push_indent c (`I (before + 2));
+    C.block c (Block.Definition_list.item_definition i);
+    pop_indent c
+  in
+  List.iter item (Block.Definition_list.items d)
 
 let paragraph c p =
   newline c; indent c;
@@ -545,6 +608,12 @@ let table c t =
   in
   push_indent c (`I (Block.Table.indent t));
   List.iter (row c) (Block.Table.rows t);
+  begin match Block.Table.caption t with
+  | None -> ()
+  | Some (caption, _) ->
+      newline c; indent c; C.string c "^ ";
+      C.inline c (Block.Table.caption_inline caption)
+  end;
   pop_indent c
 
 let footnote c fn =
@@ -572,6 +641,8 @@ let block c = function
 | Block.Paragraph (p, _) -> paragraph c p; true
 | Block.Thematic_break (t, _) -> thematic_break c t; true
 | Block.Ext_math_block (cb, _) -> code_block c cb; true
+| Block.Ext_raw_block (r, _) -> code_block c (Block.Raw_block.code_block r); true
+| Block.Ext_definition_list (d, _) -> definition_list c d; true
 | Block.Ext_table (t, _) -> table c t; true
 | Block.Ext_footnote_definition (t, _) -> footnote c t; true
 | Block.Ext_div (d, _) -> div c d; true

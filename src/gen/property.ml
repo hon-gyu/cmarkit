@@ -238,13 +238,15 @@ let normalize_idempotent =
     CommonMark. *)
 let roundtrip_with ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis
     ?marked_emphasis_delims ?strong_emphasis_width ?extra_inline_containers
-    ?block_id ?djot_inline_attributes ?djot_block_attributes () =
+    ?block_id ?inline_attributes ?block_attributes ?colon_symbols
+    ?smart_punctuation () =
   let check =
    fun b ->
     let b' =
       reparse ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis
         ?marked_emphasis_delims ?strong_emphasis_width ?extra_inline_containers
-        ?block_id ?djot_inline_attributes ?djot_block_attributes b
+        ?block_id ?inline_attributes ?block_attributes ?colon_symbols
+        ?smart_punctuation b
     in
     if block_equal b b' then Pass
     else

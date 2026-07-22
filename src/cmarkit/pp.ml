@@ -76,6 +76,8 @@ let rec pp_block_with ?(ext = pp_ext_default) ?ext_inline () ppf = function
       match List'.type' l with
       | `Unordered c -> Printf.sprintf "unordered %C" c
       | `Ordered (n, c) -> Printf.sprintf "ordered %d%C" n c
+      | `Ext_ordered (style, delim, n) ->
+          Printf.sprintf "ordered %S" (List'.ordered_marker style delim n)
     in
     let tight = if List'.tight l then "tight" else "loose" in
     Format.fprintf ppf "@[<v 2>List { %s; %s }@,%a@]" type_str tight
@@ -96,6 +98,19 @@ let rec pp_block_with ?(ext = pp_ext_default) ?ext_inline () ppf = function
 | Ext_math_block (cb, _) ->
     Format.fprintf ppf "Ext_math_block { lines=%d }"
       (List.length (Code_block.code cb))
+| Ext_definition_list (d, _) ->
+    let tight = if Definition_list.tight d then "tight" else "loose" in
+    Format.fprintf ppf "@[<v 2>Ext_definition_list { %s }@,%a@]" tight
+      (Format.pp_print_list ~pp_sep:Format.pp_print_cut (fun ppf (i, _) ->
+           Format.fprintf ppf "@[<v 2>: %a@,%a@]"
+             (pp_inline_preview ?ext_inline) (Definition_list.item_term i)
+             (pp_block_with ~ext ?ext_inline ())
+             (Definition_list.item_definition i)))
+      (Definition_list.items d)
+| Ext_raw_block (r, _) ->
+    Format.fprintf ppf "Ext_raw_block { format=%S; lines=%d }"
+      (Block.Raw_block.format r)
+      (List.length (Code_block.code (Block.Raw_block.code_block r)))
 | Ext_table (t, _) ->
     Format.fprintf ppf "Ext_table { cols=%d; rows=%d }" (Table.col_count t)
       (List.length (Table.rows t))

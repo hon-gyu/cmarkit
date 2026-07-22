@@ -5,6 +5,7 @@ open Parser_common_
 
 (*---------------------------------------------------------------------------
    Copyright (c) 2021 The cmarkit programmers. All rights reserved.
+   Copyright (c) 2026 The oymarkit programmers. All rights reserved.
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
@@ -50,6 +51,13 @@ type math_span_marks =
     may_open : bool;
     may_close : bool; }
 
+type quoted_marks =
+  { start : byte_pos; (* the quote, or the '{' of an opener marker *)
+    char : char;
+    curly : bool; (* written with an explicit '{' / '}' marker *)
+    may_open : bool;
+    may_close : bool }
+
 type attribute_spec =
   { start : byte_pos;
     attribute : Attribute.t;
@@ -65,6 +73,7 @@ type token =
       escaped : bool }
 | Emphasis_marks of emphasis_marks
 | Extra_inline_container_marks of extra_inline_container_marks
+| Quoted_marks of quoted_marks
 | Inline of
     { start : byte_pos;
       inline : Inline.t;
@@ -98,6 +107,7 @@ type token =
 let token_start = function
 | Attribute_spec { start } | Autolink_or_html_start { start } | Backticks { start }
 | Emphasis_marks { start } | Extra_inline_container_marks { start }
+| Quoted_marks { start }
 | Inline { start } -> start |  Link_start { start }
 | Newline { start } | Right_brack { start } -> start
 | Right_paren { start } -> start
@@ -132,6 +142,12 @@ let has_extra_inline_container_closer ~char ~curly ~after cidx =
   Closer_index.closer_exists
     (Closer.Extra_inline_container_marks (char, curly)) ~after cidx
 
+let quoted_closer_pos ~char ~curly ~after cidx =
+  Closer_index.closer_pos (Closer.Quoted_marks (char, curly)) ~after cidx
+
+let has_quoted_closer ~char ~curly ~after cidx =
+  Closer_index.closer_exists (Closer.Quoted_marks (char, curly)) ~after cidx
+
 let has_strikethrough_closer ~after cidx =
   Closer_index.closer_exists Closer.Strikethrough_marks ~after cidx
 
@@ -158,6 +174,9 @@ let rev_token_list_and_make_closer_index toks =
         Closer_index.add
           (Closer.Extra_inline_container_marks (char, curly)) start cidx
       in
+      loop cidx (t :: acc) toks
+  | Quoted_marks { start; char; curly; may_close = true; _ } as t :: toks ->
+      let cidx = Closer_index.add (Closer.Quoted_marks (char, curly)) start cidx in
       loop cidx (t :: acc) toks
   | Strikethrough_marks { start; may_close = true } as t :: toks ->
       let cidx = Closer_index.add Closer.Strikethrough_marks start cidx in
@@ -198,15 +217,56 @@ let rec next_line = function
 
 (* Tokenization *)
 
-let newline_token s prev_line newline =
+let newline_token ~hard_break_trailing_blanks ~two_space_hard_break s prev_line
+    newline =
   (* https://spec.commonmark.org/current/#softbreak *)
   (* https://spec.commonmark.org/current/#hard-line-breaks *)
   let start (* includes spaces or '\\' on prev line *), break_type =
     let first = prev_line.first and last = prev_line.last in
     let non_space = Match.rev_drop_spaces s ~first ~start:last in
-    if non_space = last && s.[non_space] = '\\' then (non_space, `Hard) else
+    (* In djot the backslash of a hard break may be followed by trailing blanks,
+       tabs included; [rev_drop_spaces] only drops spaces. *)
+    let non_blank =
+      if not hard_break_trailing_blanks then non_space else
+      let rec loop k =
+        if k < first then first - 1 else
+        if Ascii.is_blank s.[k] then loop (k - 1) else k
+      in
+      loop last
+    in
+    let rec backslash_run_start k =
+      if k > first && s.[k - 1] = '\\' then backslash_run_start (k - 1) else k
+    in
+    let blank_tolerant_hard_break =
+      if not hard_break_trailing_blanks || non_blank < first
+         || s.[non_blank] <> '\\'
+      then false
+      else
+        let run_start = backslash_run_start non_blank in
+        (non_blank - run_start + 1) mod 2 = 1
+    in
+    if blank_tolerant_hard_break then begin
+      (* The blanks on either side of the backslash are layout: the text ends at
+         the last non-blank before it. *)
+      let rec back k =
+        if k < first then first else
+        if Ascii.is_blank s.[k] then back (k - 1) else k + 1
+      in
+      (back (non_blank - 1), `Hard)
+    end else
+    if (not hard_break_trailing_blanks) && non_space = last
+       && s.[non_space] = '\\'
+    then (non_space, `Hard) else
+    (* In djot's escape rule, a trailing backslash is the only hard break: two
+       trailing spaces are neither a break nor layout, they are text, and they
+       survive into the rendered output. CommonMark instead drops them, and reads
+       two of them as a hard break. *)
     let start = non_space + 1 in
-    (start, if last - start + 1 >= 2 then `Hard else `Soft)
+    let two_space_break = last - start + 1 >= 2 in
+    if two_space_hard_break && two_space_break then (start, `Hard) else
+    if hard_break_trailing_blanks || not two_space_hard_break
+    then (last + 1, `Soft) else
+    (start, `Soft)
   in
   Newline { start; break_type; newline }
 
@@ -243,6 +303,16 @@ let try_add_wikilink_token oymarkit_mod acc s line ~embed ~start =
   | None -> None
   | Some close -> Some (Wikilink_start { start; embed } :: acc, close + 2)
 
+(* Djot's notion of a space, for the delimiter tests, is ASCII only ([ ], [\t],
+   [\r], [\n] — its [pattNonspace]). A non-breaking space is therefore *not* a
+   space and does not block a delimiter: [ *<U+00A0>a<U+00A0>* ] is strong. This
+   is the class the flanking tests are fed; the punctuation class stays
+   Unicode. *)
+let is_delim_white ~djot u =
+  if not djot then Cmarkit_data.is_unicode_whitespace u else
+  Uchar.is_char u &&
+  match Uchar.to_char u with ' ' | '\t' | '\r' | '\n' -> true | _ -> false
+
 let try_add_emphasis_token
     ?oymarkit_mod ?(open_marker = false) ?(close_marker = false) acc s line
     ~start
@@ -255,8 +325,12 @@ let try_add_emphasis_token
   let marker_last = if close_marker then run_last + 1 else run_last in
   let prev_uchar = Match.prev_uchar s ~first ~before:start in
   let next_uchar = Match.next_uchar s ~last ~after:marker_last in
-  let prev_white = Cmarkit_data.is_unicode_whitespace prev_uchar in
-  let next_white = Cmarkit_data.is_unicode_whitespace next_uchar in
+  let djot_white = match oymarkit_mod with
+  | Some m when is_oymarkit_enabled () -> Oymarkit_mod.simple_emphasis_flanking m
+  | _ -> false
+  in
+  let prev_white = is_delim_white ~djot:djot_white prev_uchar in
+  let next_white = is_delim_white ~djot:djot_white next_uchar in
   let prev_punct = Cmarkit_data.is_unicode_punctuation prev_uchar in
   let next_punct = Cmarkit_data.is_unicode_punctuation next_uchar in
   let is_left_flanking =
@@ -330,12 +404,12 @@ let try_add_marked_emphasis_closer_token oymarkit_mod acc s line ~start =
   else try_add_emphasis_token ~oymarkit_mod ~close_marker:true acc s line ~start
 
 let extra_inline_container_kind_of_char = function
-| '=' -> Some Inline.Extra_inline_container.Highlight
-| '^' -> Some Inline.Extra_inline_container.Superscript
-| '~' -> Some Inline.Extra_inline_container.Subscript
-| '+' -> Some Inline.Extra_inline_container.Inserted
-| '-' -> Some Inline.Extra_inline_container.Deleted
-| _ -> None
+  | '=' -> Some Inline.Extra_inline_container.Highlight
+  | '^' -> Some Inline.Extra_inline_container.Superscript
+  | '~' -> Some Inline.Extra_inline_container.Subscript
+  | '+' -> Some Inline.Extra_inline_container.Inserted
+  | '-' -> Some Inline.Extra_inline_container.Deleted
+  | _ -> None
 
 let extra_inline_container_syntax oymarkit_mod kind =
   Oymarkit_mod.extra_inline_container_syntax oymarkit_mod kind
@@ -350,11 +424,18 @@ let try_add_extra_inline_container_opener_token oymarkit_mod acc s line ~start =
         let open Inline.Extra_inline_container.Config in
         begin match extra_inline_container_syntax oymarkit_mod kind with
         | Disabled -> None
-        | Curly_required | Curly_optional ->
+        | Curly_required
+        | Curly_optional ->
             Some
               ( Extra_inline_container_marks
-                  { start; char = s.[next]; kind; curly = true;
-                    may_open = true; may_close = false }
+                  {
+                    start;
+                    char = s.[next];
+                    kind;
+                    curly = true;
+                    may_open = true;
+                    may_close = false;
+                  }
                 :: acc,
                 next + 1 )
         end
@@ -369,11 +450,18 @@ let try_add_extra_inline_container_closer_token oymarkit_mod acc s line ~start =
         let open Inline.Extra_inline_container.Config in
         begin match extra_inline_container_syntax oymarkit_mod kind with
         | Disabled -> None
-        | Curly_required | Curly_optional ->
+        | Curly_required
+        | Curly_optional ->
             Some
               ( Extra_inline_container_marks
-                  { start; char = s.[start]; kind; curly = true;
-                    may_open = false; may_close = true }
+                  {
+                    start;
+                    char = s.[start];
+                    kind;
+                    curly = true;
+                    may_open = false;
+                    may_close = true;
+                  }
                 :: acc,
                 marker + 1 )
         end
@@ -384,24 +472,29 @@ let try_add_extra_inline_container_marks_token oymarkit_mod acc s line ~start =
   | Some kind ->
       let open Inline.Extra_inline_container.Config in
       begin match extra_inline_container_syntax oymarkit_mod kind with
-      | Disabled | Curly_required -> None
+      | Disabled
+      | Curly_required ->
+          None
       | Curly_optional ->
           let first = line.first and last = line.last in
           let prev_uchar = Match.prev_uchar s ~first ~before:start in
           let next_uchar = Match.next_uchar s ~last ~after:start in
-          let may_close =
-            not (Cmarkit_data.is_unicode_whitespace prev_uchar)
-          in
-          let may_open =
-            not (Cmarkit_data.is_unicode_whitespace next_uchar)
-          in
-          if not may_open && not may_close then None else
-          Some
-            ( Extra_inline_container_marks
-                { start; char = s.[start]; kind; curly = false; may_open;
-                  may_close }
-              :: acc,
-              start + 1 )
+          let may_close = not (Cmarkit_data.is_unicode_whitespace prev_uchar) in
+          let may_open = not (Cmarkit_data.is_unicode_whitespace next_uchar) in
+          if (not may_open) && not may_close then None
+          else
+            Some
+              ( Extra_inline_container_marks
+                  {
+                    start;
+                    char = s.[start];
+                    kind;
+                    curly = false;
+                    may_open;
+                    may_close;
+                  }
+                :: acc,
+                start + 1 )
       end
 
 [@@@ocamlformat "disable"]
@@ -447,7 +540,13 @@ let scan_attribute_spec s line lines ~start =
           loop next_line lines next_line.first in_quote false in_comment
     else
       let c = s.[k] in
-      if in_comment then begin
+      if in_comment && c = '}' then
+        begin match Attribute.of_string (Buffer.contents b) with
+        | None -> None
+        | Some attribute ->
+            Some ({ start; attribute; endline = line; next = k + 1 }, lines)
+        end
+      else if in_comment then begin
         Buffer.add_char b c;
         loop line lines (k + 1) in_quote false (c <> '%')
       end else if escaped then begin
@@ -684,15 +783,218 @@ let try_add_jsx_element_token oymarkit_mod acc s line ~start =
                 tag_end + 1)
       | _ -> None
 
-let tokenize ?oymarkit_mod ~exts s lines =
+(* Smart punctuation. Dashes, ellipses and symbols resolve outright into
+   [Inline] tokens: a run's reading is a function of its own length, so nothing
+   needs matching up in a later pass.
+
+   Quotes do not. A quote is a delimiter, and its direction is a consequence of
+   whether it pairs with another quote, which is not knowable from its
+   neighbours: in [ 'tis the season to be 'jolly' ] the first quote and the one
+   before [jolly] have the same neighbourhood, yet one is an apostrophe and the
+   other an opener — the difference is only that [jolly]'s finds a closer. So a
+   quote is tokenized as [Quoted_marks] and left to the pass that resolves
+   emphasis, which is where djot resolves it too.
+
+   What survives that pass unmatched is where a quote's fallback direction is
+   decided, in [quoted_fallback_token] below. *)
+
+(* Djot's [\ ], a non-breaking space. It is claimed here, as a node, rather than
+   left to text cleaning to turn into a U+00A0: a literal U+00A0 in the source is
+   ordinary text, and once both are the same byte in a [Text] a render back to
+   djot cannot tell which was written. Djot keeps them apart the same way. *)
+let rec blank_to_eol s line ~start =
+  if start > line.last then true
+  else match s.[start] with
+  | ' ' | '\t' -> blank_to_eol s line ~start:(start + 1)
+  | _ -> false
+
+let ext_nbsp_token p ~first ~last ~line =
+  let textloc = textloc_of_span p { line with first; last } in
+  let inline = Inline.Ext_nbsp (Inline.Nbsp.make (), meta p textloc) in
+  Inline { start = first; inline; endline = line; next = last + 1 }
+
+let smart_punct_token p ~kind ~marker ~first ~last ~line =
+  let textloc = textloc_of_span p { line with first; last } in
+  let sp = Inline.Smart_punct.make ~marker kind in
+  let inline = Inline.Ext_smart_punct (sp, meta p textloc) in
+  Inline { start = first; inline; endline = line; next = last + 1 }
+
+(* A quote may open when a non-whitespace follows it, and, for a ['], only where
+   an opening quote can plausibly start: at the start of the line or after one of
+   a small set of characters. This is djot's [canOpen]. It is what keeps the
+   quote of [Jane's] off the opener stack, and what makes the quote after a [)]
+   or a []] an apostrophe. A quote may close when a non-whitespace precedes it.
+
+   An explicit [{'] or ['}] marker forces the role, as in djot. Marked and
+   unmarked quotes do not pair with each other: they are two delimiter stacks
+   (the [curly] field), exactly as for the extra inline containers. *)
+let quote_may_open s line ~char ~qpos =
+  let next_uchar = Match.next_uchar s ~last:line.last ~after:qpos in
+  if is_delim_white ~djot:true next_uchar then false else
+  if char = '"' then true else
+  if qpos = line.first then true else
+  match s.[qpos - 1] with
+  | ' ' | '\t' | '\r' | '\n' | '"' | '\'' | '-' | '(' | '[' -> true
+  | _ -> false
+
+let quote_may_close s line ~qpos =
+  let prev_uchar = Match.prev_uchar s ~first:line.first ~before:qpos in
+  not (is_delim_white ~djot:true prev_uchar)
+
+(* The character an unmatched quote falls back to: a single quote is an
+   apostrophe and a double quote a left double quote, unless a marker forced the
+   other role. This is djot's [defaultmatch], markers included. *)
+let quote_fallback_kind ~char ~open_marker ~close_marker =
+  let open Inline.Smart_punct in
+  match char with
+  | '"' -> if close_marker then Right_double_quote else Left_double_quote
+  | _ -> if open_marker then Left_single_quote else Right_single_quote
+
+(* [start] is the quote, or the '{' of an opener marker. *)
+let try_add_smart_quote_token p oymarkit_mod acc s line ~start =
+  if not (Oymarkit_mod.smart_punctuation oymarkit_mod) then None else
+  let open_marker = s.[start] = '{' in
+  let qpos = if open_marker then start + 1 else start in
+  if qpos > line.last then None else
+  match s.[qpos] with
+  | '"' | '\'' as char ->
+      let close_marker =
+        (not open_marker) && qpos < line.last && s.[qpos + 1] = '}'
+      in
+      let curly = open_marker || close_marker in
+      let may_open, may_close = match open_marker, close_marker with
+      | true, _ -> true, false
+      | _, true -> false, true
+      | _ ->
+          quote_may_open s line ~char ~qpos, quote_may_close s line ~qpos
+      in
+      (* The span runs [start]..[last]. An opener marker widens it to the left
+         (the '{' is [start]), a closer marker to the right (the '}'). *)
+      let last = if close_marker then qpos + 1 else qpos in
+      if may_open || may_close
+      then
+        let t = Quoted_marks { start; char; curly; may_open; may_close } in
+        Some (t :: acc, last + 1)
+      else
+        (* A quote that can neither open nor close, one surrounded by spaces,
+           never reaches the matching pass; it is its fallback character
+           already. *)
+        let kind = quote_fallback_kind ~char ~open_marker ~close_marker in
+        let t =
+          smart_punct_token p ~kind ~marker:curly ~first:start ~last ~line
+        in
+        Some (t :: acc, last + 1)
+  | _ -> None
+
+(* A run of hyphens becomes em- and en-dashes; a run of periods becomes one
+   ellipsis per three. Whatever is left over stays text.
+
+   The hyphen is also the delimiter of the deleted inline container ([{-x-}], or
+   bare [-x-] when curly braces are optional), so the two features have to be
+   told apart. The rule: a run of two or more hyphens is punctuation, a lone
+   hyphen is a container delimiter. Nothing is lost — a bare container delimits
+   with a single hyphen, and a lone hyphen is not punctuation anyway — and it
+   leaves one hole to plug: the closing [-}] of a curly container, whose hyphen
+   would otherwise be swallowed by a preceding run, as in [ {-a--} ]. So a
+   hyphen that closes a curly container is held back from the run. *)
+let try_add_smart_dashes_token p oymarkit_mod acc s line ~start =
+  if not (Oymarkit_mod.smart_punctuation oymarkit_mod) then None else
+  if s.[start] <> '-' then None else
+  let run_last = Match.run_of ~char:'-' ~last:line.last s ~start:(start + 1) in
+  let run_last =
+    let deleted_enabled =
+      let open Inline.Extra_inline_container.Config in
+      Oymarkit_mod.extra_inline_container_syntax oymarkit_mod
+        Inline.Extra_inline_container.Deleted <> Disabled
+    in
+    if deleted_enabled && run_last < line.last && s.[run_last + 1] = '}'
+    then run_last - 1 else run_last
+  in
+  let n = run_last - start + 1 in
+  let em, en = Inline.Smart_punct.divide_hyphens n in
+  if em = 0 && en = 0 then None else
+  let rec add acc k count kind width =
+    if count = 0 then acc, k else
+    let last = k + width - 1 in
+    let t = smart_punct_token p ~kind ~marker:false ~first:k ~last ~line in
+    add (t :: acc) (last + 1) (count - 1) kind width
+  in
+  let acc, k = add acc start em Inline.Smart_punct.Em_dash 3 in
+  let acc, _ = add acc k en Inline.Smart_punct.En_dash 2 in
+  Some (acc, run_last + 1)
+
+let try_add_smart_ellipsis_token p oymarkit_mod acc s line ~start =
+  if not (Oymarkit_mod.smart_punctuation oymarkit_mod) then None else
+  let run_last = Match.run_of ~char:'.' ~last:line.last s ~start:(start + 1) in
+  let n = run_last - start + 1 in
+  if n < 3 then None else
+  let rec add acc k count =
+    if count = 0 then acc, k else
+    let last = k + 2 in
+    let t =
+      smart_punct_token p ~kind:Inline.Smart_punct.Ellipsis ~marker:false
+        ~first:k ~last ~line
+    in
+    add (t :: acc) (last + 1) (count - 1)
+  in
+  let acc, next = add acc start (n / 3) in
+  (* Leftover periods (one or two) are not part of any ellipsis: leave them to
+     be picked up as text. *)
+  Some (acc, next)
+
+(* Djot symbols [ :name: ]. A symbol is opaque, single line and has no inline
+   children, so unlike the delimiter-based extensions there is nothing to match
+   up in a later pass: the tokenizer resolves it outright into an [Inline]
+   token, which every downstream pass already carries through untouched. *)
+
+let is_symbol_char c =
+  (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+  || c = '_' || c = '+' || c = '-'
+
+let try_add_symbol_token p oymarkit_mod acc s line ~start =
+  if not (Oymarkit_mod.colon_symbols oymarkit_mod) then None else
+  (* [start] is the opening ':'. The name must be non-empty, so [::] is not a
+     symbol. An unterminated run is not one either: it stays text. *)
+  let rec scan k =
+    if k > line.last then None else
+    if is_symbol_char s.[k] then scan (k + 1) else
+    if s.[k] = ':' && k > start + 1 then Some k else None
+  in
+  match scan (start + 1) with
+  | None -> None
+  | Some last ->
+      let name = String.sub s (start + 1) (last - start - 1) in
+      let textloc = textloc_of_span p { line with first = start; last } in
+      let sym = Inline.Symbol.make name in
+      let inline = Inline.Ext_symbol (sym, meta p textloc) in
+      let t = Inline { start; inline; endline = line; next = last + 1 } in
+      Some (t :: acc, last + 1)
+
+let tokenize ~p ?oymarkit_mod ~exts s lines =
   (* For inlines this is where we conditionalize for extensions. All code
       paths after that no longer check for p.exts: there just won't be
       extension data to process if [exts] was not [true] here. *)
+  let backslash_space_nbsp = match oymarkit_mod with
+  | Some m when is_oymarkit_enabled () -> Oymarkit_mod.backslash_space_nbsp m
+  | _ -> false
+  in
+  let two_space_hard_break = match oymarkit_mod with
+  | Some m when is_oymarkit_enabled () -> Oymarkit_mod.two_space_hard_break m
+  | _ -> true
+  in
+  let hard_break_trailing_blanks = match oymarkit_mod with
+  | Some m when is_oymarkit_enabled () ->
+      Oymarkit_mod.hard_break_trailing_blanks m
+  | _ -> false
+  in
   let rec loop ~exts s lines line ~prev_bslash acc k =
     if k > line.last then match lines with
     | [] -> rev_token_list_and_make_closer_index acc
     | newline :: lines ->
-        let t = newline_token s line newline in
+        let t =
+          newline_token ~hard_break_trailing_blanks ~two_space_hard_break s line
+            newline
+        in
         loop ~exts s lines newline ~prev_bslash:false (t :: acc) newline.first
     else
     if s.[k] = '\\'
@@ -700,6 +1002,14 @@ let tokenize ?oymarkit_mod ~exts s lines =
     let jumped = ref None in
     let acc, next = match s.[k] with
     | '`' -> add_backtick_token acc s line ~prev_bslash ~start:k
+    | ' ' when prev_bslash && backslash_space_nbsp && not (blank_to_eol s line ~start:k)
+      ->
+        (* Only a backslash-space with something after it on the line is a
+           non-breaking space: a backslash followed by blanks to the end of the
+           line is the hard break, and [newline_token] claims it. Djot tests the
+           line end first for the same reason. *)
+        let t = ext_nbsp_token p ~first:(k - 1) ~last:k ~line in
+        t :: acc, k + 1
     | c when prev_bslash ->
         (* For backticks we need to treat backslash specially. Because
             if we are in a code span backslashes are always treated literally.
@@ -720,7 +1030,7 @@ let tokenize ?oymarkit_mod ~exts s lines =
             | Some r -> r
             | None ->
                 begin match
-                  if Oymarkit_mod.djot_inline_attributes oymarkit_mod
+                  if Oymarkit_mod.inline_attributes oymarkit_mod
                   then scan_attribute_spec s line lines ~start:k
                   else None
                 with
@@ -728,8 +1038,15 @@ let tokenize ?oymarkit_mod ~exts s lines =
                     jumped := Some (remaining, spec.endline);
                     Attribute_spec spec :: acc, spec.next
                 | None ->
-                    try_add_marked_emphasis_opener_token oymarkit_mod acc s line
-                      ~start:k
+                    begin match
+                      try_add_smart_quote_token p oymarkit_mod acc s line
+                        ~start:k
+                    with
+                    | Some r -> r
+                    | None ->
+                        try_add_marked_emphasis_opener_token oymarkit_mod acc s
+                          line ~start:k
+                    end
                 end
             end
             end
@@ -741,6 +1058,29 @@ let tokenize ?oymarkit_mod ~exts s lines =
             try_add_marked_emphasis_closer_token oymarkit_mod acc s line
               ~start:k
         | _ -> try_add_emphasis_token acc s line ~start:k
+        end
+    | ':' ->
+        begin match oymarkit_mod with
+        | Some oymarkit_mod when is_oymarkit_enabled () ->
+            begin match try_add_symbol_token p oymarkit_mod acc s line ~start:k
+            with
+            | Some r -> r
+            | None -> acc, k + 1
+            end
+        | _ -> acc, k + 1
+        end
+    | '"' | '\'' | '.' as c ->
+        begin match oymarkit_mod with
+        | Some oymarkit_mod when is_oymarkit_enabled () ->
+            let try_add =
+              if c = '.' then try_add_smart_ellipsis_token
+              else try_add_smart_quote_token
+            in
+            begin match try_add p oymarkit_mod acc s line ~start:k with
+            | Some r -> r
+            | None -> acc, k + 1
+            end
+        | _ -> acc, k + 1
         end
     | ']' -> Right_brack { start = k } :: acc, k + 1
     | '[' ->
@@ -785,12 +1125,20 @@ let tokenize ?oymarkit_mod ~exts s lines =
             with
             | Some r -> r
             | None ->
+                (* A hyphen run of two or more is punctuation; a lone hyphen
+                   stays a container delimiter. *)
+                begin match
+                  try_add_smart_dashes_token p oymarkit_mod acc s line ~start:k
+                with
+                | Some r -> r
+                | None ->
                 begin match
                   try_add_extra_inline_container_marks_token oymarkit_mod acc s
                     line ~start:k
                 with
                 | Some r -> r
                 | None -> acc, k + 1
+                end
                 end
             end
         | _ -> acc, k + 1
@@ -822,7 +1170,15 @@ let tokenize ?oymarkit_mod ~exts s lines =
             if exts then try_add_strikethrough_marks_token acc s line ~start:k
             else acc, k + 1
         end
-    | '$' when exts -> try_add_math_span_marks_token acc s line ~start:k
+    | '$' when exts ->
+        (* A djot math span is a dollar prefix followed by a verbatim span.
+           Do not let the pandoc dollar-delimiter pass claim that prefix first;
+           [try_promote_backtick_math] will promote the backtick token instead. *)
+        begin match oymarkit_mod with
+        | Some m when Oymarkit_mod.backtick_math m && k < line.last
+                      && s.[k + 1] = '`' -> acc, k + 1
+        | _ -> try_add_math_span_marks_token acc s line ~start:k
+        end
     | _ -> acc, k + 1
     in
     match !jumped with
@@ -847,9 +1203,16 @@ let break_inline p line ~start ~break_type:type' ~newline =
   let layout_after = layout_clean_raw_span p layout_after in
   Inline.Break ({ layout_before; type'; layout_after }, m)
 
-let try_add_text_inline p line ~first ~last acc =
+(* [line_start] says the span begins a physical source line, which is the only
+   place leading blanks are layout (a paragraph's continuation indent) rather
+   than text. A container's content span is synthesized as
+   [{ start_line with first = <after the delimiter> }], so its [first] equals
+   [line.first] without being a line start at all; stripping there ate the space
+   of [ [ a](u) ] and of [ {_ a_} ]. Mirror of the trailing-blank fix in
+   [last_pass]. *)
+let try_add_text_inline p line ~line_start ~first ~last acc =
   if first > last then acc else
-  let first = match first = line.first with
+  let first = match line_start && first = line.first with
   | true -> first_non_blank_in_span p line (* strip leading blanks *)
   | false -> first
   in
@@ -865,7 +1228,10 @@ let code_span_token p ~count ~first ~last ~first_line ~last_line rev_spans =
   let textloc = textloc_of_lines p ~first ~last ~first_line ~last_line in
   let code_layout = raw_tight_block_lines p ~rev_spans in
   let meta = meta p textloc in
-  let cs = Inline.Code_span ({ backtick_count = count; code_layout }, meta) in
+  let djot = Oymarkit_mod.verbatim_style p.oymarkit_mod = `Verbatim_span in
+  let cs =
+    Inline.Code_span ({ backtick_count = count; code_layout; djot }, meta)
+  in
   Inline { start = first; inline = cs; endline = last_line; next = last + 1 }
 
 let autolink_token p line ~first ~last ~is_email =
@@ -914,6 +1280,27 @@ let ext_extra_inline_container_token p ~kind ~first ~last ~first_line ~last_line
   let inline = Inline.Ext_extra_inline_container (c, meta p textloc) in
   Inline { start = first; inline; endline = last_line; next = last + 1 }
 
+let ext_quoted_token
+    p ~kind ~open_marker ~close_marker ~first ~last ~first_line ~last_line i
+  =
+  let textloc = textloc_of_lines p ~first ~last ~first_line ~last_line in
+  let q = Inline.Quoted.make ~open_marker ~close_marker kind i in
+  let inline = Inline.Ext_quoted (q, meta p textloc) in
+  Inline { start = first; inline; endline = last_line; next = last + 1 }
+
+(* A quote the matching pass leaves unmatched is not a container: it becomes the
+   single character it falls back to, which is where [ 'tis ] gets its
+   apostrophe. *)
+let quoted_fallback_token p (marks : quoted_marks) line =
+  let open_marker = marks.curly && marks.may_open in
+  let close_marker = marks.curly && marks.may_close in
+  let kind = quote_fallback_kind ~char:marks.char ~open_marker ~close_marker in
+  let first = marks.start in
+  (* A marked quote spans two characters either way: '{' and the quote, or the
+     quote and '}'. *)
+  let last = if marks.curly then first + 1 else first in
+  smart_punct_token p ~kind ~marker:marks.curly ~first ~last ~line
+
 let ext_math_span_token p ~count ~first ~last ~first_line ~last_line rspans =
   let textloc = textloc_of_lines p ~first ~last ~first_line ~last_line in
   let tex_layout = raw_tight_block_lines p ~rev_spans:rspans in
@@ -945,13 +1332,27 @@ let ext_jsx_element_token p ~first ~last ~line e =
 
 (* Parsers *)
 
-let try_code p toks start_line ~start:cstart ~count ~escaped =
+let try_code_span p toks start_line ~start:cstart ~count ~escaped =
   (* https://spec.commonmark.org/current/#code-span *)
   let count = if escaped then count - 1 else count in
   if count <= 0 then None else
   let cstart = if escaped then cstart + 1 else cstart in
-  if not (has_backticks ~count ~after:cstart p.cidx) then None else
+  (* In djot an opening backtick run always opens a verbatim span: with no
+     closing run the span simply runs to the end of the block. CommonMark instead
+     leaves an unmatched run as literal text, so it can rule the span out up
+     front. *)
+  let djot = Oymarkit_mod.verbatim_style p.oymarkit_mod = `Verbatim_span in
+  if not djot && not (has_backticks ~count ~after:cstart p.cidx) then None else
   let rec match_backticks toks line ~count spans k = match toks with
+  | [] when djot ->
+      (* End of the block with no closing run: the span ends here. *)
+      let spans = (line.first, { line with first = k }) :: spans in
+      let first = cstart and last = line.last in
+      let t =
+        code_span_token p ~count ~first ~last ~first_line:start_line
+          ~last_line:line spans
+      in
+      Some ([], line, t)
   | [] -> None
   | Backticks { start; count = c; _ } :: toks ->
       if c <> count then match_backticks toks line ~count spans k else
@@ -971,6 +1372,94 @@ let try_code p toks start_line ~start:cstart ~count ~escaped =
   in
   let first = cstart + count in
   match_backticks toks { start_line with first } ~count [] first
+
+(* Djot raw inline: a verbatim span immediately followed by a [ {=format} ]
+   specifier, e.g. [ `<a>`{=html} ]. The specifier is not attribute syntax —
+   [Attribute.of_string] rejects a spec starting with '=' — and it is only one
+   here if it is adjacent to a verbatim span and its braces hold nothing but the
+   format. Anything else stays what it was: text, or an attribute specifier.
+
+   This runs on the code-span token rather than in the tokenizer because the
+   verbatim span only exists once backticks have been matched up. *)
+
+let is_raw_format_char = function
+| 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' | '+' | '-' -> true
+| _ -> false
+
+let try_promote_raw_inline p toks t = match t with
+| Inline { start; inline = Inline.Code_span (cs, cs_meta); endline; next }
+  when Oymarkit_mod.format_raw_content p.oymarkit_mod ->
+    let last = endline.last in
+    if next + 2 > last || p.i.[next] <> '{' || p.i.[next + 1] <> '=' then None
+    else
+    let fst_format = next + 2 in
+    let rec scan k =
+      if k > last then None else
+      if is_raw_format_char p.i.[k] then scan (k + 1) else
+      if p.i.[k] = '}' && k > fst_format then Some k else None
+    in
+    begin match scan fst_format with
+    | None -> None
+    | Some close ->
+        let format = String.sub p.i fst_format (close - fst_format) in
+        let meta =
+          if p.nolocs then Meta.none else
+          let last_byte = close and last_line = endline.line_pos in
+          meta p (Textloc.set_last (Meta.textloc cs_meta) ~last_byte ~last_line)
+        in
+        let raw = Inline.Raw_inline.make ~format cs in
+        let inline = Inline.Ext_raw_inline (raw, meta) in
+        let next = close + 1 in
+        let toks = drop_until ~start:next toks in
+        Some (toks, Inline { start; inline; endline; next })
+    end
+| _ -> None
+
+(* Djot math: a verbatim span prefixed with [$] (inline) or [$$] (display), e.g.
+   [ $`e=mc^2` ]. Same shape as raw inline but on the other side of the span, so
+   it is promoted from the code-span token too. The pandoc [$...$] spelling is a
+   separate construct behind the math extension; the two coexist.
+
+   A backslash-escaped [ \$ ] is not a math prefix: the escape is what the
+   author writes to get a literal dollar before a verbatim span. *)
+let try_promote_backtick_math p line t = match t with
+| Inline { start; inline = Inline.Code_span (cs, cs_meta); endline; next }
+  when Oymarkit_mod.backtick_math p.oymarkit_mod ->
+    let first = line.first in
+    let is_dollar k = k >= first && p.i.[k] = '$' in
+    let escaped k =
+      let rec count n j =
+        if j >= first && p.i.[j] = '\\' then count (n + 1) (j - 1) else n
+      in
+      count 0 (k - 1) mod 2 <> 0
+    in
+    if not (is_dollar (start - 1)) then None else
+    if escaped (start - 1) then None else
+    let display = is_dollar (start - 2) && not (escaped (start - 2)) in
+    let dollar_first = if display then start - 2 else start - 1 in
+    let meta =
+      if p.nolocs then Meta.none else
+      let textloc = Meta.textloc cs_meta in
+      let first_byte = dollar_first and first_line = line.line_pos in
+      meta p (Textloc.set_first textloc ~first_byte ~first_line)
+    in
+    let ms =
+      Inline.Math_span.make ~display (Inline.Code_span.code_layout cs)
+    in
+    let inline = Inline.Ext_math_span (ms, meta) in
+    Some (Inline { start = dollar_first; inline; endline; next })
+| _ -> None
+
+let try_code p toks start_line ~start ~count ~escaped =
+  match try_code_span p toks start_line ~start ~count ~escaped with
+  | None -> None
+  | Some (toks, line, t) ->
+      match try_promote_raw_inline p toks t with
+      | Some (toks, t) -> Some (toks, line, t)
+      | None ->
+          match try_promote_backtick_math p start_line t with
+          | Some t -> Some (toks, line, t)
+          | None -> Some (toks, line, t)
 
 let try_math_span p toks start_line ~start:cstart ~count =
   if not (has_math_span_closer ~count ~after:cstart p.cidx) then None else
@@ -1010,6 +1499,9 @@ let try_autolink_or_html p toks line ~start =
       let toks = drop_until ~start:(last + 1) toks in
       Some (toks, line, t)
   | None ->
+  (* Autolinks exist in djot too, so only the raw-HTML fallback is dropped: an
+     unclaimed '<' is then plain text. *)
+  if not (Oymarkit_mod.raw_html p.oymarkit_mod) then None else
   match Match.raw_html ~next_line p.i toks ~line ~start with
   | None -> None
   | Some (toks, last_line, spans, last) ->
@@ -1076,42 +1568,119 @@ let label_of_rev_spans p ~key rev_spans =
 
 let try_full_reflink_remainder p toks line ~image ~start (* is label's [ *) =
   (* https://spec.commonmark.org/current/#full-reference-link *)
-  match Match.link_label p.buf ~next_line p.i toks ~line ~start with
+  let djot = Oymarkit_mod.djot_links p.oymarkit_mod in
+  let case_sensitive = Oymarkit_mod.case_sensitive_labels p.oymarkit_mod in
+  match Match.link_label ~djot:case_sensitive p.buf ~next_line p.i toks ~line
+    ~start with
   | None -> None
   | Some (toks, line, rev_spans, last, key) ->
       let ref = label_of_rev_spans p ~key rev_spans in
       let toks = drop_stop_after_right_brack toks in
       match find_def_for_ref p ~image ref with
-      | None -> Some None
       | Some def -> Some (Some (toks, line, `Ref (`Full, ref, def), last))
+      | None when djot ->
+          (* Djot still makes a link of a reference whose definition is missing;
+             the renderer gives it no [href]. The label stands in for the
+             definition it did not find. *)
+          Some (Some (toks, line, `Ref (`Full, ref, ref), last))
+      | None -> Some None
 
-let try_shortcut_reflink p toks line ~image ~start (* is starting [ or ! *) =
+let try_shortcut_reflink p toks line ~image ~start ~implicit_key
+    (* [start] is the starting [ or ! *) =
   (* https://spec.commonmark.org/current/#shortcut-reference-link *)
   let start = if image then start + 1 (* [ *) else start in
-  match Match.link_label p.buf ~next_line p.i toks ~line ~start with
+  let djot = Oymarkit_mod.djot_links p.oymarkit_mod in
+  let case_sensitive = Oymarkit_mod.case_sensitive_labels p.oymarkit_mod in
+  match Match.link_label ~djot:case_sensitive p.buf ~next_line p.i toks ~line
+    ~start with
   | None -> None
   | Some (toks, line, rev_spans, last, key) ->
+      let key = if djot then implicit_key else key in
       let ref = label_of_rev_spans p ~key rev_spans in
       let toks = drop_stop_after_right_brack toks in
       match find_def_for_ref p ~image ref with
-      | None -> None
       | Some def -> Some (toks, line, `Ref (`Shortcut, ref, def), last)
+      | None when djot && String.length key > 0 && key.[0] = '^' ->
+          (* A footnote reference is a footnote reference whether or not the note
+             exists: djot lists the missing one as an empty note. *)
+          Some (toks, line, `Ref (`Shortcut, ref, ref), last)
+      | None -> None
 
-let try_collapsed_reflink p toks line ~image ~start (* is starting [ or ! *) =
+let try_collapsed_reflink p toks line ~image ~start ~implicit_key
+    (* [start] is the starting [ or ! *) =
   (* https://spec.commonmark.org/current/#collapsed-reference-link *)
   let start = if image then start + 1 (* [ *) else start in
-  match Match.link_label p.buf ~next_line p.i toks ~line ~start with
+  let djot = Oymarkit_mod.djot_links p.oymarkit_mod in
+  let case_sensitive = Oymarkit_mod.case_sensitive_labels p.oymarkit_mod in
+  match Match.link_label ~djot:case_sensitive p.buf ~next_line p.i toks ~line
+    ~start with
   | None -> None
   | Some (toks, line, rev_spans, last, key) ->
+      let key = if djot then implicit_key else key in
       let ref = label_of_rev_spans p ~key rev_spans in
       let last = last + 2 in (* adjust for ][] *)
       let toks = drop_stop_after_right_brack toks in
       let toks = drop_stop_after_right_brack toks in
       match find_def_for_ref p ~image ref with
-      | None -> None
       | Some def -> Some (toks, line, `Ref (`Collapsed, ref, def), last)
+      | None when djot ->
+          Some (toks, line, `Ref (`Collapsed, ref, ref), last)
+      | None -> None
+
+(* Djot inline link: everything between the [(] and the matching [)] is the
+   destination — there are no titles, so the quoted part of [ (url "title") ] is
+   just more URL — and it may be split over lines, the newlines being removed.
+   That is why this cannot reuse [Match.link_destination], whose grammar stops
+   at a space and knows nothing about titles. *)
+let try_djot_inline_link_remainder p toks start_line ~start:st (* is ( *) =
+  if not (has_right_paren ~after:st p.cidx) then None else
+  let rec scan toks line ~seg_first segs k =
+    if k > line.last then
+      let segs = { line with first = seg_first; last = line.last } :: segs in
+      match next_line toks with
+      | None -> None
+      | Some (toks, newline) ->
+          let first = first_non_blank_in_span p newline in
+          scan toks newline ~seg_first:first segs first
+    else
+    match p.i.[k] with
+    | '\\' -> scan toks line ~seg_first segs (k + 2)
+    | ')' ->
+        let segs = { line with first = seg_first; last = k - 1 } :: segs in
+        Some (toks, line, List.rev segs, k)
+    | _ -> scan toks line ~seg_first segs (k + 1)
+  in
+  let first = st + 1 in
+  match scan toks start_line ~seg_first:first [] first with
+  | None -> None
+  | Some (toks, line, segs, close) ->
+      let dest =
+        let seg span =
+          if span.first > span.last then "" else
+          String.trim (fst (clean_unesc_unref_span p span))
+        in
+        String.concat "" (List.map seg segs)
+      in
+      let textloc =
+        textloc_of_lines p ~first:st ~last:close ~first_line:start_line
+          ~last_line:line
+      in
+      let dest = if dest = "" then None else Some (dest, meta p textloc) in
+      let layout =
+        { Link_definition.indent = 0; angled_dest = false; before_dest = [];
+          after_dest = []; title_open_delim = '\"'; after_title = [] }
+      in
+      let ld =
+        { Link_definition.layout; label = None; defined_label = None; dest;
+          title = None; attributes = None }
+      in
+      let ld = (ld, meta p textloc) in
+      let toks = drop_until ~start:(close + 1) toks in
+      Some (toks, line, `Inline ld, close)
 
 let try_inline_link_remainder p toks start_line ~image ~start:st (* is ( *) =
+  if Oymarkit_mod.djot_links p.oymarkit_mod
+  then try_djot_inline_link_remainder p toks start_line ~start:st else
   (* https://spec.commonmark.org/current/#inline-link *)
   if not (has_right_paren ~after:st p.cidx) then None else
   let first_non_blank_over_nl = first_non_blank_over_nl ~next_line in
@@ -1151,7 +1720,10 @@ let try_inline_link_remainder p toks start_line ~image ~start:st (* is ( *) =
           after_dest; title_open_delim; after_title; }
       in
       let label = None and defined_label = None in
-      let ld = { Link_definition.layout; label; defined_label; dest; title }in
+      let ld =
+        { Link_definition.layout; label; defined_label; dest; title;
+          attributes = None }
+      in
       let textloc =
         let first = st and last = start in
         textloc_of_lines p ~first ~last ~first_line:start_line ~last_line:line
@@ -1197,27 +1769,49 @@ let find_link_text_tokens p toks start_line ~start =
 let try_link_def
     p ~start ~start_toks ~start_line ~toks ~line ~text_last ~image text
   =
+  let implicit_key =
+    (* Only djot keys a shortcut/collapsed reference on the link *text*
+       (CommonMark keys on the label source); the reflink parsers below read
+       this solely under [djot_links], so don't pay for the flatten
+       otherwise. *)
+    if not (Oymarkit_mod.djot_links p.oymarkit_mod) then "" else
+    let inline = Inline.Inlines (text, Meta.none) in
+    let plain =
+      Inline.to_plain_text ~break_on_soft:false inline
+      |> List.map (String.concat "") |> String.concat "\n"
+    in
+    let case_sensitive = Oymarkit_mod.case_sensitive_labels p.oymarkit_mod in
+    Match.label_key ~djot:case_sensitive p.buf plain
+  in
   let next = text_last + 1 in
   let link =
     if next > line.last
-    then try_shortcut_reflink p start_toks start_line ~image ~start else
+    then try_shortcut_reflink p start_toks start_line ~image ~start ~implicit_key
+    else
     match p.i.[next] with
     | '(' ->
         (match try_inline_link_remainder p toks line ~image ~start:next with
-        | None -> try_shortcut_reflink p start_toks start_line ~image ~start
+        | None ->
+            try_shortcut_reflink p start_toks start_line ~image ~start
+              ~implicit_key
         | Some _ as v -> v)
     | '[' ->
         let next' = next + 1 in
         if next' <= line.last && p.i.[next'] = ']'
-        then try_collapsed_reflink p start_toks start_line ~image ~start else
+        then
+          try_collapsed_reflink p start_toks start_line ~image ~start
+            ~implicit_key
+        else
         let r = try_full_reflink_remainder p toks line ~image ~start:next in
         begin match r with
-        | None -> try_shortcut_reflink p start_toks start_line ~image ~start
+        | None ->
+            try_shortcut_reflink p start_toks start_line ~image ~start
+              ~implicit_key
         | Some None -> None (* Example 570 *)
         | Some (Some _ as v) -> v
         end
     | c ->
-        try_shortcut_reflink p start_toks start_line ~image ~start
+        try_shortcut_reflink p start_toks start_line ~image ~start ~implicit_key
   in
   match link with
   | None -> None
@@ -1230,6 +1824,31 @@ let try_link_def
       let link = { Inline.Link.text; reference } in
       let first_line = start_line and last_line = endline in
       let t = link_token p ~image ~first ~last ~first_line ~last_line link in
+      (* Djot attributes written above a reference definition merge onto every
+         link that references it: the link is wrapped in [Ext_attributes], the
+         same node an inline [ {...} ] specifier produces, so nothing downstream
+         needs to know where the attributes came from. *)
+      let t = match reference with
+      | `Ref (_, _, def) ->
+          begin match Label.Map.find_opt (Label.key def) p.defs with
+          | Some (Link_definition.Def (ld, _)) ->
+              begin match Link_definition.attributes ld with
+              | None -> t
+              | Some attrs ->
+                  begin match t with
+                  | Inline ({ inline; _ } as tok) ->
+                      let a = Inline.Attributes.make ~specs:[attrs] inline in
+                      let inline =
+                        Inline.Ext_attributes (a, Inline.meta inline)
+                      in
+                      Inline { tok with inline }
+                  | t -> t
+                  end
+              end
+          | _ -> t
+          end
+      | `Inline _ -> t
+      in
       let had_link = not image && not p.nested_links in
       Some (toks, endline, t, had_link)
 
@@ -1270,6 +1889,56 @@ let try_span p ~start ~start_line ~toks ~line ~text_last ~image text =
       Some (rest, endline, t, false)
   | _ -> None
 
+(* Djot destination guard. When djot resolves links on the shared delimiter
+   stack ([second_pass]), a delimiter that sits inside a link *destination* --
+   the [_] of [ (a_b) ] -- must not pair as emphasis: djot scans a destination
+   as literal URL. But emphasis is resolved before the link, so we cannot rely on
+   link resolution to have consumed the destination first. Instead, at
+   [first_pass] time, when a [ ] ] is followed by a destination,
+   [djot_destination_close] finds its closing ')' and [neutralize_dest_delimiters]
+   drops the delimiter markers inside -- leaving them inert (the source gap
+   renders them literally) while [try_link] reads the URL straight from the
+   source. This is the counterpart to [clearOpeners], which the left-to-right
+   stack order already gives us for delimiters in link *text*.
+
+   Close position of a djot destination opening at [start] (the '('), or [None].
+   Mirrors the scan in [try_djot_inline_link_remainder] but keeps only the
+   closing ')' position; [byte_pos] is a global index, so a caller can bound a
+   span with it across line breaks. *)
+let djot_destination_close p toks start_line ~start =
+  if not (has_right_paren ~after:start p.cidx) then None else
+  let rec scan toks line k =
+    if k > line.last then
+      match next_line toks with
+      | None -> None
+      | Some (toks, newline) ->
+          scan toks newline (first_non_blank_in_span p newline)
+    else match p.i.[k] with
+    | '\\' -> scan toks line (k + 2)
+    | ')' -> Some k
+    | _ -> scan toks line (k + 1)
+  in
+  scan toks start_line (start + 1)
+
+(* Drop the emphasis-family and bracket marker tokens strictly inside [ (lo, hi) ]
+   so they cannot pair as delimiters. Tokens are in increasing position order, so
+   we walk only the destination prefix (up to [hi]) and splice the rest of the
+   stream back untouched -- O(destination), not O(stream). *)
+let neutralize_dest_delimiters ~lo ~hi toks =
+  let is_marker = function
+  | Emphasis_marks _ | Strikethrough_marks _ | Quoted_marks _
+  | Extra_inline_container_marks _ | Math_span_marks _
+  | Link_start _ | Right_brack _ -> true
+  | _ -> false
+  in
+  let rec loop acc = function
+  | t :: toks when token_start t < hi ->
+      let acc = if is_marker t && token_start t > lo then acc else t :: acc in
+      loop acc toks
+  | toks -> List.rev_append acc toks
+  in
+  loop [] toks
+
 (* The following sequence of mutually recursive functions define
     inline parsing. We have three passes over a paragraph's token
     list see the [parse_tokens] function below. *)
@@ -1297,7 +1966,8 @@ let rec try_link p start_toks start_line ~image ~start =
           in
           { start_line with first; last }
         in
-        parse_tokens p text_toks text_start
+        (* The link text span starts after the '[', not at a line start. *)
+        parse_tokens ~line_start:false p text_toks text_start
       in
       if had_link && not image
       then None (* Could try to keep render *) else
@@ -1312,6 +1982,52 @@ let rec try_link p start_toks start_line ~image ~start =
 and first_pass p toks line =
   (* Parse inline atoms and links. Links are parsed here otherwise
       link reference data gets parsed as atoms. *)
+  (* Runs once per [ ](  ] seen, and scans [acc] (the tokens to the left) each
+     time, so a pathological run of [ ](](](… ] is quadratic in the number of
+     such pairs. Accepted: the scan is over already-thinned tokens, not bytes,
+     and stops at the first matching [Link_start]. *)
+  let settle_djot_link_text p line ~close acc =
+    let rec split depth inside = function
+    | [] -> acc
+    | Right_brack _ as t :: rest -> split (depth + 1) (t :: inside) rest
+    | Link_start { start; image } as opener :: rest ->
+        if depth > 0 then split (depth - 1) (opener :: inside) rest else
+        if start < line.first then acc else
+        let has_unsettled_delimiter =
+          let external_openers =
+            List.filter_map
+              (function
+                | Emphasis_marks marks when marks.may_open -> Some (marks, false)
+                | _ -> None)
+              rest
+          in
+          let rec loop openers = function
+          | [] -> List.exists snd openers
+          | Emphasis_marks marks :: toks ->
+              let matching ((m : emphasis_marks), _) =
+                m.char = marks.char && m.open_marker = marks.close_marker
+              in
+              begin match marks.may_close, List.partition matching openers with
+              | true, (_ :: matching, rest) -> loop (matching @ rest) toks
+              | _ ->
+                  let openers =
+                    if marks.may_open then (marks, true) :: openers else openers
+                  in
+                  loop openers toks
+              end
+          | _ :: toks -> loop openers toks
+          in
+          loop external_openers inside
+        in
+        if not has_unsettled_delimiter then acc else
+        let first = start + if image then 2 else 1 in
+        let text_line = { line with first; last = close - 1 } in
+        let settled = second_pass p inside text_line in
+        List.rev_append settled (opener :: rest)
+    | t :: rest -> split depth (t :: inside) rest
+    in
+    split 0 [] acc
+  in
   let rec loop p toks line ~had_link acc = match toks with
   | [] -> List.rev acc, had_link
   | Attribute_spec _ as t :: toks ->
@@ -1332,6 +2048,12 @@ and first_pass p toks line =
       | None -> loop p toks line ~had_link acc
       | Some (toks, line, t) -> loop p toks line ~had_link (t :: acc)
       end
+  | Link_start _ as t :: toks when Oymarkit_mod.djot_links p.oymarkit_mod ->
+      (* Djot resolves links on the shared delimiter stack in [second_pass], so
+         that brackets and emphasis compete in one left-to-right sweep (djot's
+         [clearOpeners]). Defer: keep the marker -- and its [Right_brack] below
+         -- for that pass instead of resolving the link here. *)
+      loop p toks line ~had_link (t :: acc)
   | Link_start { start; image } :: toks ->
       begin match try_link p toks line ~image ~start with
       | None -> loop p toks line ~had_link acc
@@ -1371,6 +2093,28 @@ and first_pass p toks line =
       | Some (toks, line, t) -> loop p toks line ~had_link (t :: acc)
       | None -> loop p toks line ~had_link acc
       end
+  | Right_brack { start = k } as t :: toks
+    when Oymarkit_mod.djot_links p.oymarkit_mod ->
+      (* Deferred with its [Link_start]; [second_pass] consumes the matched one
+         via [try_link] and drops any unmatched [ ] ]. If a destination [ (...) ]
+         opens here, neutralize its delimiters first (the guard above). *)
+      let has_destination = k + 1 <= line.last && p.i.[k + 1] = '(' in
+      let acc =
+        if has_destination then settle_djot_link_text p line ~close:k acc
+        else acc
+      in
+      let toks =
+        if has_destination then
+          match djot_destination_close p toks line ~start:(k + 1) with
+          | Some close -> neutralize_dest_delimiters ~lo:k ~hi:close toks
+          | None ->
+              (* No closing ')': not a destination at all, so its contents are
+                 ordinary text whose delimiters pair normally (djot renders
+                 [ [unclosed](a *b* ] with the emphasis intact). Leave them. *)
+              toks
+        else toks
+      in
+      loop p toks line ~had_link (t :: acc)
   | Right_brack start :: toks -> loop p toks line ~had_link acc
   | Newline { newline = l } as t :: toks -> loop p toks l ~had_link (t :: acc)
   | t :: toks -> loop p toks line ~had_link (t :: acc)
@@ -1382,6 +2126,13 @@ and first_pass p toks line =
 and find_emphasis_text p toks line ~(opener : emphasis_marks) =
   let marks_match ~(marks : emphasis_marks) ~(opener : emphasis_marks) =
     (opener.char = marks.char) &&
+    (* Marked and bare delimiters are two stacks, not one: a marked closer
+       ([_}]) pairs only with a marked opener ([{_]), which is what leaves the
+       trailing [_x_}] of [ {_ x_ _} _x_} ] literal. Djot keys its opener stack
+       by the marker for the same reason, and quotes do the same (see
+       [find_quoted_text]). Without markers both sides are [false] and this is
+       vacuous, so the CommonMark path is unchanged. *)
+    (opener.open_marker = marks.close_marker) &&
     (not (marks.may_open || opener.may_close) ||
       marks.count mod 3 = 0 || (opener.count + marks.count) mod 3 != 0)
   in
@@ -1456,7 +2207,7 @@ and try_emphasis p start_toks start_line ~opener =
         in
         (* No need to redo first pass *)
         let emph_toks = second_pass p emph_toks text_start in
-        let text = last_pass p emph_toks text_start in
+        let text = last_pass ~line_start:false p emph_toks text_start in
         inlines_inline p text ~first ~last:text_last ~first_line ~last_line
       in
       let toks =
@@ -1518,7 +2269,7 @@ and try_strikethrough p start_toks start_line ~opener =
         in
         (* No need to redo first pass *)
         let emph_toks = second_pass p stroken_toks text_start in
-        let text = last_pass p emph_toks text_start in
+        let text = last_pass ~line_start:false p emph_toks text_start in
         inlines_inline p text ~first ~last ~first_line ~last_line
       in
       let toks =
@@ -1528,7 +2279,8 @@ and try_strikethrough p start_toks start_line ~opener =
       in
       Either.Right (toks, line)
 
-and find_extra_inline_container_text p toks start_line ~opener =
+and find_extra_inline_container_text p toks start_line
+    ~(opener : extra_inline_container_marks) =
   let closer_pos =
     match
       extra_inline_container_closer_pos ~char:opener.char ~curly:opener.curly
@@ -1567,7 +2319,8 @@ and find_extra_inline_container_text p toks start_line ~opener =
   in
   loop p toks start_line []
 
-and try_extra_inline_container p start_toks start_line ~opener =
+and try_extra_inline_container p start_toks start_line
+    ~(opener : extra_inline_container_marks) =
   let start = opener.start in
   if
     not
@@ -1591,7 +2344,7 @@ and try_extra_inline_container p start_toks start_line ~opener =
           { start_line with first; last }
         in
         let contained_toks = second_pass p contained_toks text_start in
-        let text = last_pass p contained_toks text_start in
+        let text = last_pass ~line_start:false p contained_toks text_start in
         inlines_inline p text ~first ~last ~first_line ~last_line
       in
       let toks =
@@ -1599,6 +2352,88 @@ and try_extra_inline_container p start_toks start_line ~opener =
         let last = closer.start + (if closer.curly then 1 else 0) in
         ext_extra_inline_container_token p ~kind:opener.kind ~first ~last
           ~first_line ~last_line text
+        :: toks
+      in
+      Either.Right (toks, line)
+
+(* Quote pairing. The shape is [find_extra_inline_container_text] /
+   [try_extra_inline_container]: a quote pairs only with a quote of the same
+   character and the same marked-ness, and an inner pair that closes before this
+   one's closer is resolved first, so quotes nest.
+
+   The one rule quotes add is that an empty pair does not match: in [ ''hi'' ]
+   the second quote cannot close the first, it goes on the stack instead, and the
+   two closers then pair with the two openers from the inside out. This is djot's
+   "exclude empty emph" test. *)
+and quoted_quote_pos (marks : quoted_marks) =
+  (* [start] is the '{' when the marker opens; the quote is what pairs. *)
+  if marks.curly && marks.may_open then marks.start + 1 else marks.start
+
+and find_quoted_text p toks start_line ~(opener : quoted_marks) =
+  let opener_quote = quoted_quote_pos opener in
+  let rec loop p toks line acc = match toks with
+  | [] -> Either.Left (List.rev acc)
+  | Quoted_marks marks :: toks ->
+      let closes =
+        marks.may_close && marks.char = opener.char
+        && marks.curly = opener.curly
+        && quoted_quote_pos marks > opener_quote + 1 (* not an empty pair *)
+      in
+      if closes then
+        let to_last = marks.start - 1 in
+        let acc = rev_tokens_and_shorten_last_line ~to_last [] acc in
+        Either.Right (toks, line, acc, marks)
+      else if marks.may_open then
+        (* A closer binds to the nearest opener before it, so an opener met
+           inside this one is resolved first, unconditionally: whatever closer it
+           finds is a closer this one could not have had anyway. Unresolved, it
+           stays a mark and the inner pass turns it into its fallback
+           character. *)
+        begin match try_quoted p toks line ~opener:marks with
+        | Either.Left toks -> loop p toks line (Quoted_marks marks :: acc)
+        | Either.Right (toks, line) -> loop p toks line acc
+        end
+      else loop p toks line (Quoted_marks marks :: acc)
+  | Newline { newline = l } as t :: toks -> loop p toks l (t :: acc)
+  | Inline { endline = l } as t :: toks -> loop p toks l (t :: acc)
+  | t :: toks -> loop p toks line (t :: acc)
+  in
+  loop p toks start_line []
+
+and try_quoted p start_toks start_line ~(opener : quoted_marks) =
+  let start = opener.start in
+  if
+    not
+      (has_quoted_closer ~char:opener.char ~curly:opener.curly ~after:start
+         p.cidx)
+  then Either.Left start_toks else
+  match find_quoted_text p start_toks start_line ~opener with
+  | Either.Left _ as r -> r
+  | Either.Right (toks, line, contained_toks, closer) ->
+      let first_line = start_line and last_line = line in
+      let text =
+        let first = quoted_quote_pos opener + 1 in
+        let last = closer.start - 1 in
+        let text_start =
+          let last =
+            if start_line.line_pos = line.line_pos then last
+            else start_line.last
+          in
+          { start_line with first; last }
+        in
+        let contained_toks = second_pass p contained_toks text_start in
+        let text = last_pass ~line_start:false p contained_toks text_start in
+        inlines_inline p text ~first ~last ~first_line ~last_line
+      in
+      let toks =
+        let kind =
+          if opener.char = '"' then Inline.Quoted.Double
+          else Inline.Quoted.Single
+        in
+        let last = closer.start + (if closer.curly then 1 else 0) in
+        ext_quoted_token p ~kind ~open_marker:opener.curly
+          ~close_marker:closer.curly ~first:start ~last ~first_line ~last_line
+          text
         :: toks
       in
       Either.Right (toks, line)
@@ -1625,6 +2460,32 @@ and second_pass p toks line =
       | Either.Left toks -> loop p toks line acc
       | Either.Right (toks, line) -> loop p toks line acc
       end
+  | Quoted_marks ({ may_open; _ } as opener) :: toks ->
+      (* Unlike the other delimiters, a quote that fails to pair does not fall
+         back to its literal source character but to a smart one. *)
+      let fallback () = quoted_fallback_token p opener line in
+      if not may_open then loop p toks line (fallback () :: acc) else
+      begin match try_quoted p toks line ~opener with
+      | Either.Left toks -> loop p toks line (fallback () :: acc)
+      | Either.Right (toks, line) -> loop p toks line acc
+      end
+  | Link_start { start; image } :: toks
+    when Oymarkit_mod.djot_links p.oymarkit_mod ->
+      (* Djot links live on this stack alongside emphasis. Because openers are
+         tried left-to-right, an emphasis run that opens before this [ and
+         closes inside it will already have swept this marker into its span (it
+         is resolved via [second_pass] there and finds no matching [ ] ]), so
+         emphasis wins the [-vs-* conflict -- djot's [clearOpeners], for free.
+         Delimiters inside the destination were already neutralized in
+         [first_pass], so they never reach here to be mispaired. *)
+      begin match try_link p toks line ~image ~start with
+      | Some (toks, line, t, _had_link) -> loop p toks line (t :: acc)
+      | None -> loop p toks line acc (* leave '[' literal via the source gap *)
+      end
+  | Right_brack _ :: toks when Oymarkit_mod.djot_links p.oymarkit_mod ->
+      (* Unmatched ']': matched ones were consumed by [try_link]; drop the rest
+         so they render literally rather than tripping [last_pass]. *)
+      loop p toks line acc
   | Newline { newline } as t :: toks -> loop p toks newline (t :: acc)
   | Inline { endline } as t :: toks -> loop p toks endline (t :: acc)
   | t :: toks -> loop p toks line (t :: acc)
@@ -1633,11 +2494,17 @@ and second_pass p toks line =
 
 (* Last pass *)
 
-and last_pass p toks start_line =
+and last_pass ?(line_start = true) p toks start_line =
   (* Only [Inline] and [Newline] tokens remain. We fold over them to
       convert them to [inline] values and [Break]s. [Text] inlines
-      are created for data between them. *)
-  let rec loop toks line acc k = match toks with
+      are created for data between them.
+
+      [line_start] is [false] when [start_line] is a container's synthesized
+      content span rather than a real source line; every line after a [Newline]
+      is a real one either way. *)
+  let rec loop ?(line_start = true) toks line acc k =
+    let try_add_text_inline p line = try_add_text_inline p line ~line_start in
+    match toks with
   | [] ->
       (* OYMARKIT CHANGE: bound the trailing text to the text span, not to the
          whole physical line. [line.last] is the end of the current source
@@ -1685,11 +2552,17 @@ and last_pass p toks start_line =
         | (Inline.Break _ | Inline.Inlines _) :: _ | [] -> []
         | target :: acc -> wrap target [attribute] :: acc
       in
+      (* A specifier that has nothing to attach to — at the start of a line, or
+         after a space — is dropped by djot rather than left as text. *)
+      let unattached acc =
+        if Oymarkit_mod.inline_attributes p.oymarkit_mod
+        then loop toks endline acc next else
+        let literal = "{" ^ Attribute.to_string attribute ^ "}" in
+        loop toks endline (Inline.Text (literal, Meta.none) :: acc) next
+      in
       if k = start then begin
         match add_to_target acc with
-        | [] ->
-            let literal = "{" ^ Attribute.to_string attribute ^ "}" in
-            loop toks endline (Inline.Text (literal, Meta.none) :: acc) next
+        | [] -> unattached acc
         | acc -> loop toks endline acc next
       end else begin
         let last = start - 1 in
@@ -1702,8 +2575,7 @@ and last_pass p toks start_line =
         let first = target_first last in
         if first > last then
           let acc = try_add_text_inline p line ~first:k ~last acc in
-          let literal = "{" ^ Attribute.to_string attribute ^ "}" in
-          loop toks endline (Inline.Text (literal, Meta.none) :: acc) next
+          unattached acc
         else
           let acc = try_add_text_inline p line ~first:k ~last:(first - 1) acc in
           let target =
@@ -1713,11 +2585,11 @@ and last_pass p toks start_line =
       end
   | (Backticks _ | Autolink_or_html_start _ | Link_start _ | Right_brack _
     | Emphasis_marks _ | Right_paren _ | Strikethrough_marks _
-    | Extra_inline_container_marks _ | Math_span_marks _
+    | Extra_inline_container_marks _ | Quoted_marks _ | Math_span_marks _
     | Wikilink_start _ | Jsx_expr_start _ | Jsx_element_start _ | Jsx_open _ | Jsx_close _) :: _ ->
       assert false
   in
-  loop toks start_line [] start_line.first
+  loop ~line_start toks start_line [] start_line.first
 
 and try_jsx_container p toks line ~start ~name_first ~name_last ~tag_end =
   (* [start] points at the '<' of an opening JSX tag [ <Tag ...> ] whose
@@ -1757,10 +2629,10 @@ and try_jsx_container p toks line ~start ~name_first ~name_last ~tag_end =
       let t = ext_jsx_element_token p ~first:start ~last:ctag_end ~line e in
       Some (rest, line, t)
 
-and parse_tokens p toks first_line =
+and parse_tokens ?(line_start = true) p toks first_line =
   let toks, had_link = first_pass p toks first_line in
   let toks = second_pass p toks first_line in
-  last_pass p toks first_line, had_link
+  last_pass ~line_start p toks first_line, had_link
 
 let strip_paragraph p lines =
   (* Remove initial and final blanks. Initial blank removal on
@@ -1787,7 +2659,7 @@ let strip_paragraph p lines =
 let parse p lines =
   let layout, meta, lines = strip_paragraph p lines in
   let cidx, toks, first_line =
-    tokenize ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i lines
+    tokenize ~p ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i lines
   in
   p.cidx <- cidx;
   let is, _had_link = parse_tokens p toks first_line in
@@ -1843,7 +2715,18 @@ let rec finish_col p line blanks_before is toks k = match toks with
     | `Found (text, after, k) ->
         let is = match text with Some t -> t :: is | None -> is in
         (make_col p is, (blanks_before, after)), [], k
-    | `Not_found _ -> assert false
+    | `Not_found text ->
+        (* The closing [|] that [Match.ext_table_row] saw at block detection was
+           consumed during inline parsing -- a djot verbatim span running to the
+           end of the line swallows it -- so no top-level boundary is left. Close
+           the final cell with what remains instead of asserting. (Unreachable in
+           CommonMark, where the row's trailing [|] always stays top-level.) *)
+        let is = text :: is in
+        let after =
+          layout_clean_raw_span' p { line with first = line.last + 1;
+                                     last = line.last }
+        in
+        (make_col p is, (blanks_before, after)), [], line.last + 1
     end
 | Inline { start; inline; next } :: toks when k >= start ->
     finish_col p line blanks_before (inline :: is) toks next
@@ -1858,7 +2741,7 @@ let rec finish_col p line blanks_before is toks k = match toks with
     end
 | (Attribute_spec _ | Backticks _ | Autolink_or_html_start _ | Link_start _ | Right_brack _
   | Emphasis_marks _ | Right_paren _ | Strikethrough_marks _
-  | Extra_inline_container_marks _ | Math_span_marks _ | Newline _
+  | Extra_inline_container_marks _ | Quoted_marks _ | Math_span_marks _ | Newline _
   | Wikilink_start _ | Jsx_expr_start _ | Jsx_element_start _ | Jsx_open _ | Jsx_close _ ) :: _ ->
     assert false
 
@@ -1879,17 +2762,51 @@ let rec parse_cols p line acc toks k = match toks with
     end
 | (Attribute_spec _ | Backticks _ | Autolink_or_html_start _ | Link_start _ | Right_brack _
   | Emphasis_marks _ | Right_paren _ | Strikethrough_marks _
-  | Extra_inline_container_marks _ | Math_span_marks _ | Newline _
+  | Extra_inline_container_marks _ | Quoted_marks _ | Math_span_marks _ | Newline _
   | Wikilink_start _ | Jsx_expr_start _ | Jsx_element_start _ | Jsx_open _ | Jsx_close _ ) :: _ ->
     assert false
 
+(* Resolve each cell's stack delimiters in isolation.
+
+   [parse_cols] finds cell boundaries at the top-level [|] left in the gaps
+   between [Inline] tokens, so a [|] buried in a code span never splits a row.
+   But if [second_pass] runs over the whole row first, an emphasis (or other
+   stack) span also becomes one [Inline] token, burying any [|] it straddles and
+   merging two cells ([ |*c| d*| ]). Splitting the post-[first_pass] stream at
+   each top-level [|] and running [second_pass] per segment keeps a delimiter
+   from ever pairing across a cell wall; reassembled, the stream is exactly what
+   [parse_cols] expects, only with no stack span crossing a boundary. This is
+   the table-level counterpart of resolving links on the delimiter stack: the
+   tight [first_pass] constructs may cross the boundary, the stack pass may
+   not. *)
+let second_pass_cells p first_line toks =
+  let has_pipe ~lo ~hi =
+    lo <= hi && Match.first_non_escaped_char '|' p.i ~last:hi ~start:lo <= hi
+  in
+  let rec split k seg segs = function
+  | [] -> List.rev (List.rev seg :: segs)
+  | t :: toks ->
+      let s = token_start t in
+      let seg, segs =
+        if has_pipe ~lo:k ~hi:(s - 1) then [], List.rev seg :: segs
+        else seg, segs
+      in
+      (* Advance past [Inline] content (a code span may hold a [|]); for a bare
+         marker, keeping [k] at its start is enough -- its own bytes are never a
+         [|], so the next gap scan cannot false-trip on them. *)
+      let k = match t with Inline { next; _ } -> next | _ -> s in
+      split k (t :: seg) segs toks
+  in
+  let segs = split first_line.first [] [] toks in
+  List.concat_map (fun seg -> second_pass p seg first_line) segs
+
 let parse_table_row p line =
   let cidx, toks, first_line =
-    tokenize ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i [line]
+    tokenize ~p ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i [line]
   in
   p.cidx <- cidx;
   let toks, _had_link = first_pass p toks first_line in
-  let toks = second_pass p toks first_line in
+  let toks = second_pass_cells p first_line toks in
   (* We now have modified last pass, inner inlines will have gone through
       the regular [last_pass] which is fine since we are only interested
       in creating the toplevel text nodes further splited on (unescaped)
@@ -2058,7 +2975,7 @@ let run_keyed_passes p lines =
      colon detection) is on the last line. *)
   let plast = (List.hd (List.rev lines)).last in
   let cidx, toks, first_line =
-    tokenize ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i lines
+    tokenize ~p ~oymarkit_mod:p.oymarkit_mod ~exts:p.exts p.i lines
   in
   p.cidx <- cidx;
   let toks, _had_link = first_pass p toks first_line in

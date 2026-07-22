@@ -1,5 +1,6 @@
 (*---------------------------------------------------------------------------
    Copyright (c) 2021 The cmarkit programmers. All rights reserved.
+   Copyright (c) 2026 The oymarkit programmers. All rights reserved.
    SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
@@ -155,15 +156,21 @@ val next_uchar : string -> last:int -> after:int -> Uchar.t
     references. *)
 module Text : sig
   val utf_8_clean_unesc_unref :
+    ?unref:bool -> ?backslash_space_nbsp:bool ->
     Buffer.t -> string -> first:int -> last:int -> string
   (** [utf_8_clean_unesc_unref b s ~first ~last] unescapes CommonMark
       escapes, resolves HTML entity and character references in the
       given span and replaces U+0000 and UTF-8 decoding errors by
       {!Uchar.rep}. [b] is used as scratch space.  If [last > first]
-      or [first] and [last] are not valid indices of [s] is [""].  *)
+      or [first] and [last] are not valid indices of [s] is [""].
+
+      If [unref] is [false] (defaults to [true]) entity and character
+      references are left literal, as in djot where backslash is the
+      only escape. If [backslash_space_nbsp] is [true] (defaults to [false]) a
+      backslash before a space stands for U+00A0. *)
 
   val utf_8_clean_unref :
-    Buffer.t -> string -> first:int -> last:int -> string
+    ?unref:bool -> Buffer.t -> string -> first:int -> last:int -> string
   (** [utf_8_clean_unref b s ~first ~last] is like
       {!utf_8_clean_unesc_unref} but does not unsescape. *)
 
@@ -282,7 +289,21 @@ val link_title :
     order, [last] is on the closing delimiter and guaranteed to be on
     [last_line]. *)
 
+val djot_id_base : string -> string
+(** [djot_id_base text] is djot's auto-identifier for a heading with plain text
+    [text]: non-stripped bytes with internal whitespace and stripped punctuation
+    collapsed to a single ['-'], case preserved. Shared by the parser and the
+    HTML renderer so a registered heading target matches its rendered id. *)
+
+val label_key : ?djot:bool -> Buffer.t -> string -> string
+(** [label_key b s] is the {{:https://spec.commonmark.org/0.31.2/#link-label}link
+    label} key of [s]: case-folded, with runs of whitespace collapsed to a
+    single space and leading and trailing whitespace dropped. This is the
+    normalization {!link_label} performs while scanning, for a string already in
+    hand. [b] is used as scratch space. *)
+
 val link_label :
+  ?djot:bool ->
   Buffer.t -> next_line:'a next_line -> string -> 'a -> line:line_span ->
   start:byte_pos -> ('a * line_span * rev_spans * last * string) option
 (** [link_label buf ~next_line s lines ~line ~start] matches a link label
@@ -298,6 +319,23 @@ type html_block_end_cond =
   [ `End_str of string | `End_cond_1 | `End_blank | `End_blank_7 ]
 (** The type for HTML block end conditions. *)
 
+(** The type for djot ordered list number styles. *)
+type ordered_style =
+[ `Decimal | `Alpha_lower | `Alpha_upper | `Roman_lower | `Roman_upper ]
+
+(** The type for djot ordered list delimiters: [1.], [1)] and [(1)]. *)
+type ordered_delim = [ `Period | `Paren | `Parens ]
+
+(** The type for list markers. An [`Ext_ordered] is a djot marker; its last
+    component is the marker's roman reading when the alpha reading it reports is
+    ambiguous ([i.] is alpha 9 or roman 1), so that the parser can resolve it
+    against the list already open. *)
+type list_marker =
+[ `Ordered of int * char
+| `Unordered of char
+| `Ext_ordered of
+    ordered_style * ordered_delim * int * (ordered_style * int) option ]
+
 type line_type =
 | Atx_heading_line of heading_level * byte_pos (* after # *) * first * last
 | Blank_line
@@ -305,25 +343,29 @@ type line_type =
 | Fenced_code_block_line of first * last * (first * last) option
 | Html_block_line of html_block_end_cond
 | Indented_code_block_line
-| List_marker_line of ([ `Ordered of int * char | `Unordered of char ] * last)
+| List_marker_line of (list_marker * last)
 | Paragraph_line
 | Setext_underline_line of heading_level * last
 | Thematic_break_line of last
 | Ext_table_row of last
 | Ext_footnote_label of rev_spans * last * string
 | Ext_div_line of first * last * (first * last) option
+| Ext_definition_line of last (* the ':' *)
   (* Oymarkit djot div: colon fence span and optional class name span *)
 | Ext_jsx_block_line of first * last * last
   (* Oymarkit JSX block open: tag name span (first, last; an empty span with
      [last < first] denotes a fragment) and the terminating '>' index (last) *)
 | Nomatch (* built-in [None] to avoid option allocs *)
 
-val thematic_break : string -> last:byte_pos -> start:byte_pos -> line_type
+val thematic_break :
+  ?djot:bool -> string -> last:byte_pos -> start:byte_pos -> line_type
 (** [thematic_break s ~last ~start] matches a thematic break in the range
     in the range \[[start];[last]\]. The returned position is the last
-    non-blank. *)
+    non-blank. With [~djot:true] the marker characters may be mixed ([*] and
+    [-] together) and [_] is not a marker. *)
 
 val atx_heading :
+  ?closing_sequence:bool ->
   string -> last:byte_pos -> start:byte_pos -> line_type
 (** [atx_heading s ~first ~last] is an ATX heading in the range
     \[[start];[last]\]. *)
@@ -335,10 +377,14 @@ val setext_heading_underline :
     is the last underline char. *)
 
 val fenced_code_block_start :
+  ?tilde_fences:bool -> ?djot:bool ->
   string -> last:byte_pos -> start:byte_pos -> line_type
 (** [fenced_code_block_start s ~last ~start] is the start of a fenced
     code block line in the range \[[start];[last]\]. The first span is
-    the fence and the second one is the info string (if any). *)
+    the fence and the second one is the info string (if any). If
+    [tilde_fences] is [false] (defaults to [true]) only backtick fences
+    are recognized. If [djot] is [true] (defaults to [false]), an info string
+    containing whitespace does not start a fence. *)
 
 val fenced_code_block_continue :
   fence:char * int -> string -> last:byte_pos -> start:byte_pos ->
@@ -375,9 +421,12 @@ val html_block_end :
 (** [html_block ~end_code s ~last ~start] is [true] if the HTML block
     end with [end_code] in the the range \[[start];[last]\] *)
 
-val ext_table_row : string -> last:byte_pos -> start:byte_pos -> line_type
+val ext_table_row :
+  ?verbatim_span:bool -> string -> last:byte_pos -> start:byte_pos -> line_type
 (** [ext_table s ~last ~start] matches a table row in the range
-    \[[start];[last]\]. The returned position is the rightmost [|]. *)
+    \[[start];[last]\]. The returned position is the rightmost [|]. With
+    [verbatim_span] an unmatched backtick run owns that rightmost pipe, so the
+    line is not a table row. *)
 
 val ext_footnote_label :
   Buffer.t -> string -> line_pos:Textloc.line_pos -> last:byte_pos ->
@@ -393,11 +442,21 @@ val could_be_link_reference_definition :
 
 (** {1:container Container blocks} *)
 
-val list_marker :
+val definition_list_marker :
   string -> last:byte_pos -> start:byte_pos -> line_type
+(** [definition_list_marker s ~last ~start] is a djot definition list marker in
+    the range \[[start];[last]\]: a [:] followed by a space or the end of the
+    line. A [:::] div fence is not one. *)
+
+val list_marker :
+  ?extended_styles:bool -> string -> last:byte_pos -> start:byte_pos -> line_type
 (** [list_marker s ~last ~start] is a list marker in the range
     \[[start];[last]\]. This checks there's at least one space
-    following unless the item is empty. *)
+    following unless the item is empty.
+
+    If [extended_styles] is [true] (defaults to [false]) djot's alpha ([a.]) and
+    roman ([iv.]) numbering and its fully parenthesized delimiter ([(a)]) are
+    also recognized, as [`Ext_ordered] markers. *)
 
 val ext_task_marker :
   string -> last:byte_pos -> start:byte_pos -> (Uchar.t * last) option
