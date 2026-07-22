@@ -63,82 +63,6 @@ let code_block_egs : Block.t list =
     ]
   |> List.map (fun cb -> Block.(Code_block (cb, Meta.none)))
 
-(* Synthesized attributes
-   ====================== *)
-
-(** What a subtree looks like from the outside, to whatever follows it in render
-    order.
-
-    Every sibling-adjacency rule needs one or two facts about the block before
-    it. Collecting them in one record is what lets those rules be stated as
-    guards at a choice point instead of as repair traversals after the fact; see
-    [DIRECTION.md]. The generator synthesizes this while building, and
-    {!summarize} recovers it from a finished [Block.t] so the checker can reach
-    the same facts without generating.
-
-    Peeling follows {e render order}, not tree structure: nested [Blocks] are
-    transparent, so a [Blocks]'s trailing edge is its last child's and its
-    leading edge is its first child's. [Block_quote], [List] and footnote
-    definitions are container boundaries and stop the peel. *)
-type summary = {
-  transparent : bool;
-      (** No render-order content at all: an empty [Blocks], or a [Blocks] of
-          nothing but those. Such a subtree neither establishes nor clears
-          context for its successor, so the fold in {!gen_blocks} passes the
-          previous summary straight through it. *)
-  trailing_block_quote : bool;
-      (** The last block in render order is a [Block_quote]. Two flush quote
-          markers parse as one quote; see {!Typing.no_adjacent_block_quotes}. *)
-  trailing_absorbing : bool;
-      (** The last block in render order is an html block left open at its last
-          line, which swallows whatever renders after it; see
-          {!Typing.no_html_block_absorbing_successor}. *)
-  leads_with_blank : bool;
-      (** The first block in render order is a [Blank_line]. A successor that
-          already starts blank needs no separator inserted before it. *)
-  list_continuation_indent : int option;
-      (** For a trailing [List], its final item's continuation indent. At most
-          four columns and a following indented code block is absorbed into the
-          item; see {!Typing.no_ambiguous_indented_code_after_list}. *)
-}
-
-let summary_nil =
-  {
-    transparent = true;
-    trailing_block_quote = false;
-    trailing_absorbing = false;
-    leads_with_blank = false;
-    list_continuation_indent = None;
-  }
-
-let summary_opaque = { summary_nil with transparent = false }
-
-(* Combine a [Blocks]'s children in render order: leading edge from the first
-   contentful child, trailing edges from the last. *)
-let summary_seq (ss : summary list) : summary =
-  match List.filter (fun s -> not s.transparent) ss with
-  | [] -> summary_nil
-  | first :: _ as ss ->
-      let last = List.nth ss (List.length ss - 1) in
-      { last with leads_with_blank = first.leads_with_blank }
-
-let rec summarize (b : Block.t) : summary =
-  match b with
-  | Block.Blocks (bs, _) -> summary_seq (List.map summarize bs)
-  | Block.Blank_line _ -> { summary_opaque with leads_with_blank = true }
-  | Block.Block_quote _ -> { summary_opaque with trailing_block_quote = true }
-  | Block.Html_block (lines, _) ->
-      {
-        summary_opaque with
-        trailing_absorbing = Common_.html_block_absorbs lines;
-      }
-  | Block.List (l, _) ->
-      {
-        summary_opaque with
-        list_continuation_indent = Common_.list_last_item_continuation_indent l;
-      }
-  | _ -> summary_opaque
-
 (* Render-order peeling for the html-block absorption rule
    ({!Typing.no_html_block_absorbing_successor}). Absorption only crosses
    [Blocks] siblings; a [Block_quote]/[List] boundary stops it, so we peel
@@ -419,52 +343,49 @@ let gen_heading (config : Bconfig.t) : Block.t G.t =
       Block.(Heading (Block.Heading.make ~level inline, Meta.none)))
     G.(pair (int_range 1 6) (gen_inline ic))
 
-(* Inherited attributes
-   ==================== *)
+(* Generation context
+   =================== *)
 
-(** What a block needs to know about where it sits, carried down from its
-    parent. Read at every choice point and modified when descending; see
-    [DIRECTION.md].
-
-    This is the reader half of the attribute grammar. It replaces the growing
-    list of one-optional-argument-per-rule that {!gen_block} used to take. *)
+(** The generator threads {!Rule.ctx} — the attributes a rule may consult —
+    alongside the two things a rule must {e not} see: which rules are switched
+    on, and the weights. A rule says what it forbids; {!Bconfig} says whether it
+    is asked. *)
 type ctx = {
-  lead_exclude : char list;
-      (** Characters a thematic break may not use here, because this block sits
-          at the leading (marker) line of a list item and a break of the marker
-          char would collapse the item; see {!gen_thematic_break}. A
-          [Block_quote]'s [>] absorbs the leading position, so descending into
-          one clears this. *)
-  prev : summary option;
-      (** Summary of the previous sibling {e in render order}, which is not the
-          same as the previous sibling in the tree: a nested [Blocks] is
-          transparent, so its first child sees the [Blocks]'s own predecessor,
-          and a transparent subtree passes its predecessor through. [None] at
-          the start of a sequence and immediately inside a container, whose
-          marker breaks any adjacency with what came before it. *)
-  is_last : bool;  (** Last position of the enclosing render-order sequence. *)
-  at_root : bool;
-      (** This block is the whole generated tree, not a child of anything. *)
-  in_root_seq : bool;
-      (** The sequence this block belongs to is the document's root [Blocks], so
-          a trailing [Blank_line] here trails the document rather than sitting
-          inside a nested [Blocks]; see
-          {!Typing.no_trailing_blank_line_in_blocks}. *)
+  attrs : Rule.ctx;
   config : Bconfig.t;
+  rules : Rule.t list;  (** Enabled rules, resolved once from [config]. *)
 }
 
-(* Rules as guards
-   =============== *)
+(** Which rule each {!Bconfig} knob switches on. The single place the two
+    vocabularies meet. *)
+let enabled_rules (c : Bconfig.t) : Rule.t list =
+  List.filter_map
+    (fun (on, r) -> if on then Some r else None)
+    [
+      (c.no_trailing_blank_line_in_blocks, Rule.no_trailing_blank_line_in_blocks);
+      (c.no_empty_paragraph, Rule.no_empty_paragraph);
+      (c.no_empty_blocks, Rule.no_empty_blocks);
+      (c.no_empty_list, Rule.no_empty_list);
+      (c.no_list_item_leading_blank_prefix, Rule.no_list_item_leading_blank_prefix);
+      (c.no_marker_colliding_thematic_break, Rule.no_marker_colliding_thematic_break);
+      (c.no_html_block_absorbing_successor, Rule.no_html_block_absorbing_successor);
+      (c.no_ambiguous_indented_code_after_list, Rule.no_ambiguous_indented_code_after_list);
+      (c.no_adjacent_block_quotes, Rule.no_adjacent_block_quotes);
+      (c.no_html_block_starting_paragraph, Rule.no_html_block_starting_paragraph);
+    ]
 
-(** The constructor choices {!gen_block} picks between. A rule restricts this
-    list; it never rewrites what comes out of it. *)
-type choice = [ `Leaf | `Blocks | `Block_quote | `List ]
+let init_ctx ?(lead_exclude = []) (config : Bconfig.t) : ctx =
+  {
+    attrs = Rule.init_ctx ~lead_exclude ();
+    config;
+    rules = enabled_rules config;
+  }
 
-let string_of_choice : choice -> string = function
-  | `Leaf -> "leaf"
-  | `Blocks -> "blocks"
-  | `Block_quote -> "block_quote"
-  | `List -> "list"
+let enter_container (ctx : ctx) : ctx =
+  { ctx with attrs = Rule.enter_container ctx.attrs }
+
+(* Guards
+   ------ *)
 
 (** How often each rule removed each candidate, keyed by [(rule, choice)].
 
@@ -476,8 +397,8 @@ let rejections : (string * string, int) Hashtbl.t = Hashtbl.create 16
 
 let reset_rejections () = Hashtbl.reset rejections
 
-let record_rejection ~(rule : string) ~(choice : choice) =
-  let key = (rule, string_of_choice choice) in
+let record_rejection ~(rule : string) ~(choice : Rule.choice) =
+  let key = (rule, Rule.string_of_choice choice) in
   let n = Option.value ~default:0 (Hashtbl.find_opt rejections key) in
   Hashtbl.replace rejections key (n + 1)
 
@@ -493,28 +414,6 @@ let pp_rejections ppf () =
         (fun (r, c, n) -> Format.fprintf ppf "%-28s %-12s %6d@." r c n)
         rows
 
-(** Does an enabled rule forbid [c] here? Returns the rule's name so the
-    rejection can be attributed.
-
-    A guard only ever consults {!ctx}: everything non-local the rule depends on
-    has already been carried here as an attribute, which is the entire point of
-    the frame. *)
-let forbids (ctx : ctx) (c : choice) : string option =
-  let prev_is_quote =
-    match ctx.prev with
-    | Some s -> s.trailing_block_quote
-    | None -> false
-  in
-  match c with
-  | `Block_quote when ctx.config.no_adjacent_block_quotes && prev_is_quote ->
-      (* Two quote-marker runs with nothing between them parse as one block
-         quote, so the second node has no witness. [ctx.prev] is already in
-         render order, so a quote that would sit first inside a nested [Blocks]
-         is caught here too: {!gen_blocks} seeds its first child with its own
-         predecessor. *)
-      Some "no_adjacent_block_quotes"
-  | _ -> None
-
 (** Drop the candidates the enabled rules forbid.
 
     [`Leaf] is the guaranteed candidate and no rule may forbid it: it is a
@@ -522,43 +421,20 @@ let forbids (ctx : ctx) (c : choice) : string option =
     about it. That is what keeps the list from going empty — repairs can never
     get stuck, guards can, and the fallback is the price of the trade. If a
     future rule does need to forbid a leaf, it belongs inside
-    {!gen_leaf_block_}'s weights, where the per-constructor choice still
-    leaves somewhere to go. *)
-let keep_allowed (ctx : ctx) (cands : (int * choice) list) : (int * choice) list
-    =
+    {!gen_leaf_block_}'s weights, where the per-constructor choice still leaves
+    somewhere to go. *)
+let keep_allowed (ctx : ctx) (cands : (int * Rule.choice) list) :
+    (int * Rule.choice) list =
   let allowed (_, c) =
-    match forbids ctx c with
+    match Rule.first_forbidding ctx.rules ctx.attrs c with
     | None -> true
-    | Some rule ->
-        record_rejection ~rule ~choice:c;
+    | Some r ->
+        record_rejection ~rule:r.Rule.name ~choice:c;
         false
   in
   match List.filter allowed cands with
   | [] -> [ (1, `Leaf) ]
   | kept -> kept
-
-let init_ctx ?(lead_exclude = []) (config : Bconfig.t) : ctx =
-  {
-    lead_exclude;
-    prev = None;
-    is_last = true;
-    at_root = true;
-    in_root_seq = false;
-    config;
-  }
-
-(* Descending through a container marker ([>], an item marker, a footnote
-   label). The marker absorbs the leading position and breaks adjacency with
-   whatever preceded the container, so the child starts a fresh sequence. *)
-let enter_container (ctx : ctx) : ctx =
-  {
-    ctx with
-    lead_exclude = [];
-    prev = None;
-    is_last = true;
-    at_root = false;
-    in_root_seq = false;
-  }
 
 let gen_leaf_block_ ?(config = Bconfig.default) ?(rule_lead_exclude_chars = [])
     ?(w_blank_line = 1) ?(w_thematic_break = 1) ?(w_code_block = 1)
@@ -574,12 +450,12 @@ let gen_leaf_block_ ?(config = Bconfig.default) ?(rule_lead_exclude_chars = [])
   |> List.filter (fun (w, _) -> w > 0)
   |> G.oneof_weighted
 
-let gen_leaf_block (ctx : ctx) : (Block.t * summary) G.t =
+let gen_leaf_block (ctx : ctx) : (Block.t * Rule.summary) G.t =
   let config = ctx.config in
   let w_blank_line = if config.no_direct_blank_line then Some 0 else None in
   G.map
-    (fun b -> (b, summarize b))
-    (gen_leaf_block_ ~config ~rule_lead_exclude_chars:ctx.lead_exclude
+    (fun b -> (b, Rule.summarize b))
+    (gen_leaf_block_ ~config ~rule_lead_exclude_chars:ctx.attrs.Rule.lead_exclude
        ?w_blank_line ())
 
 let limit_list_item_leading_blank_prefix (block : Block.t) : Block.t =
@@ -598,16 +474,16 @@ let limit_list_item_leading_blank_prefix (block : Block.t) : Block.t =
       | _ -> block)
   | _ -> block
 
-let rec gen_block (ctx : ctx) n : (Block.t * summary) G.t =
+let rec gen_block (ctx : ctx) n : (Block.t * Rule.summary) G.t =
   let open G in
   match n with
   | 0 -> gen_leaf_block ctx
   | n ->
       let block_quote_of_b (b, _) =
         let bq = Block.(Block_quote (Block.Block_quote.make b, Meta.none)) in
-        (bq, { summary_opaque with trailing_block_quote = true })
+        (bq, { Rule.summary_opaque with trailing_block_quote = true })
       in
-      let gen_of : choice -> (Block.t * summary) G.t = function
+      let gen_of : Rule.choice -> (Block.t * Rule.summary) G.t = function
         | `Leaf -> gen_leaf_block ctx
         (* The first child of [Blocks] inherits the leading position, and its
            predecessor in render order, so [ctx] passes through unchanged. *)
@@ -623,7 +499,7 @@ let rec gen_block (ctx : ctx) n : (Block.t * summary) G.t =
       |> List.map (fun (w, c) -> (w, gen_of c))
       |> oneof_weighted
 
-and gen_list (ctx : ctx) n : (Block.t * summary) G.t =
+and gen_list (ctx : ctx) n : (Block.t * Rule.summary) G.t =
   let config = ctx.config in
   let open G in
   (* Start integer for ordered lists; the renderer only keeps the first item's
@@ -649,7 +525,10 @@ and gen_list (ctx : ctx) n : (Block.t * summary) G.t =
     | `Unordered c when config.no_marker_colliding_thematic_break -> [ c ]
     | _ -> []
   in
-  let item_ctx = { (enter_container ctx) with lead_exclude = item_lead_exclude } in
+  let item_ctx =
+    let c = enter_container ctx in
+    { c with attrs = { c.attrs with Rule.lead_exclude = item_lead_exclude } }
+  in
   let gen_item =
     map
       (fun (block, _) ->
@@ -670,7 +549,7 @@ and gen_list (ctx : ctx) n : (Block.t * summary) G.t =
       let l = Block.List'.make type' items in
       let summary =
         {
-          summary_opaque with
+          Rule.summary_opaque with
           list_continuation_indent =
             Common_.list_last_item_continuation_indent l;
         }
@@ -678,7 +557,7 @@ and gen_list (ctx : ctx) n : (Block.t * summary) G.t =
       (Block.(List (l, Meta.none)), summary))
     (list_size gen_len gen_item)
 
-and gen_blocks (ctx : ctx) n : (Block.t * summary) G.t =
+and gen_blocks (ctx : ctx) n : (Block.t * Rule.summary) G.t =
   let open G in
   let config = ctx.config in
   let gen_len =
@@ -696,31 +575,20 @@ and gen_blocks (ctx : ctx) n : (Block.t * summary) G.t =
      can become guards; a [list_size] cannot express it, because its elements
      are independent.
 
-     The seed is [ctx.prev], not [None]: a nested [Blocks] is transparent in
-     render order, so its first child's predecessor is the [Blocks]'s own
-     predecessor. A transparent child likewise passes its predecessor along
-     rather than becoming one. That is exactly the distinction the repair
-     traversals below make when they peel [Blocks] but stop at containers. *)
+     The per-child context comes from {!Rule.nth_child} and the accumulator
+     from {!Rule.advance}, which is the same pair {!Rule.check} uses to walk a
+     finished tree. Sharing them is what stops the generator and the checker
+     from disagreeing about what "the previous sibling" means. *)
   let rec fold i prev acc =
     if i >= len then return (List.rev acc)
     else
       let child_ctx =
-        {
-          ctx with
-          (* Only the head sits at the leading position; the rest start fresh
-             lines. *)
-          lead_exclude = (if i = 0 then ctx.lead_exclude else []);
-          prev;
-          is_last = i = len - 1;
-          at_root = false;
-          in_root_seq = ctx.at_root;
-        }
+        { ctx with attrs = Rule.nth_child ctx.attrs ~i ~len ~prev }
       in
       let* b, s = gen_block child_ctx n in
-      let prev = if s.transparent then prev else Some s in
-      fold (i + 1) prev (b :: acc)
+      fold (i + 1) (Rule.advance prev s) (b :: acc)
   in
-  let* blocks = fold 0 ctx.prev [] in
+  let* blocks = fold 0 ctx.attrs.Rule.prev [] in
   let blocks =
     if config.no_html_block_absorbing_successor then
       separate_absorbing_html blocks
@@ -731,7 +599,7 @@ and gen_blocks (ctx : ctx) n : (Block.t * summary) G.t =
      fold never saw. Becomes [summary_seq (List.map snd children)] once that
      repair is a guard. *)
   let block = Block.Blocks (blocks, Meta.none) in
-  return (block, summarize block)
+  return (block, Rule.summarize block)
 
 let mk_gen_block ?(config = Bconfig.default) () : Block.t G.t =
   let gen =
@@ -802,4 +670,4 @@ let%expect_test "guards report how often they rejected a candidate" =
   sample Bconfig.default;
   [%expect {| no candidate was rejected |}];
   sample Bconfig.typed_md;
-  [%expect {| no_adjacent_block_quotes     block_quote    2735 |}]
+  [%expect {| no adjacent block quotes     block_quote    2735 |}]
