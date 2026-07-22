@@ -356,12 +356,11 @@ type ctx = {
   rules : Rule.t list;  (** Enabled rules, resolved once from [config]. *)
 }
 
-(* CR: what does "two vocabularies" means here? Vague *)
-(** Which rule each {!Bconfig} knob switches on. The single place the two
-    vocabularies meet. *)
-(** Each rule paired with the {!Bconfig} knob that switches it on: the getter
-    for reading a config, the setter so a test can toggle one rule at a time.
-    The single place the two vocabularies meet. *)
+(** Each {!Rule.t} paired with the {!Bconfig} field that switches it on: a
+    getter for reading a config, a setter so a test can toggle one rule at a
+    time. This is the only place that maps between the two ways a rule is named
+    — as a [Rule.t] value below this module, and as a [bool] field of
+    [Bconfig.t] above it. Everywhere else works in one or the other. *)
 let rule_knobs :
     (Rule.t * (Bconfig.t -> bool) * (bool -> Bconfig.t -> Bconfig.t)) list =
   [
