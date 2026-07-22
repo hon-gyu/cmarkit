@@ -63,43 +63,6 @@ let code_block_egs : Block.t list =
     ]
   |> List.map (fun cb -> Block.(Code_block (cb, Meta.none)))
 
-(* Render-order peeling for the html-block absorption rule
-   ({!Typing.no_html_block_absorbing_successor}). Absorption only crosses
-   [Blocks] siblings; a [Block_quote]/[List] boundary stops it, so we peel
-   [Blocks] tails/heads but no further.
-
-   TODO(migration): subsumed by {!summarize}, but not identical — these treat an
-   empty [Blocks] as opaque where {!summarize} treats it as transparent, which is
-   the correct reading and would move baselines. Delete each when the rule that
-   uses it becomes a guard. *)
-let rec trailing_absorbing : Block.t -> bool = function
-  | Block.Blocks (bs, _) -> (
-      match List.rev bs with
-      | last :: _ -> trailing_absorbing last
-      | [] -> false)
-  | Block.Html_block (lines, _) -> Common_.html_block_absorbs lines
-  | _ -> false
-
-let rec leads_with_blank : Block.t -> bool = function
-  | Block.Blocks (b0 :: _, _) -> leads_with_blank b0
-  | Block.Blank_line _ -> true
-  | _ -> false
-
-(* Insert a [Blank_line] between any two consecutive siblings where the first's
-   render-order trailing leaf is an absorbing html block and the second does not
-   already start with a blank line. Never appends after the last element, so a
-   genuinely-final html block keeps no trailing blank. *)
-let separate_absorbing_html (bs : Block.t list) : Block.t list =
-  let blank = Block.Blank_line ("", Meta.none) in
-  let rec go = function
-    | a :: (b :: _ as rest) ->
-        if trailing_absorbing a && not (leads_with_blank b) then
-          a :: blank :: go rest
-        else a :: go rest
-    | last -> last
-  in
-  go bs
-
 (** Fence indented code blocks in the render-order context rejected by
     {!Typing.no_ambiguous_indented_code_after_list}.
 
@@ -484,11 +447,33 @@ let gen_leaf_block_ ?(config = Bconfig.default) ?(rule_lead_exclude_chars = [])
 
 let gen_leaf_block (ctx : ctx) : (Block.t * Rule.summary) G.t =
   let config = ctx.config in
-  let w_blank_line = if config.no_direct_blank_line then Some 0 else None in
-  G.map
-    (fun b -> (b, Rule.summarize b))
-    (gen_leaf_block_ ~config ~rule_lead_exclude_chars:ctx.attrs.Rule.lead_exclude
-       ?w_blank_line ())
+  (* When a preceding absorbing html block would swallow this leaf, the only
+     leaf that closes it is a blank line. This is the leaf half of
+     {!Rule.no_html_block_absorbing_successor}, which its guard cannot reach:
+     [choice] does not distinguish a blank leaf from a paragraph.
+
+     It yields to [no_direct_blank_line] rather than overriding it. The two
+     collide only at a trailing position of a nested [Blocks] with
+     [no_trailing_blank_line_in_blocks] on: closing the html demands a blank
+     there, the trailing rule forbids one, and no single block satisfies both.
+     That is a genuine over-constraint, not something a forward force can fix —
+     the real repair is to not place an absorbing html block there in the first
+     place, which is a guard on the html leaf's own position and wants the
+     render edge (step 7). [typed_md] never enables the trailing rule, so the
+     collision does not arise there; when it is enabled, this yields and the
+     html rule is the one left unsatisfied, visibly. *)
+  let must_blank =
+    config.no_html_block_absorbing_successor
+    && Rule.must_lead_blank ctx.attrs
+    && not config.no_direct_blank_line
+  in
+  if must_blank then G.map (fun b -> (b, Rule.summarize b)) gen_blank_line
+  else
+    let w_blank_line = if config.no_direct_blank_line then Some 0 else None in
+    G.map
+      (fun b -> (b, Rule.summarize b))
+      (gen_leaf_block_ ~config
+         ~rule_lead_exclude_chars:ctx.attrs.Rule.lead_exclude ?w_blank_line ())
 
 let limit_list_item_leading_blank_prefix (block : Block.t) : Block.t =
   let blank = function
@@ -621,15 +606,9 @@ and gen_blocks (ctx : ctx) n : (Block.t * Rule.summary) G.t =
       fold (i + 1) (Rule.advance prev s) (b :: acc)
   in
   let* blocks = fold 0 ctx.attrs.Rule.prev [] in
-  let blocks =
-    if config.no_html_block_absorbing_successor then
-      separate_absorbing_html blocks
-    else blocks
-  in
-  (* TODO(migration): recomputed rather than folded up from the children's
-     summaries because [separate_absorbing_html] may have inserted blocks the
-     fold never saw. Becomes [summary_seq (List.map snd children)] once that
-     repair is a guard. *)
+  (* No repair pass runs on [blocks] any more, so the children the fold saw are
+     exactly the children of the result; [summarize] re-folds their summaries,
+     which is what the fold already computed. *)
   let block = Block.Blocks (blocks, Meta.none) in
   return (block, Rule.summarize block)
 
@@ -726,4 +705,8 @@ let%expect_test "guards report how often they rejected a candidate" =
   sample Bconfig.default;
   [%expect {| no candidate was rejected |}];
   sample Bconfig.typed_md;
-  [%expect {| no adjacent block quotes     block_quote    2735 |}]
+  [%expect {|
+    no adjacent block quotes     block_quote    2658
+    no html block absorbing successor block_quote     840
+    no html block absorbing successor list            840
+    |}]

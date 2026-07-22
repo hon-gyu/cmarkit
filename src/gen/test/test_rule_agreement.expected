@@ -1,15 +1,15 @@
 rule                                           enabled    disabled   isolated  
 --------------------------------------------------------------------------------
-no trailing blank line in blocks               0/2000     107/2000   107/2000  
+no trailing blank line in blocks               0/2000     120/2000   120/2000  
 no empty paragraph                             0/2000     0/2000     74/2000     (implied by another knob)
-no empty blocks                                0/2000     506/2000   506/2000  
-no empty list                                  0/2000     453/2000   453/2000  
-no list-item leading blank prefix              0/2000     8/2000     8/2000    
-no marker-colliding thematic break in list item 0/2000     132/2000   132/2000  
+no empty blocks                                0/2000     507/2000   507/2000  
+no empty list                                  0/2000     451/2000   451/2000  
+no list-item leading blank prefix              0/2000     7/2000     7/2000    
+no marker-colliding thematic break in list item 0/2000     129/2000   129/2000  
 no html block absorbing successor              0/2000     150/2000   150/2000  
-no ambiguous indented code after list          0/2000     69/2000    69/2000   
-no adjacent block quotes                       0/2000     150/2000   150/2000  
-no HTML-block-starting paragraph               0/2000     130/2000   130/2000  
+no ambiguous indented code after list          0/2000     66/2000    66/2000   
+no adjacent block quotes                       0/2000     145/2000   145/2000  
+no HTML-block-starting paragraph               0/2000     129/2000   129/2000  
 
 all rules agree with their checkers
 

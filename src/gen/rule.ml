@@ -472,18 +472,45 @@ let no_html_block_starting_paragraph =
     {!field-leads_with_blank} is what actually closes the html block, which is
     not the same as the node {e being} a [Blank_line] — a [Blocks] whose first
     render-order child is blank closes it just as well. The old formulation got
-    both cases via [Block.normalize] flattening them away first. *)
+    both cases via [Block.normalize] flattening them away first.
+
+    As a guard, this is the first rule whose successor granularity does not
+    match {!choice}. The rule wants "the next block leads with a blank"; the
+    choice list only distinguishes constructors. Two of them —
+    [`Block_quote] and [`List] — always render a marker on their first line and
+    so can never lead with a blank, so they are forbidden outright when the
+    predecessor absorbs. A [`Blocks] is transparent: its first render-order
+    child inherits the same absorbing predecessor through {!nth_child}, so the
+    constraint reaches it by recursion and needs no separate case. That leaves
+    [`Leaf], whose leading edge is invisible here — a leaf can be a
+    [Blank_line] or a paragraph, and [choice] cannot tell them apart. So the
+    leaf half is enforced where the leaf is built, via {!must_lead_blank}, not
+    as a guard. The seam is exactly the render edge that step 7 removes: once a
+    leaf's leading edge is an attribute, both halves collapse into one. *)
+let prev_absorbs (ctx : ctx) : bool =
+  match ctx.prev with
+  | Some s -> s.trailing_absorbing
+  | None -> false
+
+(** Must the block generated at [ctx] lead with a blank line? True exactly when
+    an absorbing html block sits immediately before it in render order and would
+    otherwise swallow it. The leaf counterpart to the container choices
+    {!no_html_block_absorbing_successor} forbids; see its comment. *)
+let must_lead_blank (ctx : ctx) : bool = prev_absorbs ctx
+
 let no_html_block_absorbing_successor =
-  make ~name:"no html block absorbing successor" (fun ctx b ->
-      let prev_absorbs =
-        match ctx.prev with
-        | Some s -> s.trailing_absorbing
-        | None -> false
-      in
-      let s = summarize b in
-      if prev_absorbs && (not s.transparent) && not s.leads_with_blank then
-        Some (meta_of "block" b)
-      else None)
+  {
+    name = "no html block absorbing successor";
+    normalize = false;
+    forbids =
+      (fun ctx c -> prev_absorbs ctx && (c = `Block_quote || c = `List));
+    violated =
+      (fun ctx b ->
+        let s = summarize b in
+        if prev_absorbs ctx && (not s.transparent) && not s.leads_with_blank
+        then Some (meta_of "block" b)
+        else None);
+  }
 
 (** {2 No ambiguous indented code after a list}
 
