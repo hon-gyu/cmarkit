@@ -33,13 +33,6 @@ open Cmarkit_
 
 (** {1 Synthesized attributes} *)
 
-(** What a subtree looks like from the outside, to whatever follows it in render
-    order.
-
-    Peeling follows {e render order}, not tree structure: nested [Blocks] are
-    transparent, so a [Blocks]'s trailing edge is its last child's and its
-    leading edge is its first child's. [Block_quote], [List] and footnote
-    definitions are container boundaries and stop the peel. *)
 type summary = {
   transparent : bool;
       (** No render-order content at all: an empty [Blocks], or a [Blocks] of
@@ -60,6 +53,13 @@ type summary = {
           four columns and a following indented code block is absorbed into the
           item. *)
 }
+(** What a subtree looks like from the outside, to whatever follows it in render
+    order.
+
+    Peeling follows {e render order}, not tree structure: nested [Blocks] are
+    transparent, so a [Blocks]'s trailing edge is its last child's and its
+    leading edge is its first child's. [Block_quote], [List] and footnote
+    definitions are container boundaries and stop the peel. *)
 
 let summary_nil =
   {
@@ -102,8 +102,6 @@ let rec summarize (b : Block.t) : summary =
 
 (** {1 Inherited attributes} *)
 
-(** What a block needs to know about where it sits, carried down from its
-    parent. Read at every choice point and modified when descending. *)
 type ctx = {
   lead_exclude : char list;
       (** Characters a thematic break may not use here, because this block sits
@@ -118,13 +116,14 @@ type ctx = {
           the start of a sequence and immediately inside a container, whose
           marker breaks any adjacency with what came before it. *)
   is_last : bool;  (** Last position of the enclosing render-order sequence. *)
-  at_root : bool;
-      (** This block is the whole tree, not a child of anything. *)
+  at_root : bool;  (** This block is the whole tree, not a child of anything. *)
   in_root_seq : bool;
       (** The sequence this block belongs to is the document's root [Blocks], so
           a trailing [Blank_line] here trails the document rather than sitting
           inside a nested [Blocks]. *)
 }
+(** What a block needs to know about where it sits, carried down from its
+    parent. Read at every choice point and modified when descending. *)
 
 let init_ctx ?(lead_exclude = []) () : ctx =
   {
@@ -171,9 +170,9 @@ let advance (prev : summary option) (s : summary) : summary option =
 
 (** {1 Rules} *)
 
+type choice = [ `Leaf | `Blocks | `Block_quote | `List ]
 (** The constructor choices a block generator picks between. A rule restricts
     this list; it never rewrites what comes out of it. *)
-type choice = [ `Leaf | `Blocks | `Block_quote | `List ]
 
 let string_of_choice : choice -> string = function
   | `Leaf -> "leaf"
@@ -310,8 +309,8 @@ let no_empty_paragraph =
 (** {2 No empty [Blocks]}
 
     An empty [Blocks []] renders to nothing, so as a nested block it is never
-    reconstructed by the parser. (The empty document is [Block.empty = Blocks []],
-    but that is the root, not a nested block.) *)
+    reconstructed by the parser. (The empty document is
+    [Block.empty = Blocks []], but that is the root, not a nested block.) *)
 let no_empty_blocks =
   make ~name:"no empty blocks" (fun _ b ->
       match b with
@@ -336,8 +335,7 @@ let no_empty_list =
     A list item may start with one blank line before its first non-blank block:
 
     {[
-      -
-        x
+    -x
     ]}
 
     still parses as one list item containing [Blank_line; Paragraph "x"]. With
@@ -345,9 +343,7 @@ let no_empty_list =
     item before the following non-blank line is processed:
 
     {[
-      -
-
-        x
+    -x
     ]}
 
     reparses as a blank-only list item followed by an outside paragraph. This is
@@ -410,7 +406,8 @@ let rec leading_block (b : Block.t) : Block.t option =
 let no_marker_colliding_thematic_break =
   let item_collides marker (item, _) =
     match leading_block (Block.List_item.block item) with
-    | Some (Block.Thematic_break (tb, _)) -> thematic_break_char tb = Some marker
+    | Some (Block.Thematic_break (tb, _)) ->
+        thematic_break_char tb = Some marker
     | _ -> false
   in
   make ~name:"no marker-colliding thematic break in list item" (fun _ b ->
@@ -476,17 +473,17 @@ let no_html_block_starting_paragraph =
 
     As a guard, this is the first rule whose successor granularity does not
     match {!choice}. The rule wants "the next block leads with a blank"; the
-    choice list only distinguishes constructors. Two of them —
-    [`Block_quote] and [`List] — always render a marker on their first line and
-    so can never lead with a blank, so they are forbidden outright when the
-    predecessor absorbs. A [`Blocks] is transparent: its first render-order
-    child inherits the same absorbing predecessor through {!nth_child}, so the
-    constraint reaches it by recursion and needs no separate case. That leaves
-    [`Leaf], whose leading edge is invisible here — a leaf can be a
-    [Blank_line] or a paragraph, and [choice] cannot tell them apart. So the
-    leaf half is enforced where the leaf is built, via {!must_lead_blank}, not
-    as a guard. The seam is exactly the render edge that step 7 removes: once a
-    leaf's leading edge is an attribute, both halves collapse into one. *)
+    choice list only distinguishes constructors. Two of them — [`Block_quote]
+    and [`List] — always render a marker on their first line and so can never
+    lead with a blank, so they are forbidden outright when the predecessor
+    absorbs. A [`Blocks] is transparent: its first render-order child inherits
+    the same absorbing predecessor through {!nth_child}, so the constraint
+    reaches it by recursion and needs no separate case. That leaves [`Leaf],
+    whose leading edge is invisible here — a leaf can be a [Blank_line] or a
+    paragraph, and [choice] cannot tell them apart. So the leaf half is enforced
+    where the leaf is built, via {!must_lead_blank}, not as a guard. The seam is
+    exactly the render edge that step 7 removes: once a leaf's leading edge is
+    an attribute, both halves collapse into one. *)
 let prev_absorbs (ctx : ctx) : bool =
   match ctx.prev with
   | Some s -> s.trailing_absorbing
@@ -502,8 +499,7 @@ let no_html_block_absorbing_successor =
   {
     name = "no html block absorbing successor";
     normalize = false;
-    forbids =
-      (fun ctx c -> prev_absorbs ctx && (c = `Block_quote || c = `List));
+    forbids = (fun ctx c -> prev_absorbs ctx && (c = `Block_quote || c = `List));
     violated =
       (fun ctx b ->
         let s = summarize b in
