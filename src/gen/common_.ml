@@ -12,6 +12,7 @@ let pp_block fmt b =
     Format.fprintf fmt "%a" Sexplib0.Sexp.pp_hum (sexp_of_block b)
   else Format.printf "%a" Pp.pp_block b
 
+(** JSON-like value with additions *)
 type value =
   | String of string
   | Int of int
@@ -35,7 +36,8 @@ let metadata_concat ?(wrapped_name : (string * string) option) m1 m2 =
 let box_frame_default = true
 let to_commonmark b = b |> Doc.make |> Cmarkit_commonmark.of_doc
 
-let visible cm =
+let to_visible : string -> string =
+ fun cm ->
   let b = Buffer.create (String.length cm) in
   String.iter
     (function
@@ -50,7 +52,7 @@ let pp_cm ?(box_frame = box_frame_default) ?(transform_visible = true) () fmt
     (cm : string) =
   if not box_frame then Format.fprintf fmt "%s" cm
   else
-    let cm = if transform_visible then visible cm else cm in
+    let cm = if transform_visible then to_visible cm else cm in
     let b =
       PrintBox.(
         frame @@ text_with_style Style.(default |> set_preformatted true) cm)
@@ -78,6 +80,7 @@ let pp_metadata fmt m =
   let pp_pair fmt (k, v) = Fmt.pf fmt "@[<v>\"%s\":@ %a@]" k (pp_value ()) v in
   Fmt.pf fmt "@[<v>{ %a@,}@]" (Fmt.list ~sep:(Fmt.any "@,; ") pp_pair) m
 
+(* CR: what is this for? *)
 (* An [Html_block] whose end condition is never met by its own lines stays
    "open" at its last line, so on reparse it swallows whatever block renders
    right after it (until a blank line closes it or its container ends). Types 6/7
@@ -116,6 +119,7 @@ let reparse ?emphasis_delims ?strong_emphasis_delims ?intraword_emphasis
        ?smart_punctuation
   |> Doc.block
 
+(* CR: what is this for? *)
 (** Continuation indentation of the final list item as it will be emitted by the
     CommonMark renderer.
 
