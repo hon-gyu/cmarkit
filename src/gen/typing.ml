@@ -6,9 +6,9 @@
 
     The rules themselves — and their justifications — live in {!module:Rule},
     where each is stated once and read from both the generating and the checking
-    side. This module is the {!Property.t} face of them: it runs
-    {!Rule.check}, the shared attribute traversal, and reports the first
-    offending node in the shape the counterexample printer wants.
+    side. This module is the {!Property.t} face of them: it runs {!Rule.check},
+    the shared attribute traversal, and reports the first offending node in the
+    shape the counterexample printer wants.
 
     Every rule used to carry its own recursive [check] that re-implemented the
     same descent and the same fold-until-first-failure. Those are gone; there is
@@ -26,28 +26,28 @@ let property_of_rule (r : Rule.t) : Property.t =
   { name = r.Rule.name; check }
 
 let no_trailing_blank_line_in_blocks =
-  property_of_rule Rule.no_trailing_blank_line_in_blocks
+  property_of_rule Rules.no_trailing_blank_line_in_blocks
 
-let no_empty_paragraph = property_of_rule Rule.no_empty_paragraph
-let no_empty_blocks = property_of_rule Rule.no_empty_blocks
-let no_empty_list = property_of_rule Rule.no_empty_list
+let no_empty_paragraph = property_of_rule Rules.no_empty_paragraph
+let no_empty_blocks = property_of_rule Rules.no_empty_blocks
+let no_empty_list = property_of_rule Rules.no_empty_list
 
 let no_list_item_leading_blank_prefix =
-  property_of_rule Rule.no_list_item_leading_blank_prefix
+  property_of_rule Rules.no_list_item_leading_blank_prefix
 
 let no_marker_colliding_thematic_break =
-  property_of_rule Rule.no_marker_colliding_thematic_break
+  property_of_rule Rules.no_marker_colliding_thematic_break
 
 let no_html_block_starting_paragraph =
-  property_of_rule Rule.no_html_block_starting_paragraph
+  property_of_rule Rules.no_html_block_starting_paragraph
 
 let no_html_block_absorbing_successor =
-  property_of_rule Rule.no_html_block_absorbing_successor
+  property_of_rule Rules.no_html_block_absorbing_successor
 
 let no_ambiguous_indented_code_after_list =
-  property_of_rule Rule.no_ambiguous_indented_code_after_list
+  property_of_rule Rules.no_ambiguous_indented_code_after_list
 
-let no_adjacent_block_quotes = property_of_rule Rule.no_adjacent_block_quotes
+let no_adjacent_block_quotes = property_of_rule Rules.no_adjacent_block_quotes
 
 (* All rules aggregated *)
 let typed : Property.t =
@@ -57,8 +57,7 @@ let typed : Property.t =
       (* & no_trailing_blank_line_in_blocks *)
       & no_empty_paragraph
       & no_empty_blocks & no_empty_list & no_marker_colliding_thematic_break
-      & no_list_item_leading_blank_prefix
-      & no_html_block_absorbing_successor
+      & no_list_item_leading_blank_prefix & no_html_block_absorbing_successor
       & no_ambiguous_indented_code_after_list & no_adjacent_block_quotes
       & no_html_block_starting_paragraph)
   in
@@ -67,8 +66,8 @@ let typed : Property.t =
 
 (** {1 Others}
 
-    Not yet {!Rule.t}s: these are plain predicates with no generating clause
-    and no need for the traversal. *)
+    Not yet {!Rule.t}s: these are plain predicates with no generating clause and
+    no need for the traversal. *)
 
 (* Layout.blanks is only spaces and tabs, no newline
 

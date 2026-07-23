@@ -327,34 +327,34 @@ type ctx = {
 let rule_knobs :
     (Rule.t * (Bconfig.t -> bool) * (bool -> Bconfig.t -> Bconfig.t)) list =
   [
-    ( Rule.no_trailing_blank_line_in_blocks,
+    ( Rules.no_trailing_blank_line_in_blocks,
       (fun c -> c.no_trailing_blank_line_in_blocks),
       fun v c -> { c with no_trailing_blank_line_in_blocks = v } );
-    ( Rule.no_empty_paragraph,
+    ( Rules.no_empty_paragraph,
       (fun c -> c.no_empty_paragraph),
       fun v c -> { c with no_empty_paragraph = v } );
-    ( Rule.no_empty_blocks,
+    ( Rules.no_empty_blocks,
       (fun c -> c.no_empty_blocks),
       fun v c -> { c with no_empty_blocks = v } );
-    ( Rule.no_empty_list,
+    ( Rules.no_empty_list,
       (fun c -> c.no_empty_list),
       fun v c -> { c with no_empty_list = v } );
-    ( Rule.no_list_item_leading_blank_prefix,
+    ( Rules.no_list_item_leading_blank_prefix,
       (fun c -> c.no_list_item_leading_blank_prefix),
       fun v c -> { c with no_list_item_leading_blank_prefix = v } );
-    ( Rule.no_marker_colliding_thematic_break,
+    ( Rules.no_marker_colliding_thematic_break,
       (fun c -> c.no_marker_colliding_thematic_break),
       fun v c -> { c with no_marker_colliding_thematic_break = v } );
-    ( Rule.no_html_block_absorbing_successor,
+    ( Rules.no_html_block_absorbing_successor,
       (fun c -> c.no_html_block_absorbing_successor),
       fun v c -> { c with no_html_block_absorbing_successor = v } );
-    ( Rule.no_ambiguous_indented_code_after_list,
+    ( Rules.no_ambiguous_indented_code_after_list,
       (fun c -> c.no_ambiguous_indented_code_after_list),
       fun v c -> { c with no_ambiguous_indented_code_after_list = v } );
-    ( Rule.no_adjacent_block_quotes,
+    ( Rules.no_adjacent_block_quotes,
       (fun c -> c.no_adjacent_block_quotes),
       fun v c -> { c with no_adjacent_block_quotes = v } );
-    ( Rule.no_html_block_starting_paragraph,
+    ( Rules.no_html_block_starting_paragraph,
       (fun c -> c.no_html_block_starting_paragraph),
       fun v c -> { c with no_html_block_starting_paragraph = v } );
   ]
@@ -464,7 +464,7 @@ let gen_leaf_block (ctx : ctx) : (Block.t * Rule.summary) G.t =
      html rule is the one left unsatisfied, visibly. *)
   let must_blank =
     config.no_html_block_absorbing_successor
-    && Rule.must_lead_blank ctx.attrs
+    && Rules.must_lead_blank ctx.attrs
     && not config.no_direct_blank_line
   in
   if must_blank then G.map (fun b -> (b, Rule.summarize b)) gen_blank_line
