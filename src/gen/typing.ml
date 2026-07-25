@@ -4,15 +4,11 @@
     the generated AST is typed), then it should follow the nice properties we'd
     like to see.
 
-    The rules themselves — and their justifications — live in {!module:Rule},
-    where each is stated once and read from both the generating and the checking
-    side. This module is the {!Property.t} face of them: it runs {!Rule.check},
-    the shared attribute traversal, and reports the first offending node in the
-    shape the counterexample printer wants.
-
-    Every rule used to carry its own recursive [check] that re-implemented the
-    same descent and the same fold-until-first-failure. Those are gone; there is
-    one traversal now. *)
+    The rules themselves and their justifications live in {!module:Rule}, where
+    each is stated once and read from both the generating and the checking side.
+    This module is the {!Property.t} face of them: it runs {!Rule.check}, the
+    shared attribute traversal, and reports the first offending node in the
+    shape the counterexample printer wants. *)
 
 open Cmarkit_
 
@@ -81,8 +77,8 @@ let blank_line : Block.t -> bool = function
 
    @otherwise
       A [Break] inline emits a [newline]
-      call in the renderer, which cuts the heading line short — anything after the
-      break is lost on re-parse. *)
+      call in the renderer, which cuts the heading line short
+      -- anything after the break is lost on re-parse. *)
 
 let rec no_break : Inline.t -> bool = function
   | Inline.Break _ -> false

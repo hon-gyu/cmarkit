@@ -220,7 +220,7 @@ let no_html_block_starting_paragraph =
     and [`List] — always render a marker on their first line and so can never
     lead with a blank, so they are forbidden outright when the predecessor
     absorbs. A [`Blocks] is transparent: its first render-order child inherits
-    the same absorbing predecessor through {!nth_child}, so the constraint
+    the same absorbing predecessor through {!enter_nth_child}, so the constraint
     reaches it by recursion and needs no separate case. That leaves [`Leaf],
     whose leading edge is invisible here — a leaf can be a [Blank_line] or a
     paragraph, and [choice] cannot tell them apart. So the leaf half is enforced

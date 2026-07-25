@@ -1,65 +1,136 @@
-(** {0 One description of a well-formed AST, consulted from both sides}
+(** {0 Typing rules}
 
-    A typing rule is stated once, here, as a value with two clauses:
+    A {e typing rule} states a shape a generated AST should not have. Two kinds
+    of reason put a shape here.
 
-    - {!field-forbids} restricts the candidates a generator may pick at a choice
-      point, so bad shapes are never produced;
-    - {!field-violated} decides whether a finished node breaks the rule, so a
-      given AST can be checked.
+    - No markdown text parses to it. [Blocks [Block_quote a; Block_quote b]] is
+      one: rendered, the two [>] markers land on consecutive lines and parse
+      back as a single quote, so nothing the parser produces has that shape.
+    - It is reachable, but it breaks a property we want generated trees to have,
+      such as round-trip stability or an unambiguous re-parse. A [Blank_line] at
+      the tail of a nested [Blocks] is one: the parser does emit trailing blank
+      lines, but which container owns one is not recoverable from the rendered
+      text.
 
-    Both clauses read the same attributes — {!ctx} flowing down, {!summary}
-    flowing across — and {!check} computes them with the same traversal the
-    generator uses while building. That is what makes the two clauses testable
-    against each other rather than merely written next to each other: every AST
-    from a generator honouring [forbids] must pass [violated], and disabling a
-    rule must eventually produce an AST that [violated] flags. Neither test is
-    expressible while the generating and checking sides are written separately.
+    Either way the consequence for testing is the same. A tree with such a shape
+    fails a property for a reason that says nothing about the code under test,
+    so the generator has to keep the shape out.
 
-    Why attributes at all: a constraint becomes {e local} once the right
-    attribute exists, because everything non-local it depended on has been
-    carried to it. Each rule here is non-local only in needing one or two facts
-    about a parent or a previous sibling, so each becomes a guard on a choice
-    rather than a repair traversal after the fact. Guards compose — they only
-    ever remove candidates, so switching a rule on cannot break a rule that
-    already held — where repairs do not: an inserted separator can create the
-    very shape another repair forbids, and their composition order is
-    load-bearing and unchecked.
+    The rules themselves live in {!module:Rules}; this module holds the
+    vocabulary they are written in and the traversal that runs them. Which rules
+    are switched on is a third question, answered by [Gen.Bconfig]: rules are
+    discovered by analysing counterexamples, so the set is provisional and each
+    rule has to be measurable with and without it.
 
-    This module sits below {!module:Gen} and knows nothing about configs. A rule
-    says {e what} it forbids; whether it is switched on is a separate question,
-    answered by [Gen.Bconfig]. *)
+    {1 The two forms of a rule}
+
+    A rule is consulted at two different times, and the two uses cannot share
+    one formulation.
+
+    The generator ({!module:Gen}) consults it before the node exists: it is at a
+    branch point holding the constructors it could recurse into, and needs to
+    know which of them to drop. That is {!field-forbids}.
+
+    The checker consults it on a finished tree, produced either by a generator
+    with the rule switched off or by parsing real input, and needs to report the
+    node that breaks the rule. That is {!field-violated}.
+
+    A {!t} pairs the two under one name. The pairing is what makes them testable
+    against each other: any tree from a generator that obeys [forbids] must pass
+    [violated], and switching a rule off must eventually produce a tree that
+    [violated] reports.
+
+    {1 Non-local rules}
+
+    "No block quote after a block quote" is not a property of a node in
+    isolation. It relates a node to the block rendered before it, which is an
+    arbitrary subtree the generator finished building earlier.
+
+    Such rules are made local in two steps. Every finished subtree reports a
+    fixed set of facts about itself ({!summary}), and that report is handed to
+    the next block as part of what it knows about its position ({!ctx}). Both
+    clauses of a rule read only those two records, so a rule is a predicate over
+    one node and its recorded surroundings, which the generator can evaluate
+    before committing to a branch. (These are the synthesized and inherited
+    attributes of an attribute grammar; nothing below depends on that
+    vocabulary.)
+
+    A second consequence is that the generator never produces a bad shape and
+    then repairs it. Repairs do not compose: inserting a separator to fix one
+    shape can create the shape another repair removes, which makes their order
+    significant and unchecked. Dropping candidates does compose, because it only
+    ever removes. Switching a rule on cannot break a rule that already held. *)
 
 open Cmarkit_
 
-(** {1 Synthesized attributes} *)
+type metadata = Common_.metadata
+
+(** {1 What the generator decides at a branch point} *)
+
+type choice = [ `Leaf | `Blocks | `Block_quote | `List ]
+(** The branches of the block generator's recursion, and so the whole vocabulary
+    available before a node exists.
+
+    It is much coarser than [Block.t]. [`Leaf] covers paragraph, heading, code
+    block, html block, blank line and thematic break alike, because which leaf
+    to build is a later and separate decision. Extension blocks ([Ext_div],
+    [Ext_table], footnote definitions and the rest) are absent because the
+    generator does not produce them yet; the list grows when it does. There is
+    no [Block.t -> choice] function: the checking side is given the block
+    itself, so it never needs one.
+
+    The coarseness has a consequence. A rule whose condition separates two
+    blocks that map to the same choice cannot be stated as {!field-forbids}.
+    "The next block must lead with a blank line" is such a rule: a [`Leaf] can
+    be a [Blank_line] or a paragraph, and this type cannot tell them apart. Such
+    a rule states as a guard whatever part it can and is enforced where the leaf
+    is built for the rest. *)
+
+(** Key for the per-rule rejection counts [Gen] keeps, which record how often
+    each rule dropped each candidate. *)
+let string_of_choice : choice -> string = function
+  | `Leaf -> "leaf"
+  | `Blocks -> "blocks"
+  | `Block_quote -> "block_quote"
+  | `List -> "list"
+
+(** {1 What a finished block looks like to whatever follows it} *)
 
 type summary = {
   transparent : bool;
-      (** No render-order content at all: an empty [Blocks], or a [Blocks] of
-          nothing but those. Such a subtree neither establishes nor clears
-          context for its successor, so a sequence passes the previous summary
-          straight through it. *)
+      (** This subtree renders no text at all: an empty [Blocks], or a [Blocks]
+          containing only such subtrees. It can therefore not be anybody's
+          predecessor; see {!advance}, which passes the real predecessor through
+          it. *)
   trailing_block_quote : bool;
-      (** The last block in render order is a [Block_quote]. Two flush quote
-          markers parse as one quote. *)
+      (** The last block this subtree renders is a [Block_quote], which includes
+          the case where the subtree is one. Two [>] markers on consecutive
+          lines parse as a single quote. *)
   trailing_absorbing : bool;
-      (** The last block in render order is an html block left open at its last
-          line, which swallows whatever renders after it. *)
+      (** The last block this subtree renders is an html block still open on its
+          final line, which swallows whatever is rendered after it. *)
   leads_with_blank : bool;
-      (** The first block in render order is a [Blank_line]. A successor that
-          already starts blank needs no separator inserted before it. *)
+      (** The first block this subtree renders is a [Blank_line]. A successor
+          that already starts blank needs no separator inserted before it. *)
   list_continuation_indent : int option;
-      (** For a trailing [List], its final item's continuation indent. At most
-          four columns and a following indented code block is absorbed into the
-          item. *)
+      (** For a subtree whose last rendered block is a [List], that list's final
+          item's continuation indent. At four columns or fewer, a following
+          indented code block is absorbed into the item instead of standing on
+          its own. *)
 }
-(** What a subtree looks like from the outside, to whatever follows it in render
-    order.
+(** What a finished subtree reports about itself to whatever is rendered after
+    it. Each field is here because some rule needs that fact; this is not a
+    general-purpose digest.
 
-    Peeling follows {e render order}, not tree structure: nested [Blocks] are
-    transparent, so a [Blocks]'s trailing edge is its last child's and its
-    leading edge is its first child's. [Block_quote], [List] and footnote
-    definitions are container boundaries and stop the peel. *)
+    Every field is about the {e rendered text} of the whole subtree, not about
+    its direct children. "The last block this subtree renders" is found by
+    descending: for a [Blocks] it is the last child's last block, recursively,
+    because [Blocks] emits no syntax of its own and [Blocks [Blocks [a]; b]]
+    renders exactly as [Blocks [a; b]] does. At a [Block_quote], a [List] or a
+    footnote definition the descent stops and the container answers for itself,
+    since its own syntax ([>], an item marker, [[^x]:]) separates its contents
+    from what surrounds it. "The first block this subtree renders" works the
+    same way. *)
 
 let summary_nil =
   {
@@ -72,8 +143,8 @@ let summary_nil =
 
 let summary_opaque = { summary_nil with transparent = false }
 
-(* Combine a [Blocks]'s children in render order: leading edge from the first
-   contentful child, trailing edges from the last. *)
+(** The report for a [Blocks], from its children's: trailing fields from the
+    last child that renders anything, {!field-leads_with_blank} from the first. *)
 let summary_seq (ss : summary list) : summary =
   match List.filter (fun s -> not s.transparent) ss with
   | [] -> summary_nil
@@ -81,8 +152,9 @@ let summary_seq (ss : summary list) : summary =
       let last = List.nth ss (List.length ss - 1) in
       { last with leads_with_blank = first.leads_with_blank }
 
-(** Recover the synthesized attributes of a finished block. The generator gets
-    them for free while building; the checker computes them bottom-up. *)
+(** Recover a finished block's report. The generator builds these as it goes and
+    never calls this; the checker, handed a tree it did not build, recomputes
+    them bottom-up. *)
 let rec summarize (b : Block.t) : summary =
   match b with
   | Block.Blocks (bs, _) -> summary_seq (List.map summarize bs)
@@ -100,30 +172,34 @@ let rec summarize (b : Block.t) : summary =
       }
   | _ -> summary_opaque
 
-(** {1 Inherited attributes} *)
+(** {1 What a block knows about where it sits} *)
 
 type ctx = {
   lead_exclude : char list;
       (** Characters a thematic break may not use here, because this block sits
-          at the leading (marker) line of a list item and a break of the marker
-          char would collapse the item. A [Block_quote]'s [>] absorbs the
-          leading position, so descending into one clears this. *)
+          on a list item's marker line and a break made of the marker character
+          would collapse the item. A [Block_quote]'s [>] takes over that
+          position, so descending into one clears this. *)
   prev : summary option;
-      (** Summary of the previous sibling {e in render order}, which is not the
-          same as the previous sibling in the tree: a nested [Blocks] is
-          transparent, so its first child sees the [Blocks]'s own predecessor,
-          and a transparent subtree passes its predecessor through. [None] at
-          the start of a sequence and immediately inside a container, whose
-          marker breaks any adjacency with what came before it. *)
-  is_last : bool;  (** Last position of the enclosing render-order sequence. *)
+      (** The report of the block rendered just before this one, which is not
+          the same as the previous sibling in the tree: a [Blocks] renders no
+          syntax, so its first child inherits the [Blocks]'s own predecessor,
+          and a subtree that renders nothing hands its predecessor onward.
+
+          [None] at the start of a sequence, and immediately inside a container,
+          whose marker cuts off adjacency with what came before it. *)
+  is_last : bool;  (** Last position of the sequence this block belongs to. *)
   at_root : bool;  (** This block is the whole tree, not a child of anything. *)
   in_root_seq : bool;
       (** The sequence this block belongs to is the document's root [Blocks], so
           a trailing [Blank_line] here trails the document rather than sitting
           inside a nested [Blocks]. *)
 }
-(** What a block needs to know about where it sits, carried down from its
-    parent. Read at every choice point and modified when descending. *)
+(** Everything a rule may consult about a node's surroundings, carried down from
+    the parent and along from the previous sibling. It is read at every branch
+    point and adjusted on the way down by the three functions below, which the
+    generator's fold and the checker's walk both call. Sharing them is what
+    keeps the two sides from disagreeing about what "the previous block" means. *)
 
 let init_ctx ?(lead_exclude = []) () : ctx =
   {
@@ -134,9 +210,9 @@ let init_ctx ?(lead_exclude = []) () : ctx =
     in_root_seq = false;
   }
 
-(** Descending through a container marker ([>], an item marker, a footnote
-    label). The marker absorbs the leading position and breaks adjacency with
-    whatever preceded the container, so the child starts a fresh sequence. *)
+(** Descending through a container's marker ([>], an item marker, a footnote
+    label). The marker takes over the leading position and cuts off adjacency
+    with whatever preceded the container, so the child starts fresh. *)
 let enter_container (_ctx : ctx) : ctx =
   {
     lead_exclude = [];
@@ -146,14 +222,14 @@ let enter_container (_ctx : ctx) : ctx =
     in_root_seq = false;
   }
 
-(** Context for the [i]th of [len] children of a [Blocks], given the summary of
-    the preceding sibling in render order.
+(** Descending from a [Blocks] into its [i]th child of [len], given the report of
+    the block rendered before that child. Returns the child's context.
 
-    Shared by the generator's fold and the checker's walk so the two cannot
-    drift; [prev] is seeded from the [Blocks]'s own predecessor because a nested
-    [Blocks] is transparent. *)
-let nth_child (ctx : ctx) ~(i : int) ~(len : int) ~(prev : summary option) : ctx
-    =
+    At [i = 0], [prev] is the [Blocks]'s own predecessor rather than [None],
+    because a [Blocks] renders no syntax of its own and so does not interrupt
+    adjacency. *)
+let enter_nth_child (ctx : ctx) ~(i : int) ~(len : int) ~(prev : summary option)
+    : ctx =
   {
     (* Only the head sits at the leading position; the rest start fresh lines. *)
     lead_exclude = (if i = 0 then ctx.lead_exclude else []);
@@ -163,50 +239,57 @@ let nth_child (ctx : ctx) ~(i : int) ~(len : int) ~(prev : summary option) : ctx
     in_root_seq = ctx.at_root;
   }
 
-(** Advance a sequence's accumulator past a child. A transparent child passes
-    its own predecessor along rather than becoming one. *)
+(** Move a sequence's running predecessor past a child. A child that renders
+    nothing does not become the predecessor; it passes the old one along. *)
 let advance (prev : summary option) (s : summary) : summary option =
   if s.transparent then prev else Some s
 
 (** {1 Rules} *)
 
-type choice = [ `Leaf | `Blocks | `Block_quote | `List ]
-(** The constructor choices a block generator picks between. A rule restricts
-    this list; it never rewrites what comes out of it. *)
-
-let string_of_choice : choice -> string = function
-  | `Leaf -> "leaf"
-  | `Blocks -> "blocks"
-  | `Block_quote -> "block_quote"
-  | `List -> "list"
-
 type t = {
   name : string;
   forbids : ctx -> choice -> bool;
-      (** Generation side. May consult only {!ctx}: everything non-local the
-          rule depends on has already been carried here as an attribute, which
-          is the entire point of the frame.
+      (** Consulted by the generator at a branch point: would recursing into
+          this choice, here, break the rule? [true] removes the candidate. Only
+          {!ctx} is available, since the node does not exist yet.
 
-          A rule about a node's {e own} synthesized attribute cannot be a guard,
-          because at choice time the subtree does not exist yet. Such a rule
-          leaves this [fun _ _ -> false] and is enforced at the point of
-          generation instead. *)
-  violated : ctx -> Block.t -> Common_.metadata option;
-      (** Checking side. [Some metadata] names the offending node for the
-          counterexample printer. Evaluated at every node of the traversal, so
-          it states only what is wrong {e here}. *)
+          Some rules cannot be stated here at all, because they constrain the
+          node's own contents, which at branch time are unbuilt. "No empty
+          [Blocks]" is one: at the branch point nothing is decided but
+          [`Blocks]. Such a rule leaves this at [fun _ _ -> false] and is
+          enforced instead where the node is built, by a generator that cannot
+          produce the bad shape. For that example [Gen.gen_blocks] draws its
+          child count from [int_range 1 n] when the rule is on; for the leaf
+          half of "no html block absorbing successor", which {!choice} is too
+          coarse to express, [Gen.gen_leaf_block] emits a blank line. *)
+  violated : ctx -> Block.t -> metadata option;
+      (** Consulted on a finished tree by {!check}, which visits every node and
+          evaluates this at each one. The [Block.t] is the node being visited
+          and the {!ctx} describes where that node sits; the question is whether
+          {e that} node breaks the rule. [Some metadata] names it for the
+          counterexample printer.
+
+          {!check} does the descending, so a rule answers for one node and never
+          recurses itself. *)
   normalize : bool;
-      (** Run the check on {!Cmarkit_.Block.normalize}d input. Rules phrased as
-          a scan over a flat sibling list need it; rules phrased in terms of
-          {!ctx.prev} do not, because the traversal already walks in render
-          order. *)
+      (** Evaluate {!field-violated} on [Cmarkit_.Block.normalize b] instead of
+          on [b]. Normalizing flattens nested [Blocks], so a rule phrased as a
+          scan over one flat list of siblings sees blocks that a nested [Blocks]
+          would otherwise hide. Only "no ambiguous indented code after list"
+          needs it today.
+
+          A rule phrased in terms of {!field-prev} does not, because the
+          traversal already visits blocks in the order they render and already
+          sees through subtrees that render nothing. *)
 }
+(** One rule, in the two forms described at the top of this module. *)
 
 let make ?(forbids = fun _ _ -> false) ?(normalize = false) ~name violated =
   { name; forbids; violated; normalize }
 
-(** Is any enabled rule violated by choosing [c] here? Returns the rule that
-    said no, so the rejection can be attributed. *)
+(** The first of [rules] that forbids choosing [c] here, if any. It is returned
+    rather than a [bool] so that dropping a candidate can be attributed to the
+    rule responsible. *)
 let first_forbidding (rules : t list) (ctx : ctx) (c : choice) : t option =
   List.find_opt (fun r -> r.forbids ctx c) rules
 
@@ -219,14 +302,17 @@ let child_blocks : Block.t -> Block.t list = function
   | Block.Ext_footnote_definition (fn, _) -> [ Block.Footnote.block fn ]
   | _ -> []
 
-(** The attribute engine: walk a finished tree computing the same [ctx] the
-    generator threads, evaluating [violated] at each node and returning the
-    first offender.
+(** Walk a finished tree, rebuilding at each node the same {!ctx} the generator
+    threaded on the way down, evaluating {!field-violated} there, and returning
+    the first node that breaks the rule.
 
-    This replaces the bespoke recursive [check] that each rule used to carry,
-    every one of which re-implemented this descent and this
-    fold-until-first-failure. *)
-let check (r : t) (b : Block.t) : (Block.t * Common_.metadata) option =
+    Two callers. {!module:Typing} turns each rule into a [Property.t] over this,
+    which is how a rule is checked against generated or parsed trees. [Gen] uses
+    it as a shrink invariant, so that shrinking a counterexample cannot leave
+    the set of trees the enabled rules allow.
+
+    One traversal serves every rule, so no rule implements its own descent. *)
+let check (r : t) (b : Block.t) : (Block.t * metadata) option =
   let rec walk ctx b =
     match r.violated ctx b with
     | Some meta -> Some (b, meta)
@@ -238,7 +324,7 @@ let check (r : t) (b : Block.t) : (Block.t * Common_.metadata) option =
         let rec fold i prev = function
           | [] -> None
           | child :: rest -> (
-              let child_ctx = nth_child ctx ~i ~len ~prev in
+              let child_ctx = enter_nth_child ctx ~i ~len ~prev in
               match walk child_ctx child with
               | Some _ as found -> found
               | None -> fold (i + 1) (advance prev (summarize child)) rest)

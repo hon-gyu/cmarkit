@@ -592,7 +592,7 @@ and gen_blocks (ctx : ctx) n : (Block.t * Rule.summary) G.t =
      can become guards; a [list_size] cannot express it, because its elements
      are independent.
 
-     The per-child context comes from {!Rule.nth_child} and the accumulator
+     The per-child context comes from {!Rule.enter_nth_child} and the accumulator
      from {!Rule.advance}, which is the same pair {!Rule.check} uses to walk a
      finished tree. Sharing them is what stops the generator and the checker
      from disagreeing about what "the previous sibling" means. *)
@@ -600,7 +600,7 @@ and gen_blocks (ctx : ctx) n : (Block.t * Rule.summary) G.t =
     if i >= len then return (List.rev acc)
     else
       let child_ctx =
-        { ctx with attrs = Rule.nth_child ctx.attrs ~i ~len ~prev }
+        { ctx with attrs = Rule.enter_nth_child ctx.attrs ~i ~len ~prev }
       in
       let* b, s = gen_block child_ctx n in
       fold (i + 1) (Rule.advance prev s) (b :: acc)

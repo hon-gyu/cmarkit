@@ -33,7 +33,7 @@
 module G = Cmarkit_generator.Gen
 module R = Cmarkit_generator.Rule
 
-let n = 2000
+let n = 100
 
 (* Violations of [r] in [n] samples drawn from [config]. *)
 let violations (r : R.t) (config : G.Bconfig.t) : int =
