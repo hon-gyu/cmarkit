@@ -1,11 +1,12 @@
 (** {0 Rules}
 
-    Each is stated once here and consulted from both sides. The prose is the
-    justification: why the parser can never emit this shape, so why a generator
-    that produces it is producing something outside the language. *)
+    Each is stated once here, as a {!Typing.t}, and consulted from both sides.
+    The prose is the justification: why the parser can never emit this shape, so
+    why a generator that produces it is producing something outside the
+    language. *)
 
 open Cmarkit_
-open Rule
+open Typing
 
 let is_blank = function
   | Block.Blank_line _ -> true
@@ -200,33 +201,21 @@ let no_html_block_starting_paragraph =
     renders right after it — unless that successor is a [Blank_line] (which
     closes it) or a container boundary intervenes.
 
-    Stated against {!ctx.prev}: the traversal already walks in render order, so
-    "the block before me absorbs, and I render something it can swallow" is the
-    whole rule. The flat-list scan the checker used to do, and the
-    [Block.normalize] it needed to make that scan see through nested [Blocks],
-    are both subsumed by the attributes.
-
-    Both conditions on the successor are needed, and both are read off its own
-    summary rather than its constructor. A {!field-transparent} subtree (an
+    Stated against {!ctx.prev}: the traversal walks in render order, so "the
+    block before me absorbs, and I render something it can swallow" is the whole
+    rule. Both conditions on the successor are needed, and both are read off its
+    own summary rather than its constructor: a {!field-transparent} subtree (an
     empty [Blocks]) renders nothing, so there is nothing to absorb; and
     {!field-leads_with_blank} is what actually closes the html block, which is
     not the same as the node {e being} a [Blank_line] — a [Blocks] whose first
-    render-order child is blank closes it just as well. The old formulation got
-    both cases via [Block.normalize] flattening them away first.
+    render-order child is blank closes it just as well.
 
-    As a guard, this is the first rule whose successor granularity does not
-    match {!choice}. The rule wants "the next block leads with a blank"; the
-    choice list only distinguishes constructors. Two of them — [`Block_quote]
-    and [`List] — always render a marker on their first line and so can never
-    lead with a blank, so they are forbidden outright when the predecessor
-    absorbs. A [`Blocks] is transparent: its first render-order child inherits
-    the same absorbing predecessor through {!enter_nth_child}, so the constraint
-    reaches it by recursion and needs no separate case. That leaves [`Leaf],
-    whose leading edge is invisible here — a leaf can be a [Blank_line] or a
-    paragraph, and [choice] cannot tell them apart. So the leaf half is enforced
-    where the leaf is built, via {!must_lead_blank}, not as a guard. The seam is
-    exactly the render edge that step 7 removes: once a leaf's leading edge is
-    an attribute, both halves collapse into one. *)
+    The generating side splits, because {!choice} is too coarse for "the next
+    block leads with a blank". [`Block_quote] and [`List] always render a marker
+    on their first line, so they are forbidden outright when the predecessor
+    absorbs; [`Blocks] is transparent, so the constraint reaches its first child
+    by recursion; and the [`Leaf] half — whose leading edge [choice] cannot
+    see — is enforced where the leaf is built, via {!must_lead_blank}. *)
 let prev_absorbs (ctx : ctx) : bool =
   match ctx.prev with
   | Some s -> s.trailing_absorbing
@@ -263,7 +252,7 @@ let no_html_block_absorbing_successor =
 
     Blank lines do not break the interaction, so this cannot read [ctx.prev]
     alone — a blank sibling would erase the list. It stays a scan over the
-    enclosing sequence until the render edge lands. *)
+    enclosing sequence. *)
 let no_ambiguous_indented_code_after_list =
   let ambiguous_list = function
     | Block.List (l, _) -> (
@@ -304,12 +293,7 @@ let no_ambiguous_indented_code_after_list =
     blocks may absorb following content. A correct general canonicalization
     would have to reproduce block parsing inside the quote. We therefore retain
     the intended two-container structure and require an explicit outside
-    separator instead.
-
-    This is the rule with both clauses filled in, and the pair is worth reading
-    together: [forbids] refuses to {e pick} a quote when the previous sibling in
-    render order is one, and [violated] flags a quote that {e is} in that
-    position. Same attribute, same vocabulary, opposite directions. *)
+    separator instead. *)
 let no_adjacent_block_quotes =
   let prev_is_quote ctx =
     match ctx.prev with
@@ -327,3 +311,22 @@ let no_adjacent_block_quotes =
             Some [ ("block_quote", Block b) ]
         | _ -> None);
   }
+
+(** {1 All rules aggregated}
+
+    As a {!Property.t}, for the property runners. *)
+let typed : Property.t =
+  let r = property_of_rule in
+  let p =
+    Property.(
+      none
+      (* & r no_trailing_blank_line_in_blocks *)
+      & r no_empty_paragraph
+      & r no_empty_blocks & r no_empty_list
+      & r no_marker_colliding_thematic_break
+      & r no_list_item_leading_blank_prefix
+      & r no_html_block_absorbing_successor
+      & r no_ambiguous_indented_code_after_list & r no_adjacent_block_quotes
+      & r no_html_block_starting_paragraph)
+  in
+  { p with name = "typed: " ^ p.name }

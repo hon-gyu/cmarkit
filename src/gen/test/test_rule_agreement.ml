@@ -1,6 +1,6 @@
 (** Do a rule's two clauses agree?
 
-    Every rule is stated once, as a {!Cmarkit_generator.Rule.t} with a
+    Every rule is stated once, as a {!Cmarkit_generator.Typing.t} with a
     [forbids] clause the generator consults and a [violated] clause the checker
     consults. Nothing so far forces those two to describe the same set. This
     test does, by toggling one rule at a time and counting violations of that
@@ -31,9 +31,9 @@
     a large movement is worth a look even when both invariants still hold. *)
 
 module G = Cmarkit_generator.Gen
-module R = Cmarkit_generator.Rule
+module R = Cmarkit_generator.Typing
 
-let n = 100
+let n = 2000
 
 (* Violations of [r] in [n] samples drawn from [config]. *)
 let violations (r : R.t) (config : G.Bconfig.t) : int =

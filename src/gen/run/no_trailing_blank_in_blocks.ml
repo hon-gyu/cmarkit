@@ -9,7 +9,7 @@ let () =
        [
          P.qcheck_test_of_t
            ~gen
-           () T.no_trailing_blank_line_in_blocks;
+           () (T.property_of_rule R.no_trailing_blank_line_in_blocks);
        ]
 
 let () = Printf.printf "\n\n"
@@ -23,5 +23,5 @@ let () =
          P.qcheck_test_of_t
            ~gen
            ~negative:true
-           () T.no_trailing_blank_line_in_blocks;
+           () (T.property_of_rule R.no_trailing_blank_line_in_blocks);
        ]

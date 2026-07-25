@@ -10,6 +10,7 @@
 
 module P = Cmarkit_generator.Property
 module T = Cmarkit_generator.Typing
+module R = Cmarkit_generator.Rules
 module G = Cmarkit_generator.Gen
 
 let count = 1000
@@ -28,13 +29,13 @@ let () =
   run
   @@ P.qcheck_test_of_t ~count
        ~gen:(gen (enable (fun c -> { c with no_empty_paragraph = true })))
-       () T.no_empty_paragraph
+       () (T.property_of_rule R.no_empty_paragraph)
 
 let () =
   run
   @@ P.qcheck_test_of_t ~count ~negative:true
        ~gen:(gen (enable (fun c -> { c with no_empty_paragraph = false })))
-       () T.no_empty_paragraph
+       () (T.property_of_rule R.no_empty_paragraph)
 
 (* no_empty_blocks
    --------------- *)
@@ -43,13 +44,13 @@ let () =
   run
   @@ P.qcheck_test_of_t ~count
        ~gen:(gen (enable (fun c -> { c with no_empty_blocks = true })))
-       () T.no_empty_blocks
+       () (T.property_of_rule R.no_empty_blocks)
 
 let () =
   run
   @@ P.qcheck_test_of_t ~count ~negative:true
        ~gen:(gen (enable (fun c -> { c with no_empty_blocks = false })))
-       () T.no_empty_blocks
+       () (T.property_of_rule R.no_empty_blocks)
 
 (* no_list_item_leading_blank_prefix
    --------------------------------- *)
@@ -61,7 +62,7 @@ let () =
          (gen
             (enable (fun c ->
                  { c with no_list_item_leading_blank_prefix = true })))
-       () T.no_list_item_leading_blank_prefix
+       () (T.property_of_rule R.no_list_item_leading_blank_prefix)
 
 let () =
   run
@@ -70,7 +71,7 @@ let () =
          (gen
             (enable (fun c ->
                  { c with no_list_item_leading_blank_prefix = false })))
-       () T.no_list_item_leading_blank_prefix
+       () (T.property_of_rule R.no_list_item_leading_blank_prefix)
 
 (* no_trailing_blank_line_in_blocks
    -------------------------------- *)
@@ -81,7 +82,7 @@ let () =
        ~gen:
          (gen
             (enable (fun c -> { c with no_trailing_blank_line_in_blocks = true })))
-       () T.no_trailing_blank_line_in_blocks
+       () (T.property_of_rule R.no_trailing_blank_line_in_blocks)
 
 let () =
   run
@@ -90,7 +91,7 @@ let () =
          (gen
             (enable (fun c ->
                  { c with no_trailing_blank_line_in_blocks = false })))
-       () T.no_trailing_blank_line_in_blocks
+       () (T.property_of_rule R.no_trailing_blank_line_in_blocks)
 
 (* no_html_block_starting_paragraph
    -------------------------------- *)
@@ -102,7 +103,7 @@ let () =
          (gen
             (enable (fun c ->
                  { c with no_html_block_starting_paragraph = true })))
-       () T.no_html_block_starting_paragraph
+       () (T.property_of_rule R.no_html_block_starting_paragraph)
 
 let () =
   run
@@ -111,7 +112,7 @@ let () =
          (gen
             (enable (fun c ->
                  { c with no_html_block_starting_paragraph = false })))
-       () T.no_html_block_starting_paragraph
+       () (T.property_of_rule R.no_html_block_starting_paragraph)
 
 (* no_ambiguous_indented_code_after_list
    ------------------------------------- *)
@@ -123,7 +124,7 @@ let () =
          (gen
             (enable (fun c ->
                  { c with no_ambiguous_indented_code_after_list = true })))
-       () T.no_ambiguous_indented_code_after_list
+       () (T.property_of_rule R.no_ambiguous_indented_code_after_list)
 
 let () =
   run
@@ -132,7 +133,7 @@ let () =
          (gen
             (enable (fun c ->
                  { c with no_ambiguous_indented_code_after_list = false })))
-       () T.no_ambiguous_indented_code_after_list
+       () (T.property_of_rule R.no_ambiguous_indented_code_after_list)
 
 (* no_adjacent_block_quotes
    ------------------------ *)
@@ -142,11 +143,11 @@ let () =
   @@ P.qcheck_test_of_t ~count
        ~gen:
          (gen (enable (fun c -> { c with no_adjacent_block_quotes = true })))
-       () T.no_adjacent_block_quotes
+       () (T.property_of_rule R.no_adjacent_block_quotes)
 
 let () =
   run
   @@ P.qcheck_test_of_t ~count ~negative:true
        ~gen:
          (gen (enable (fun c -> { c with no_adjacent_block_quotes = false })))
-       () T.no_adjacent_block_quotes
+       () (T.property_of_rule R.no_adjacent_block_quotes)

@@ -26,7 +26,7 @@ let gen_blank_line : Block.t G.t =
 (* Generate a thematic break with a varied but valid layout: a run of >= 3
    matching [-], [*] or [_], each optionally followed by spaces/tabs, with an
    optional 0-3 indent. [exclude] removes characters from the candidate set,
-   used to avoid the bullet-marker collision (see {!Typing.no_marker_colliding_
+   used to avoid the bullet-marker collision (see {!Rules.no_marker_colliding_
    thematic_break}): e.g. [- ---] is a uniform [-] run and reparses as a
    thematic break, not a list item. *)
 let gen_thematic_break ?(exclude = []) () : Block.t G.t =
@@ -64,7 +64,7 @@ let code_block_egs : Block.t list =
   |> List.map (fun cb -> Block.(Code_block (cb, Meta.none)))
 
 (** Fence indented code blocks in the render-order context rejected by
-    {!Typing.no_ambiguous_indented_code_after_list}.
+    {!Rules.no_ambiguous_indented_code_after_list}.
 
     The traversal carries one bit of sibling state: whether the last non-blank
     block at the current container level was a list whose final item accepts a
@@ -309,23 +309,23 @@ let gen_heading (config : Bconfig.t) : Block.t G.t =
 (* Generation context
    =================== *)
 
-(** The generator threads {!Rule.ctx} — the attributes a rule may consult —
+(** The generator threads {!Typing.ctx} — the attributes a rule may consult —
     alongside the two things a rule must {e not} see: which rules are switched
     on, and the weights. A rule says what it forbids; {!Bconfig} says whether it
     is asked. *)
 type ctx = {
-  attrs : Rule.ctx;
+  attrs : Typing.ctx;
   config : Bconfig.t;
-  rules : Rule.t list;  (** Enabled rules, resolved once from [config]. *)
+  rules : Typing.t list;  (** Enabled rules, resolved once from [config]. *)
 }
 
-(** Each {!Rule.t} paired with the {!Bconfig} field that switches it on: a
+(** Each {!Typing.t} paired with the {!Bconfig} field that switches it on: a
     getter for reading a config, a setter so a test can toggle one rule at a
     time. This is the only place that maps between the two ways a rule is named
-    — as a [Rule.t] value below this module, and as a [bool] field of
+    — as a [Typing.t] value below this module, and as a [bool] field of
     [Bconfig.t] above it. Everywhere else works in one or the other. *)
 let rule_knobs :
-    (Rule.t * (Bconfig.t -> bool) * (bool -> Bconfig.t -> Bconfig.t)) list =
+    (Typing.t * (Bconfig.t -> bool) * (bool -> Bconfig.t -> Bconfig.t)) list =
   [
     ( Rules.no_trailing_blank_line_in_blocks,
       (fun c -> c.no_trailing_blank_line_in_blocks),
@@ -359,23 +359,23 @@ let rule_knobs :
       fun v c -> { c with no_html_block_starting_paragraph = v } );
   ]
 
-let enabled_rules (c : Bconfig.t) : Rule.t list =
+let enabled_rules (c : Bconfig.t) : Typing.t list =
   List.filter_map (fun (r, get, _) -> if get c then Some r else None) rule_knobs
 
 (** Does [b] satisfy every rule [config] switches on? The checking side of the
     same list the guards consult. *)
 let satisfies_enabled_rules (config : Bconfig.t) (b : Block.t) : bool =
-  List.for_all (fun r -> Rule.check r b = None) (enabled_rules config)
+  List.for_all (fun r -> Typing.check r b = None) (enabled_rules config)
 
 let init_ctx ?(lead_exclude = []) (config : Bconfig.t) : ctx =
   {
-    attrs = Rule.init_ctx ~lead_exclude ();
+    attrs = Typing.init_ctx ~lead_exclude ();
     config;
     rules = enabled_rules config;
   }
 
 let enter_container (ctx : ctx) : ctx =
-  { ctx with attrs = Rule.enter_container ctx.attrs }
+  { ctx with attrs = Typing.enter_container ctx.attrs }
 
 (* Guards
    ------ *)
@@ -392,8 +392,8 @@ let rejections : (string * string, int) Hashtbl.t = Hashtbl.create 16
 
 let reset_rejections () = Hashtbl.reset rejections
 
-let record_rejection ~(rule : string) ~(choice : Rule.choice) =
-  let key = (rule, Rule.string_of_choice choice) in
+let record_rejection ~(rule : string) ~(choice : Typing.choice) =
+  let key = (rule, Typing.string_of_choice choice) in
   let n = Option.value ~default:0 (Hashtbl.find_opt rejections key) in
   Hashtbl.replace rejections key (n + 1)
 
@@ -418,13 +418,13 @@ let pp_rejections ppf () =
     future rule does need to forbid a leaf, it belongs inside
     {!gen_leaf_block_}'s weights, where the per-constructor choice still leaves
     somewhere to go. *)
-let keep_allowed (ctx : ctx) (cands : (int * Rule.choice) list) :
-    (int * Rule.choice) list =
+let keep_allowed (ctx : ctx) (cands : (int * Typing.choice) list) :
+    (int * Typing.choice) list =
   let allowed (_, c) =
-    match Rule.first_forbidding ctx.rules ctx.attrs c with
+    match Typing.first_forbidding ctx.rules ctx.attrs c with
     | None -> true
     | Some r ->
-        record_rejection ~rule:r.Rule.name ~choice:c;
+        record_rejection ~rule:r.Typing.name ~choice:c;
         false
   in
   match List.filter allowed cands with
@@ -445,11 +445,11 @@ let gen_leaf_block_ ?(config = Bconfig.default) ?(rule_lead_exclude_chars = [])
   |> List.filter (fun (w, _) -> w > 0)
   |> G.oneof_weighted
 
-let gen_leaf_block (ctx : ctx) : (Block.t * Rule.summary) G.t =
+let gen_leaf_block (ctx : ctx) : (Block.t * Typing.summary) G.t =
   let config = ctx.config in
   (* When a preceding absorbing html block would swallow this leaf, the only
      leaf that closes it is a blank line. This is the leaf half of
-     {!Rule.no_html_block_absorbing_successor}, which its guard cannot reach:
+     {!Rules.no_html_block_absorbing_successor}, which its guard cannot reach:
      [choice] does not distinguish a blank leaf from a paragraph.
 
      It yields to [no_direct_blank_line] rather than overriding it. The two
@@ -457,23 +457,23 @@ let gen_leaf_block (ctx : ctx) : (Block.t * Rule.summary) G.t =
      [no_trailing_blank_line_in_blocks] on: closing the html demands a blank
      there, the trailing rule forbids one, and no single block satisfies both.
      That is a genuine over-constraint, not something a forward force can fix —
-     the real repair is to not place an absorbing html block there in the first
-     place, which is a guard on the html leaf's own position and wants the
-     render edge (step 7). [typed_md] never enables the trailing rule, so the
-     collision does not arise there; when it is enabled, this yields and the
-     html rule is the one left unsatisfied, visibly. *)
+     the real fix is to not place an absorbing html block there in the first
+     place, which needs a finer leading-edge attribute than [choice] offers.
+     [typed_md] never enables the trailing rule, so the collision does not arise
+     there; when it is enabled, this yields and the html rule is the one left
+     unsatisfied, visibly. *)
   let must_blank =
     config.no_html_block_absorbing_successor
     && Rules.must_lead_blank ctx.attrs
     && not config.no_direct_blank_line
   in
-  if must_blank then G.map (fun b -> (b, Rule.summarize b)) gen_blank_line
+  if must_blank then G.map (fun b -> (b, Typing.summarize b)) gen_blank_line
   else
     let w_blank_line = if config.no_direct_blank_line then Some 0 else None in
     G.map
-      (fun b -> (b, Rule.summarize b))
+      (fun b -> (b, Typing.summarize b))
       (gen_leaf_block_ ~config
-         ~rule_lead_exclude_chars:ctx.attrs.Rule.lead_exclude ?w_blank_line ())
+         ~rule_lead_exclude_chars:ctx.attrs.Typing.lead_exclude ?w_blank_line ())
 
 let limit_list_item_leading_blank_prefix (block : Block.t) : Block.t =
   let blank = function
@@ -491,16 +491,16 @@ let limit_list_item_leading_blank_prefix (block : Block.t) : Block.t =
       | _ -> block)
   | _ -> block
 
-let rec gen_block (ctx : ctx) n : (Block.t * Rule.summary) G.t =
+let rec gen_block (ctx : ctx) n : (Block.t * Typing.summary) G.t =
   let open G in
   match n with
   | 0 -> gen_leaf_block ctx
   | n ->
       let block_quote_of_b (b, _) =
         let bq = Block.(Block_quote (Block.Block_quote.make b, Meta.none)) in
-        (bq, { Rule.summary_opaque with trailing_block_quote = true })
+        (bq, { Typing.summary_opaque with trailing_block_quote = true })
       in
-      let gen_of : Rule.choice -> (Block.t * Rule.summary) G.t = function
+      let gen_of : Typing.choice -> (Block.t * Typing.summary) G.t = function
         | `Leaf -> gen_leaf_block ctx
         (* The first child of [Blocks] inherits the leading position, and its
            predecessor in render order, so [ctx] passes through unchanged. *)
@@ -516,7 +516,7 @@ let rec gen_block (ctx : ctx) n : (Block.t * Rule.summary) G.t =
       |> List.map (fun (w, c) -> (w, gen_of c))
       |> oneof_weighted
 
-and gen_list (ctx : ctx) n : (Block.t * Rule.summary) G.t =
+and gen_list (ctx : ctx) n : (Block.t * Typing.summary) G.t =
   let config = ctx.config in
   let open G in
   (* Start integer for ordered lists; the renderer only keeps the first item's
@@ -544,7 +544,7 @@ and gen_list (ctx : ctx) n : (Block.t * Rule.summary) G.t =
   in
   let item_ctx =
     let c = enter_container ctx in
-    { c with attrs = { c.attrs with Rule.lead_exclude = item_lead_exclude } }
+    { c with attrs = { c.attrs with Typing.lead_exclude = item_lead_exclude } }
   in
   let gen_item =
     map
@@ -566,7 +566,7 @@ and gen_list (ctx : ctx) n : (Block.t * Rule.summary) G.t =
       let l = Block.List'.make type' items in
       let summary =
         {
-          Rule.summary_opaque with
+          Typing.summary_opaque with
           list_continuation_indent =
             Common_.list_last_item_continuation_indent l;
         }
@@ -574,7 +574,7 @@ and gen_list (ctx : ctx) n : (Block.t * Rule.summary) G.t =
       (Block.(List (l, Meta.none)), summary))
     (list_size gen_len gen_item)
 
-and gen_blocks (ctx : ctx) n : (Block.t * Rule.summary) G.t =
+and gen_blocks (ctx : ctx) n : (Block.t * Typing.summary) G.t =
   let open G in
   let config = ctx.config in
   let gen_len =
@@ -587,63 +587,49 @@ and gen_blocks (ctx : ctx) n : (Block.t * Rule.summary) G.t =
   in
   let* len = gen_len in
   (* Left-to-right fold: each child is generated in a context that knows its
-     predecessor's summary and whether it closes the sequence. This is the
-     "across" half of the attribute grammar and the reason the adjacency rules
-     can become guards; a [list_size] cannot express it, because its elements
-     are independent.
+     predecessor's summary and whether it closes the sequence. A [list_size]
+     cannot express this, because its elements are independent — and it is what
+     lets the adjacency rules be guards.
 
-     The per-child context comes from {!Rule.enter_nth_child} and the accumulator
-     from {!Rule.advance}, which is the same pair {!Rule.check} uses to walk a
-     finished tree. Sharing them is what stops the generator and the checker
-     from disagreeing about what "the previous sibling" means. *)
+     The per-child context comes from {!Typing.enter_nth_child} and the
+     accumulator from {!Typing.advance}, the same pair {!Typing.check} uses to
+     walk a finished tree, so the generator and the checker cannot disagree
+     about what "the previous sibling" means. *)
   let rec fold i prev acc =
     if i >= len then return (List.rev acc)
     else
       let child_ctx =
-        { ctx with attrs = Rule.enter_nth_child ctx.attrs ~i ~len ~prev }
+        { ctx with attrs = Typing.enter_nth_child ctx.attrs ~i ~len ~prev }
       in
       let* b, s = gen_block child_ctx n in
-      fold (i + 1) (Rule.advance prev s) (b :: acc)
+      fold (i + 1) (Typing.advance prev s) (b :: acc)
   in
-  let* blocks = fold 0 ctx.attrs.Rule.prev [] in
-  (* No repair pass runs on [blocks] any more, so the children the fold saw are
-     exactly the children of the result; [summarize] re-folds their summaries,
-     which is what the fold already computed. *)
+  let* blocks = fold 0 ctx.attrs.Typing.prev [] in
+  (* No repair pass runs on [blocks], so the children the fold saw are exactly
+     the children of the result. *)
   let block = Block.Blocks (blocks, Meta.none) in
-  return (block, Rule.summarize block)
+  return (block, Typing.summarize block)
 
 let mk_gen_block ?(config = Bconfig.default) () : Block.t G.t =
   let gen =
     G.(sized_size nat_small @@ fun n -> map fst (gen_block (init_ctx config) n))
   in
   (* [no_adjacent_block_quotes] is absent here on purpose: it is a guard in
-     {!gen_block} now, not a repair. *)
+     {!gen_block}, not a repair. *)
   let gen =
     if config.no_ambiguous_indented_code_after_list then
       G.map fence_ambiguous_indented_code gen
     else gen
   in
-  (* Keep shrinking inside the language.
-
-     This is a regression guard, not a fix: as of writing it never fires.
-     Measured over 300 failing properties under [typed_md], the invariant was
-     consulted 4699 times and rejected nothing.
-
-     The reason is worth knowing before anyone deletes it as dead weight, or
-     re-adds it believing it does more. QCheck2 shrinks the underlying random
-     tree and then re-runs the generator's bind continuations on the shrunk
-     input. Our guards live *inside* those continuations — [gen_block] reads
-     [ctx.prev] at each choice point, threaded by [let*] — so a shrink
-     candidate is produced by the same guarded code path an ordinary sample is,
-     and comes out satisfying the same rules. The surviving repair passes are
-     re-applied through [G.map] on the shrink path for the same reason.
-
-     What it protects against is a future rule enforced *outside* the
-     generator: a post-hoc [G.filter], a check applied to the finished value,
-     anything that shrinking would route around. Under such a rule minimal
-     counterexamples could leave the language, and reading one is a wasted
-     afternoon. The cost of holding the line here is one [Rule.check] per
-     shrink candidate, which is only paid when a property has already failed. *)
+  (* Keep shrinking inside the language. A regression guard, not a fix: rules
+     enforced inside the generator are preserved by shrinking already, because
+     QCheck2 re-runs the bind continuations — where the guards live — on the
+     shrunk random tree (measured: over 300 failing properties under [typed_md],
+     this invariant rejected nothing). It protects against a future rule
+     enforced *outside* the generator (a post-hoc [G.filter], a check on the
+     finished value), which shrinking would route around, letting minimal
+     counterexamples leave the language. Costs one [Typing.check] per shrink
+     candidate, paid only after a property has failed. *)
   G.add_shrink_invariant (satisfies_enabled_rules config) gen
 
 let%expect_test "Default config should give a sensible distribution" =

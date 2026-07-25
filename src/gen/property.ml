@@ -93,7 +93,7 @@ let pp_fail t fmt b : unit =
           meta
 
 let qcheck_test_of_t ?(count = 500) ?(negative = false)
-    ?(gen = Gen.mk_gen_block ()) () (t : t) : QCheck2.Test.t =
+    ~gen () (t : t) : QCheck2.Test.t =
   let make_test =
     if not negative then QCheck2.Test.make ~name:t.name ~count
     else QCheck2.Test.make_neg ~name:t.name ~count
