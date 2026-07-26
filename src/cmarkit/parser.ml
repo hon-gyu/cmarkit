@@ -1552,11 +1552,13 @@ let block_struct_to_code_block p = function
         then Block.Ext_math_block (cb, meta)
         else Block.Code_block (cb, meta)
 
-(* A heading's auto identifier. Djot's is case-preserving ([djot_id_base]) and
-   ignores footnote references; CommonMark's is [Inline.id]. Both the id put on
-   the heading (or its section) and the target [register_heading_labels]
-   registers must use this, so a [ [Heading][] ] link resolves to a live anchor. *)
-let heading_auto_id p inline =
+(* A heading's auto identifier {i base}, before it is made unique. Djot's is
+   case-preserving ([djot_id_base]) and ignores footnote references;
+   CommonMark's is [Inline.id]. Only [assign_heading_ids] should call this: the
+   id that ends up on the heading, the one the renderer emits and the target
+   [ [Heading][] ] resolves to must all be the same string, so it is computed
+   once and looked up afterwards. *)
+let heading_auto_id_base p inline =
   if Oymarkit_mod.heading_implicit_targets p.oymarkit_mod then
     let text =
       Inline.to_plain_text ~skip_link:Inline.is_footnote_reference
@@ -1566,7 +1568,30 @@ let heading_auto_id p inline =
     Match.djot_id_base text
   else Inline.id ~buf:p.buf inline
 
-let block_struct_to_heading p = function
+(* A heading's key in [p.heading_ids]: the first byte of its first source line,
+   which is unique per heading. [assign_heading_ids] and the conversion below
+   both key on this, so they cannot disagree on which heading they are talking
+   about. *)
+let heading_id_key = function
+| `Atx { Block_struct.heading; _ } -> heading.first
+| `Setext { Block_struct.heading_lines; _ } ->
+    let rec last = function
+    | [last] -> last | _ :: ls -> last ls | [] -> assert false
+    in
+    (* Lines come with the last one at the head. *)
+    (last heading_lines).first
+
+(* The identifier [assign_heading_ids] gave this heading. Falls back to a
+   non-unique base if that pass did not run (it always does when
+   [heading_auto_ids] is set, so this is only a safety net). *)
+let heading_id p bs inline = match p.heading_auto_ids with
+| false -> None
+| true ->
+    match Pos_map.find_opt (heading_id_key bs) p.heading_ids with
+    | Some _ as id -> id
+    | None -> Some (`Auto (heading_auto_id_base p inline))
+
+let block_struct_to_heading p bs = match bs with
 | `Atx { Block_struct.indent; level; after_open; heading; layout_after; more } ->
     let after_opening =
       let first = after_open and last = heading.first - 1 in
@@ -1585,10 +1610,7 @@ let block_struct_to_heading p = function
     | _ -> more @ [heading]
     in
     let _layout, inline = Inline_struct.parse p lines in
-    let id = match p.heading_auto_ids with
-    | false -> None
-    | true -> Some (`Auto (heading_auto_id p inline))
-    in
+    let id = heading_id p bs inline in
     Block.Heading ({layout; level; inline; id}, meta)
 | `Setext { Block_struct.level; heading_lines; underline } ->
     let (leading_indent, trailing_blanks), inline =
@@ -1606,10 +1628,7 @@ let block_struct_to_heading p = function
       let start = Meta.textloc (Inline.meta inline) in
       meta p (Textloc.set_last start ~last_byte ~last_line)
     in
-    let id = match p.heading_auto_ids with
-    | false -> None
-    | true -> Some (`Auto (heading_auto_id p inline))
-    in
+    let id = heading_id p bs inline in
     Block.Heading ({ layout = `Setext layout; level; inline; id }, meta)
 
 let block_struct_to_html_block p (b : Block_struct.html_block) =
@@ -2180,42 +2199,62 @@ and block_struct_to_block p = function
 | Block_struct.Ext_footnote (i, labels, bs) ->
     block_struct_to_footnote_definition p i labels bs
 
-(* Djot headings are implicit link reference targets: [ [Some Heading][] ] links
-   to the heading. This must run before the blocks are converted, because a
-   reference may sit in a paragraph *above* the heading it points at, and inline
-   parsing (which resolves references) happens during conversion, in document
-   order. So we walk the block structure first and register a definition for
-   every heading.
+(* Heading identifiers, and djot's implicit heading link targets:
+   [ [Some Heading][] ] links to the heading of that text.
 
-   The heading's inline content is parsed here only to derive the key and the
-   id; the conversion parses it again, and that second result — resolved against
-   the complete [defs] — is the one that ends up in the AST.
+   Both jobs happen here, in a single document-order walk, because they are the
+   same computation: a heading's identifier must be unique within the document,
+   and the implicit target must point at exactly the identifier that heading
+   ends up with. Deriving it twice — as this used to, once here for the target
+   and once in the renderer for the anchor — makes the two disagree as soon as
+   anything else claims the base identifier. So the identifier is settled once,
+   here: [p.heading_ids] records it and the conversion looks it up (see
+   [heading_id]). Djot's reference implementation does the same in one pass, see
+   [getUniqueIdentifier] and the [-heading] handler in
+   [vendor/djot.js/src/parse.ts].
+
+   This must run before the blocks are converted, because a reference may sit in
+   a paragraph *above* the heading it points at, and inline parsing (which
+   resolves references) happens during conversion, in document order.
+
+   The heading's inline content is parsed here only to derive its identifier and
+   label key; the conversion parses it again, and that second result — resolved
+   against the complete [defs] — is the one that ends up in the AST.
 
    An explicit definition of the same label wins: it is already in [p.defs] by
    now (link reference definitions are collected during block-structure parsing)
-   and we do not overwrite it. *)
-let register_heading_labels p (doc : Block_struct.t list) =
-  if not (Oymarkit_mod.heading_implicit_targets p.oymarkit_mod) then () else
+   and we do not overwrite it.
+
+   {b Known gap: inline attribute identifiers.} An identifier written as an
+   *inline* attribute ([ The [key term]{#kt} is here. ]) does not reach
+   [p.used_ids]: it only exists once inline content is parsed, which happens
+   after this pass. A heading whose base identifier collides with one keeps that
+   base here, while the HTML renderer — which does see inline attributes — sees
+   the collision and uniques the heading to [base-1]; the heading's implicit
+   target then points at an anchor that is not there. Block-level [ {#id} ]
+   lines, which are visible in the block structure, are handled; only the inline
+   spelling is affected. djot.js has no such gap because it parses inlines in
+   the same pass and resolves references at the very end, whereas cmarkit must
+   fill [p.defs] before inline parsing begins. Closing it therefore means
+   reordering reference resolution, not patching this pass. *)
+let assign_heading_ids p (doc : Block_struct.t list) =
+  let implicit_targets = Oymarkit_mod.heading_implicit_targets p.oymarkit_mod in
+  if not (p.heading_auto_ids || implicit_targets) then () else
   let case_sensitive = Oymarkit_mod.case_sensitive_labels p.oymarkit_mod in
-  let register ?attr_id lines =
-    let _layout, inline = Inline_struct.parse p lines in
-    (* Footnote references contribute nothing to the id (djot), so the target
-       registered here matches the section id the renderer derives. *)
-    let text =
-      Inline.to_plain_text ~skip_link:Inline.is_footnote_reference
-        ~break_on_soft:false inline
+  let use_id id = p.used_ids <- Id_set.add id p.used_ids in
+  (* [base], then [base-1], [base-2], … as djot does; an empty base is [s-1]. *)
+  let unique_id base =
+    let base' = if base = "" then "s" else base in
+    let rec loop i =
+      let id = if i = 0 then base else base' ^ "-" ^ string_of_int i in
+      if id = "" || Id_set.mem id p.used_ids then loop (i + 1) else id
     in
-    let text = String.concat " " (List.map (String.concat "") text) in
+    let id = loop (if base = "" then 1 else 0) in
+    use_id id; id
+  in
+  let register_label text id =
     let key = Match.label_key ~djot:case_sensitive p.buf text in
     if key = "" || Label.Map.mem key p.defs then () else
-    (* The dest must equal the id the HTML renderer puts on the heading's
-       section: an explicit [ {#id} ] attribute if present, else djot's
-       case-preserving [djot_id_base] (not the case-folding CommonMark
-       [Inline.id]). *)
-    let id = match attr_id with
-    | Some id -> id
-    | None -> heading_auto_id p inline
-    in
     let label = Label.make ~key [ "", (text, Meta.none) ] in
     let dest = ("#" ^ id, Meta.none) in
     let ld = Link_definition.make ~defined_label:(Some label) ~dest () in
@@ -2225,18 +2264,43 @@ let register_heading_labels p (doc : Block_struct.t list) =
   | `Atx { Block_struct.heading; more; _ } -> more @ [heading]
   | `Setext { Block_struct.heading_lines; _ } -> heading_lines
   in
+  let heading ?attr_id h =
+    let _layout, inline = Inline_struct.parse p (heading_lines h) in
+    (* Footnote references contribute nothing to the identifier (djot). *)
+    let text =
+      Inline.to_plain_text ~skip_link:Inline.is_footnote_reference
+        ~break_on_soft:false inline
+      |> List.map (String.concat "") |> String.concat " "
+    in
+    (* An explicit [ {#id} ] is what the author asked for: it is used verbatim
+       and never renamed, and a derived identifier yields to it. *)
+    let id = match attr_id with
+    | Some id -> `Id id
+    | None -> `Auto (unique_id (heading_auto_id_base p inline))
+    in
+    p.heading_ids <- Pos_map.add (heading_id_key h) id p.heading_ids;
+    if implicit_targets
+    then register_label text (match id with `Id id | `Auto id -> id)
+  in
   let attr_id specs =
     Attribute.id (List.fold_left Attribute.merge Attribute.empty specs)
   in
-  (* Reverse document order, so an attribute line that *precedes* a heading in
-     the source follows it here (as for [attach_ref_def_attributes]). *)
-  let rec blocks (bs : Block_struct.t list) = match bs with
-  | Heading h :: (Attribute_specs specs :: _ as bs) ->
-      register ?attr_id:(attr_id specs) (heading_lines h); blocks bs
-  | b :: bs -> block b; blocks bs
+  (* Identifiers are taken in document order, as djot takes them, so a later
+     explicit [ {#id} ] does not push an earlier heading off its base. The
+     block-structure lists are in reverse document order, hence the [List.rev];
+     an attribute line that precedes a block in the source precedes it here. *)
+  let rec blocks (bs : Block_struct.t list) = walk (List.rev bs)
+  and walk (bs : Block_struct.t list) = match bs with
+  | Attribute_specs specs :: bs ->
+      let attr_id = attr_id specs in
+      (match attr_id with Some id -> use_id id | None -> ());
+      (match bs with
+       | Heading h :: bs -> heading ?attr_id h; walk bs
+       | bs -> walk bs)
+  | Heading h :: bs -> heading h; walk bs
+  | b :: bs -> block b; walk bs
   | [] -> ()
   and block (b : Block_struct.t) = match b with
-  | Heading h -> register (heading_lines h)
   | Block_quote (_, _, bs) | Ext_div (_, bs) | Ext_jsx_block (_, bs)
   | Ext_footnote (_, _, bs) -> blocks bs
   | List l ->
@@ -2244,7 +2308,7 @@ let register_heading_labels p (doc : Block_struct.t list) =
   | Ext_def_list dl ->
       List.iter (fun (i : Block_struct.def_item) -> blocks i.blocks)
         dl.def_items
-  | Blank_line _ | Code_block _ | Html_block _ | Linkref_def _
+  | Blank_line _ | Code_block _ | Heading _ | Html_block _ | Linkref_def _
   | Attribute_specs _ | Paragraph _ | Thematic_break _ | Ext_table _ -> ()
   in
   blocks doc

@@ -2088,13 +2088,19 @@ module Doc : sig
         {!Block.extension-Ext_footnote_definition},
         layout block values are present in the result regardless of this
         parameter.}
-    {- If [heading_auto_ids] is [true] (defaults to [false]) then [`Auto]
+    {- If [heading_auto_ids] is [true] (defaults to [false]) then
        {{!Block.Heading.type-id}heading identifiers} are generated
        during parsing from the header text
-       with {!Inline.id} (at that point no [ext] argument is needed)
-       and made accessible in {!Block.Heading.val-id}. Note that the identifiers
-       may not be unique, we leave it to the backends to handle this
-       problem.}
+       with {!Inline.id} (at that point no [ext] argument is needed), or with
+       djot's case-preserving algorithm if [heading_implicit_targets] is [true],
+       and made accessible in {!Block.Heading.val-id}. They are made unique
+       within the document by appending [-1], [-2], … to a base that is already
+       taken, an identifier written as a [{#id}] attribute counting as taken (an
+       explicit identifier is used as written, never renamed, and is reported as
+       [`Id] rather than [`Auto]). Identifiers written as {e inline} attributes
+       are the one exception: they are not yet known when heading identifiers are
+       assigned. Note also that uniqueness holds within a parsed document; a
+       document assembled from several needs its backend to uniquify again.}
    {- If [nested_links] is [true] (defaults to [false]) there is no
        restriction on having links in link text, which is forbidden by
        CommonMark and HTML. This can be useful for
@@ -2241,8 +2247,10 @@ module Doc : sig
       text. The default is [true]; the [djot] preset disables it.}
    {- If [heading_implicit_targets] is [true], a heading becomes an implicit
       link-reference target, so [[Some Heading][]] links to it, and auto heading
-      IDs use Djot's case-preserving algorithm. Resolving the target needs
-      [heading_auto_ids], which emits the ID the link points at. An explicit
+      IDs use Djot's case-preserving algorithm. The target points at the ID the
+      heading is actually given, suffix and all; [heading_auto_ids] additionally
+      records that ID on the heading. Two headings of the same text both get an
+      ID but only the first is reachable by its label. An explicit
       link-reference definition of the same label wins. The default is [false];
       the [djot] preset enables it.}
    {- [verbatim_style] selects [`Code_span] or [`Verbatim_span]. A code span

@@ -14,10 +14,12 @@ open Cmarkit_
     parsed. An explicit link reference definition of the same label wins. *)
 
 let html ?multiline_atx_headings ?atx_closing_sequence ?heading_implicit_targets
-    ?case_sensitive_labels ?(heading_auto_ids = true) s =
+    ?case_sensitive_labels ?block_attributes ?inline_attributes
+    ?(heading_auto_ids = true) s =
   let doc =
     Doc.of_string ~strict:false ~heading_auto_ids ?multiline_atx_headings
-      ?atx_closing_sequence ?heading_implicit_targets ?case_sensitive_labels s
+      ?atx_closing_sequence ?heading_implicit_targets ?case_sensitive_labels
+      ?block_attributes ?inline_attributes s
   in
   print_string (Cmarkit_html.of_doc ~safe:false doc)
 
@@ -128,4 +130,75 @@ let%expect_test "djot: an unrelated reference is still undefined" =
     {|
     <h1 id="Some-Heading"><a class="anchor" aria-hidden="true" href="#Some-Heading"></a>Some Heading</h1>
     <p>See [Other][].</p>
+    |}]
+
+(* Identifier uniqueness
+   =====================
+
+   Identifiers are made unique while parsing, in document order, by appending
+   [-1], [-2], … to the base. Explicit [ {#id} ] identifiers are used verbatim,
+   never renamed, and are taken as they are encountered — so a derived one that
+   would collide with an explicit id yields to it, but only if the explicit id
+   comes first. The implicit target always points at the identifier the heading
+   actually ends up with. *)
+
+let%expect_test "duplicate headings get a numerical suffix" =
+  html "# Intro\n\n# Intro\n\n# Intro\n";
+  [%expect {|
+    <h1 id="intro"><a class="anchor" aria-hidden="true" href="#intro"></a>Intro</h1>
+    <h1 id="intro-1"><a class="anchor" aria-hidden="true" href="#intro-1"></a>Intro</h1>
+    <h1 id="intro-2"><a class="anchor" aria-hidden="true" href="#intro-2"></a>Intro</h1>
+    |}]
+
+let%expect_test "an implicit target points at the first heading of that text" =
+  html ~heading_implicit_targets:true "# Intro\n\n# Intro\n\nSee [Intro][].\n";
+  [%expect {|
+    <h1 id="Intro"><a class="anchor" aria-hidden="true" href="#Intro"></a>Intro</h1>
+    <h1 id="Intro-1"><a class="anchor" aria-hidden="true" href="#Intro-1"></a>Intro</h1>
+    <p>See <a href="#Intro">Intro</a>.</p>
+    |}]
+
+let%expect_test "an explicit id above the heading is used verbatim" =
+  html ~block_attributes:true ~heading_implicit_targets:true
+    "{#custom}\n# Intro\n\nSee [Intro][].\n";
+  [%expect {|
+    <h1 id="custom"><a class="anchor" aria-hidden="true" href="#custom"></a>Intro</h1>
+    <p>See <a href="#custom">Intro</a>.</p>
+    |}]
+
+(* The block [ {#intro} ] takes [intro] first, so the heading's derived id
+   yields to it — and its implicit target follows the heading, not the base.
+   This is what a single in-order pass buys: deriving the id twice (once for the
+   target, once when rendering the anchor) used to leave the target pointing at
+   the aside. *)
+let%expect_test "a derived id yields to an explicit id taken earlier" =
+  html ~block_attributes:true ~heading_implicit_targets:true
+    "{#Intro}\n> An aside.\n\n# Intro\n\nSee [Intro][].\n";
+  [%expect {|
+    <blockquote id="Intro">
+    <p>An aside.</p>
+    </blockquote>
+    <h1 id="Intro-1"><a class="anchor" aria-hidden="true" href="#Intro-1"></a>Intro</h1>
+    <p>See <a href="#Intro-1">Intro</a>.</p>
+    |}]
+
+let%expect_test "an empty base becomes [s-1]" =
+  html ~heading_implicit_targets:true "# !?\n\n# !?\n";
+  [%expect {|
+    <h1 id="s-1"><a class="anchor" aria-hidden="true" href="#s-1"></a>!?</h1>
+    <h1 id="s-2"><a class="anchor" aria-hidden="true" href="#s-2"></a>!?</h1>
+    |}]
+
+(* Known gap: an id written as an *inline* attribute is invisible to the
+   id-assigning pass, which runs before any inline content is parsed. The
+   heading keeps [kt] here, and the renderer — which does see the inline
+   attribute — hands the *later* of the two the suffix. See the note on
+   [assign_heading_ids]. *)
+let%expect_test "inline attribute ids are not seen while parsing (known gap)" =
+  html ~inline_attributes:true ~heading_implicit_targets:true
+    "The [key term]{#kt} is here.\n\n# kt\n\nSee [kt][].\n";
+  [%expect {|
+    <p>The <span id="kt">key term</span> is here.</p>
+    <h1 id="kt"><a class="anchor" aria-hidden="true" href="#kt"></a>kt</h1>
+    <p>See <a href="#kt">kt</a>.</p>
     |}]
