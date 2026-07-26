@@ -497,6 +497,8 @@ let parser
      and [*] is strong. There is no doubling: [**x**] is strong emphasis of
      [*x*], which is what [strong_emphasis_width = 1] says. *)
   let emphasis_delims = knob ~cmark:[ '*'; '_' ] ~djot:[ '_' ] emphasis_delims in
+  (* CR: this whole knob stuff is not very readable. we probably want to
+    centralize the djot default values. *)
   let strong_emphasis_delims =
     knob ~cmark:[ '*'; '_' ] ~djot:[ '*' ] strong_emphasis_delims
   in
