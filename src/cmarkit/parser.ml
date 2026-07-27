@@ -2229,14 +2229,13 @@ and block_struct_to_block p = function
    *inline* attribute ([ The [key term]{#kt} is here. ]) does not reach
    [p.used_ids]: it only exists once inline content is parsed, which happens
    after this pass. A heading whose base identifier collides with one keeps that
-   base here, while the HTML renderer — which does see inline attributes — sees
-   the collision and uniques the heading to [base-1]; the heading's implicit
-   target then points at an anchor that is not there. Block-level [ {#id} ]
-   lines, which are visible in the block structure, are handled; only the inline
-   spelling is affected. djot.js has no such gap because it parses inlines in
-   the same pass and resolves references at the very end, whereas cmarkit must
-   fill [p.defs] before inline parsing begins. Closing it therefore means
-   reordering reference resolution, not patching this pass. *)
+   base here, and the HTML renderer currently emits both identifiers unchanged.
+   The heading's implicit target therefore uses an identifier that is not unique.
+   Block-level [ {#id} ] lines, which are visible in the block structure, are
+   handled; only the inline spelling is affected. djot.js has no such gap because
+   it parses inlines in the same pass and resolves references at the very end,
+   whereas cmarkit must fill [p.defs] before inline parsing begins. Closing it
+   therefore means reordering reference resolution, not patching this pass. *)
 let assign_heading_ids p (doc : Block_struct.t list) =
   let implicit_targets = Oymarkit_mod.heading_implicit_targets p.oymarkit_mod in
   if not (p.heading_auto_ids || implicit_targets) then () else

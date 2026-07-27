@@ -191,8 +191,8 @@ let%expect_test "an empty base becomes [s-1]" =
 
 (* Known gap: an id written as an *inline* attribute is invisible to the
    id-assigning pass, which runs before any inline content is parsed. The
-   heading keeps [kt] here, and the renderer — which does see the inline
-   attribute — hands the *later* of the two the suffix. See the note on
+   heading keeps [kt] here, and the renderer currently emits both identifiers
+   unchanged, leaving a duplicate [id="kt"]. See the note on
    [assign_heading_ids]. *)
 let%expect_test "inline attribute ids are not seen while parsing (known gap)" =
   html ~inline_attributes:true ~heading_implicit_targets:true
