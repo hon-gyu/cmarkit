@@ -26,6 +26,8 @@ let set_enable_oymarkit b = enable_oymarkit_ := b
    Inline_struct. *)
 
 module Pos_set = Set.Make (Int) (* Sets of positions. *)
+module Pos_map = Map.Make (Int) (* Maps keyed by positions. *)
+module Id_set = Set.Make (String) (* Sets of identifiers. *)
 module Closer = struct
   type t =
   | Backticks of int (* run length *)
@@ -406,6 +408,12 @@ type parser =
     heading_auto_ids : bool; (* compute heading ids. *)
     nested_links : bool;
     oymarkit_mod : Oymarkit_mod.t;
+    (* Heading identifiers, assigned once by [assign_heading_ids] before the
+       blocks are converted. [heading_ids] maps a heading's first text byte to
+       the identifier it was given; [used_ids] is the set of identifiers already
+       taken, against which derived ones are made unique. *)
+    mutable heading_ids : Block.Heading.id Pos_map.t;
+    mutable used_ids : Id_set.t;
     mutable defs : Label.defs;
     resolver : Label.resolver;
     mutable cidx : Closer_index.t; (* For inline parsing. *)
@@ -489,6 +497,8 @@ let parser
      and [*] is strong. There is no doubling: [**x**] is strong emphasis of
      [*x*], which is what [strong_emphasis_width = 1] says. *)
   let emphasis_delims = knob ~cmark:[ '*'; '_' ] ~djot:[ '_' ] emphasis_delims in
+  (* CR: this whole knob stuff is not very readable. we probably want to
+    centralize the djot default values. *)
   let strong_emphasis_delims =
     knob ~cmark:[ '*'; '_' ] ~djot:[ '*' ] strong_emphasis_delims
   in
@@ -594,6 +604,7 @@ let parser
   { file; i; buf = Buffer.create 512; exts; nolocs; nolayout;
     heading_auto_ids; nested_links;
     oymarkit_mod;
+    heading_ids = Pos_map.empty; used_ids = Id_set.empty;
     defs; resolver; cidx = Closer_index.empty;
     current_line_pos = 1, 0; current_line_last_char = -1; current_char = 0;
     current_char_col = 0; next_non_blank = 0; next_non_blank_col = 0;

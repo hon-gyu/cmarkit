@@ -65,10 +65,10 @@ let of_string
       ?div ?wikilink ?jsx_expr ?jsx_element ?callout ~strict s
   in
   let nl, doc = Block_struct.parse p in
-  (* Djot headings are link reference targets; they must be in [defs] before the
-     blocks are converted, since that is when inline parsing resolves
-     references. *)
-  register_heading_labels p (fst doc);
+  (* Heading identifiers are settled before the blocks are converted: the
+     conversion reads them, and djot's implicit heading targets must be in
+     [defs] by then, since that is when inline parsing resolves references. *)
+  assign_heading_ids p (fst doc);
   attach_ref_def_attributes p (fst doc);
   let block = block_struct_to_doc p doc in
   make ~nl block ~defs:p.defs

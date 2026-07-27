@@ -134,19 +134,25 @@ let djot_escaped_string c s =
 let text_string c s =
   if djot c then djot_escaped_string c s else html_escaped_string c s
 
-let attributes c a =
-  List.iter
-    (function
-      | `Id id ->
-          C.string c " id=\""; html_escaped_string c id; C.byte c '"'
-      | `Class classes ->
-          C.string c " class=\"";
-          html_escaped_string c (String.concat " " classes);
-          C.byte c '"'
-      | `Key_value (key, value) ->
-          C.byte c ' '; html_escaped_string c key; C.string c "=\"";
-          html_escaped_string c value; C.byte c '"')
-    (Attribute.bindings a)
+let attribute_binding c = function
+| `Id id ->
+    C.string c " id=\""; html_escaped_string c id; C.byte c '"'
+| `Class classes ->
+    C.string c " class=\"";
+    html_escaped_string c (String.concat " " classes);
+    C.byte c '"'
+| `Key_value (key, value) ->
+    C.byte c ' '; html_escaped_string c key; C.string c "=\"";
+    html_escaped_string c value; C.byte c '"'
+
+let attributes c a = List.iter (attribute_binding c) (Attribute.bindings a)
+
+(* Attributes without the id. For an element that emits its own: a heading's id
+   is resolved by the parser (see [assign_heading_ids]) from this very
+   attribute, so emitting both would put it on the element twice. *)
+let attributes_no_id c a =
+  let binding = function `Id _ -> () | b -> attribute_binding c b in
+  List.iter binding (Attribute.bindings a)
 
 let buffer_add_pct_encoded_string b s = (* Percent encoded + HTML escaped *)
   let byte = Buffer.add_char and string = Buffer.add_string in
@@ -549,8 +555,16 @@ let code_block ?attrs c cb =
    whitespace runs turned into single [-], case preserved (so [Foo bar] is
    [Foo-bar], not [foo-bar]). Uniqueness is against every id in the document,
    explicit ones included, by appending [-1], [-2], …; an empty base becomes
-   [s-1]. Djot assigns these while parsing, in document order, which is also the
-   order we render in — so registering ids as we go gives the same answer. *)
+   [s-1].
+
+   The parser settles a heading's id (see [assign_heading_ids]) whenever
+   [heading_auto_ids] is set, and that is the id we emit: it is the one djot's
+   implicit [ [Heading][] ] targets point at, so recomputing it here could only
+   disagree. The pass below stays for the two cases where there is nothing to
+   read — a document parsed without [heading_auto_ids], and a document assembled
+   or spliced after parsing, where ids that were unique per source file need not
+   be unique in the output. It is idempotent on ids that are already unique, and
+   it registers ids as it goes, in document order, as djot does. *)
 
 let djot_id_base = Cmarkit_base.djot_id_base
 
@@ -569,30 +583,46 @@ let djot_unique_id c base =
   let id = loop (if base = "" then 1 else 0) in
   register_id c id; id
 
-(* The heading's own id, if it was given one explicitly, else a fresh djot one
-   from its text. *)
+(* The heading's own id: the one the parser assigned if there is one, else an
+   explicit one from [attrs], else a fresh djot one from its text. *)
 let djot_heading_id c ~attrs h =
   let heading_text h =
     (* Footnote references contribute nothing to a heading's id, matching djot
-       and [register_heading_labels]. *)
+       and [assign_heading_ids]. *)
     Inline.to_plain_text ~skip_link:Inline.is_footnote_reference
       ~break_on_soft:false (Block.Heading.inline h)
     |> List.map (String.concat "") |> String.concat " "
   in
-  match attrs with
-  | Some a ->
-      (match Attribute.id a with
-       | Some id -> register_id c id; id
-       | None -> djot_unique_id c (djot_id_base (heading_text h)))
-  | None -> djot_unique_id c (djot_id_base (heading_text h))
+  match Block.Heading.id h with
+  | Some (`Id id) -> register_id c id; id
+  | Some (`Auto id) -> djot_unique_id c id
+  | None ->
+      match attrs with
+      | Some a ->
+          (match Attribute.id a with
+           | Some id -> register_id c id; id
+           | None -> djot_unique_id c (djot_id_base (heading_text h)))
+      | None -> djot_unique_id c (djot_id_base (heading_text h))
 
-let heading c h =
+(* [attrs] are djot attributes written above the heading. Their id, if any, is
+   the heading's: the parser resolved it into [Block.Heading.id] already, and an
+   explicit id is authoritative, so it is emitted as written rather than uniqued.
+   Only a derived ([`Auto]) id can be renamed. *)
+let heading ?attrs c h =
   let level = string_of_int (Block.Heading.level h) in
+  let id = match Block.Heading.id h with
+  | Some (`Id id) -> register_id c id; Some id
+  | Some (`Auto id) -> Some (unique_id c id)
+  | None ->
+      match Option.bind attrs Attribute.id with
+      | Some id -> register_id c id; Some id
+      | None -> None
+  in
   C.string c "<h"; C.string c level;
-  begin match Block.Heading.id h with
+  (match attrs with None -> () | Some a -> attributes_no_id c a);
+  begin match id with
   | None -> C.byte c '>';
-  | Some (`Auto id | `Id id) ->
-      let id = unique_id c id in
+  | Some id ->
       C.string c " id=\""; C.string c id;
       C.string c "\"><a class=\"anchor\" aria-hidden=\"true\" href=\"#";
       C.string c id; C.string c "\"></a>";
@@ -938,6 +968,10 @@ let block_attributes c a =
       C.block c (Block.Block_quote.block bq);
       C.string c "</blockquote>\n"
   | Block.Thematic_break _ -> thematic_break ~attrs c
+  (* The attributes belong on the [<h>] itself, id included: wrapping the
+     heading in a div would put the id on the wrapper and leave the heading with
+     a derived one, so a link to the heading would land beside it. *)
+  | Block.Heading (h, _) -> heading ~attrs c h
   | Block.Code_block (cb, _) -> code_block ~attrs c cb
   | Block.List (l, _) -> list ~attrs c l
   (* A div already is the element the attributes belong on: wrapping it in
