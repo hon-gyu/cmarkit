@@ -30,8 +30,13 @@ open Common_
    whether they form a valid key and of which kind. *)
 
 type decomposition =
-  | Chain_trailing_colon of Inline.t list
+  | Chain_trailing_colon of Inline.t list * Inline.t option
   | Chain_with_value of Inline.t list * Inline.t
+
+(* The [Inline.t option] of [Chain_trailing_colon] is the block-id marker that
+   stood in for the value, when the trailing form arose from an id-only value
+   (see {!is_id_only_value}) rather than from a bare trailing ":". It is kept so
+   {!unkey} can put the marker back and stay content-invisible. *)
 
 (** Whether [s] is only a ":" separator (the colon plus optional blanks). Labels
     keep their raw separator (see {!Inline_struct}), so a non-[Text] key such as
@@ -83,11 +88,38 @@ let value_starts_with_break : Inline.t -> bool = function
   | Inline.Break _ | Inline.Inlines (Inline.Break _ :: _, _) -> true
   | _ -> false
 
+(** The marker text ["^id"] of the block identifier carried on [meta], if any. *)
+let block_id_marker_text (meta : Meta.t) : string option =
+  match Block.Block_id.find meta with
+  | None -> None
+  | Some b -> Some ("^" ^ Block.Block_id.id b)
+
+(** Whether [value] consists of nothing but the block-id [marker]. Such a value
+    is {e empty}: the marker is consumed as the node's identifier instead of
+    becoming its value, so the node keys as if a bare ":" had been written and
+    goes on to claim the following content. A marker merely {e ending} a
+    non-empty value ([key: v ^x]) identifies the node without emptying it, and a
+    marker that yields no identifier at all (escaped, or not a terminal suffix)
+    leaves the value alone -- both fall out of comparing the whole value. *)
+let is_id_only_value ~(marker : string option) (value : Inline.t) : bool =
+  match marker with
+  | None -> false
+  | Some marker ->
+    let rec text : Inline.t -> string option = function
+      | Inline.Text (s, _) -> Some s
+      | Inline.Inlines ([ i ], _) -> text i
+      | _ -> None
+    in
+    (match text value with Some s -> String.trim s = marker | None -> false)
+
 (** Classify the carried colon [segments]: the last segment is the value (empty
-    for the trailing form), the rest are chain labels. [None] if not a valid
-    key -- a label is not a single inline unit, or the value starts on the next
-    line. *)
-let classify (segments : Inline.t list) : decomposition option =
+    for the trailing form), the rest are chain labels. [marker] is the block-id
+    marker of the enclosing paragraph, which can empty the value. [None] if not
+    a valid key -- a label is not a single inline unit, or the value starts on
+    the next line. *)
+let classify ~(marker : string option) (segments : Inline.t list)
+  : decomposition option
+  =
   match List.rev segments with
   | [] | [ _ ] -> None
   | value :: rev_labels ->
@@ -95,7 +127,9 @@ let classify (segments : Inline.t list) : decomposition option =
      | None -> None
      | Some labels ->
        if is_empty_segment value
-       then Some (Chain_trailing_colon labels)
+       then Some (Chain_trailing_colon (labels, None))
+       else if is_id_only_value ~marker value
+       then Some (Chain_trailing_colon (labels, Some value))
        else if value_starts_with_break value
        then None
        else Some (Chain_with_value (labels, value)))
@@ -105,7 +139,7 @@ let classify (segments : Inline.t list) : decomposition option =
 let decompose (meta : Meta.t) : decomposition option =
   match Meta.find Inline_struct.keyed_segments meta with
   | None -> None
-  | Some segments -> classify segments
+  | Some segments -> classify ~marker:(block_id_marker_text meta) segments
 
 (* Shared helpers
    ============== *)
@@ -113,6 +147,20 @@ let decompose (meta : Meta.t) : decomposition option =
 let is_blank_line : Block.t -> bool = function
   | Block.Blank_line _ -> true
   | _ -> false
+
+(** A trailing blank line inside a list item is loose-list layout, not content.
+    It is also an {e empty continuation}: there is nothing for a trailing colon
+    to claim, so the item is not keyed at all (Rule 2). *)
+let ends_with_blank_line (blocks : Block.t list) : bool =
+  match List.rev blocks with
+  | b :: _ -> is_blank_line b
+  | [] -> false
+
+(** Channel carrying the block-id marker that an id-only value stood for, from
+    the rewrite to {!unkey}. The marker is not part of the keyed node's body --
+    that is the point of the id-only rule -- so {!unkey} would otherwise drop it
+    and the rewrite would stop being content-invisible. *)
+let id_only_marker : Inline.t Meta.key = Meta.key ()
 
 (** Split [bs] at the first blank line. *)
 let span_non_blank (bs : Block.t list) : Block.t list * Block.t list =
@@ -134,12 +182,29 @@ let mk_keyed label body = Block.Ext_keyed ((label, body), Meta.none)
     a body block. Whether the result renders as a list item or a free block is
     decided by where it is placed (an item's block vs a free block), not by the
     node itself. An empty [labels] is impossible from {!decompose}, but handled
-    gracefully by returning the body unchanged. *)
-let build_nested_keyed (labels : Inline.t list) (body : Block.t) : Block.t =
+    gracefully by returning the body unchanged.
+
+    An id-only [marker] is recorded on the {e innermost} node: the marker sits at
+    the end of the last label in the source, so that is where {!unkey} must put
+    it back. The identifier it yields names the {e outermost} node instead (the
+    block the paragraph became), which {!set_outer_meta} attaches -- the marker's
+    two effects deliberately land on different nodes. *)
+let build_nested_keyed
+      ?(marker : Inline.t option)
+      (labels : Inline.t list)
+      (body : Block.t)
+  : Block.t
+  =
   match List.rev labels with
   | [] -> body
   | innermost :: outers ->
-    List.fold_left (fun acc label -> mk_keyed label acc) (mk_keyed innermost body) outers
+    let inner_meta =
+      match marker with
+      | None -> Meta.none
+      | Some i -> Meta.add id_only_marker i Meta.none
+    in
+    let inner = Block.Ext_keyed ((innermost, body), inner_meta) in
+    List.fold_left (fun acc label -> mk_keyed label acc) inner outers
 
 (** Replace the meta of the outermost keyed node. Used to forward a transformed
     paragraph's meta (which may carry e.g. a {!Block.Block_id.t}) onto the keyed
@@ -147,14 +212,21 @@ let build_nested_keyed (labels : Inline.t list) (body : Block.t) : Block.t =
 
     Block attributes are {e not} carried this way: the fork represents them as
     an {!Block.Ext_attributes} wrapper around the target, which the sibling
-    rewrite re-wraps around the produced keyed node. *)
+    rewrite re-wraps around the produced keyed node.
+
+    An {!id_only_marker} already on the node survives the replacement: on a
+    one-label chain the innermost node {e is} the outermost one, and dropping the
+    marker would lose it from {!unkey}. *)
 let set_outer_meta (meta : Meta.t) (block : Block.t) : Block.t =
-  if meta == Meta.none
-  then block
-  else (
-    match block with
-    | Block.Ext_keyed ((l, b), _) -> Block.Ext_keyed ((l, b), meta)
-    | _ -> block)
+  match block with
+  | Block.Ext_keyed ((l, b), old) ->
+    let meta =
+      match Meta.find id_only_marker old with
+      | None -> meta
+      | Some i -> Meta.add id_only_marker i meta
+    in
+    if meta == Meta.none then block else Block.Ext_keyed ((l, b), meta)
+  | _ -> block
 
 (** Rebuild a div, preserving layout, with a new body. *)
 let div_with_body (d : Block.Div.t) (body : Block.t) : Block.Div.t =
@@ -208,8 +280,8 @@ let rewrite_block ~(paragraph_inline_value : bool) (root : Block.t) : Block.t =
     | (Block.Paragraph (_, p_meta) as block) :: rest ->
       (match decompose p_meta with
        | None -> rewrite_within_block block :: rewrite_block_list rest
-       | Some (Chain_trailing_colon labels) ->
-         absorb_paragraph_trailing ~original:block ~original_meta:p_meta ~labels rest
+       | Some (Chain_trailing_colon (labels, marker)) ->
+         absorb_paragraph_trailing ~original:block ~original_meta:p_meta ~labels ~marker rest
        | Some (Chain_with_value (labels, value)) ->
          if paragraph_inline_value
          then (
@@ -230,8 +302,8 @@ let rewrite_block ~(paragraph_inline_value : bool) (root : Block.t) : Block.t =
        | Block.Paragraph (_, inner_meta) as inner ->
          (match decompose inner_meta with
           | None -> rewrap (rewrite_within_block inner) :: rewrite_block_list rest
-          | Some (Chain_trailing_colon labels) ->
-            (match absorb_trailing_core ~labels rest with
+          | Some (Chain_trailing_colon (labels, marker)) ->
+            (match absorb_trailing_core ~labels ~marker rest with
              | None -> rewrap inner :: rewrite_block_list rest
              | Some (keyed, after) ->
                rewrap (set_outer_meta inner_meta keyed) :: rewrite_block_list after)
@@ -245,18 +317,19 @@ let rewrite_block ~(paragraph_inline_value : bool) (root : Block.t) : Block.t =
        | inner -> rewrap (rewrite_within_block inner) :: rewrite_block_list rest)
     | block :: rest -> rewrite_within_block block :: rewrite_block_list rest
 
-  and absorb_trailing_core ~labels rest : (Block.t * Block.t list) option =
+  and absorb_trailing_core ~labels ~marker rest : (Block.t * Block.t list) option =
     let children, after = span_non_blank rest in
     match children with
     | [] -> None
     | _ :: _ ->
       let body = wrap_blocks (rewrite_block_list children) in
-      Some (build_nested_keyed labels body, after)
+      Some (build_nested_keyed ?marker labels body, after)
 
-  and absorb_paragraph_trailing ~original ~original_meta ~labels rest =
-    match absorb_trailing_core ~labels rest with
+  and absorb_paragraph_trailing ~original ~original_meta ~labels ~marker rest =
+    match absorb_trailing_core ~labels ~marker rest with
     | None -> original :: rewrite_block_list rest
-    | Some (keyed, after) -> set_outer_meta original_meta keyed :: rewrite_block_list after
+    | Some (keyed, after) ->
+      set_outer_meta original_meta keyed :: rewrite_block_list after
 
   and handle_list l list_meta rest =
     let items = Block.List'.items l in
@@ -311,18 +384,21 @@ let rewrite_block ~(paragraph_inline_value : bool) (root : Block.t) : Block.t =
        | None -> `Untouched
        | Some (Chain_with_value (labels, value)) ->
          let body = wrap_blocks (value_paragraph value :: rewrite_block_list sub_blocks) in
-         `Tagged (build_nested_keyed labels body)
-       | Some (Chain_trailing_colon labels) ->
-         if not (List.is_empty sub_blocks)
+         `Tagged (set_outer_meta meta (build_nested_keyed labels body))
+       | Some (Chain_trailing_colon (labels, marker)) ->
+         if ends_with_blank_line sub_blocks
+         then `Untouched
+         else if not (List.is_empty sub_blocks)
          then (
            let body = wrap_blocks (rewrite_block_list sub_blocks) in
-           `Tagged (build_nested_keyed labels body))
+           `Tagged (set_outer_meta meta (build_nested_keyed ?marker labels body)))
          else (
            (* Bare trailing-colon middle item absorbs remaining siblings as a
               nested list of the same type. *)
            let absorbed_items, _, _ = rewrite_list_items l rest_items [] in
            let nested_list = make_list l Meta.none absorbed_items in
-           `Absorbed_rest (build_nested_keyed labels nested_list)))
+           `Absorbed_rest
+             (set_outer_meta meta (build_nested_keyed ?marker labels nested_list))))
 
   and rewrite_last_item (item : Block.List_item.t) (following : Block.t list)
     : Block.List_item.t * Block.t list * bool
@@ -339,19 +415,27 @@ let rewrite_block ~(paragraph_inline_value : bool) (root : Block.t) : Block.t =
        | None -> recurse_item (), following, false
        | Some (Chain_with_value (labels, value)) ->
          let body = wrap_blocks (value_paragraph value :: rewrite_block_list sub_blocks) in
-         rebuild_item item (build_nested_keyed labels body), following, false
-       | Some (Chain_trailing_colon labels) ->
-         if not (List.is_empty sub_blocks)
+         ( rebuild_item item (set_outer_meta meta (build_nested_keyed labels body))
+         , following
+         , false )
+       | Some (Chain_trailing_colon (labels, marker)) ->
+         if ends_with_blank_line sub_blocks
+         then recurse_item (), following, false
+         else if not (List.is_empty sub_blocks)
          then (
            let body = wrap_blocks (rewrite_block_list sub_blocks) in
-           rebuild_item item (build_nested_keyed labels body), following, false)
+           ( rebuild_item item (set_outer_meta meta (build_nested_keyed ?marker labels body))
+           , following
+           , false ))
          else (
            let absorbed, remaining = span_non_blank following in
            if List.is_empty absorbed
            then item, following, false
            else (
              let body = wrap_blocks (rewrite_block_list absorbed) in
-             let new_block = build_nested_keyed labels body in
+             let new_block =
+               set_outer_meta meta (build_nested_keyed ?marker labels body)
+             in
              rebuild_item item new_block, remaining, true)))
 
   and rewrite_within_block (block : Block.t) : Block.t =
@@ -402,8 +486,8 @@ let rewrite_doc ?(paragraph_inline_value = true) (doc : Doc.t) : Doc.t =
 
 let rec unkey (block : Block.t) : Block.t =
   match block with
-  | Block.Ext_keyed ((label, body), _) ->
-    (match unkeyed_blocks label body with
+  | Block.Ext_keyed ((label, body), meta) ->
+    (match unkeyed_blocks ~meta label body with
      | [ single ] -> single
      | blocks -> Block.Blocks (blocks, Meta.none))
   | Block.Blocks (bs, m) -> Block.Blocks (List.map unkey bs, m)
@@ -427,16 +511,27 @@ let rec unkey (block : Block.t) : Block.t =
    (inline-value form) is re-joined to the label, which already carries the ":";
    a body opening with a non-paragraph (trailing-colon form, e.g. an absorbed
    sub-list) keeps a bare "label:" paragraph followed by the body. A nested
-   [Blocks] is left for [Block.normalize] to splice into the parent. *)
-and unkeyed_blocks (label : Inline.t) (body : Block.t) : Block.t list =
+   [Blocks] is left for [Block.normalize] to splice into the parent.
+
+   An id-only value is not in the body at all -- it was consumed as the node's
+   identifier (see {!is_id_only_value}) -- so the marker is restored from
+   {!id_only_marker} and re-joined to the label, exactly as a value would be. *)
+and unkeyed_blocks ~(meta : Meta.t) (label : Inline.t) (body : Block.t) : Block.t list =
   let para inline = Block.Paragraph (Block.Paragraph.make inline, Meta.none) in
   let merge value = Inline.Inlines ([ label; value ], Meta.none) in
-  match unkey body with
-  | Block.Paragraph (p, _) -> [ para (merge (Block.Paragraph.inline p)) ]
-  | Block.Blocks (Block.Paragraph (p, _) :: rest, _) ->
-    para (merge (Block.Paragraph.inline p)) :: rest
-  | Block.Blocks (bs, _) -> para label :: bs
-  | other -> [ para label; other ]
+  match Meta.find id_only_marker meta with
+  | Some marker ->
+    let head = para (merge marker) in
+    (match unkey body with
+     | Block.Blocks (bs, _) -> head :: bs
+     | other -> [ head; other ])
+  | None ->
+    (match unkey body with
+     | Block.Paragraph (p, _) -> [ para (merge (Block.Paragraph.inline p)) ]
+     | Block.Blocks (Block.Paragraph (p, _) :: rest, _) ->
+       para (merge (Block.Paragraph.inline p)) :: rest
+     | Block.Blocks (bs, _) -> para label :: bs
+     | other -> [ para label; other ])
 
 (* Bare key of a keyed label
    =========================
