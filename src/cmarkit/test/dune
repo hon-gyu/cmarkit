@@ -70,6 +70,14 @@
 )
 
 (library
+  (name test_djot_table_attributes)
+  (libraries cmarkit_ cmarkit_commonmark cmarkit_html)
+  (modules test_djot_table_attributes)
+  (inline_tests)
+  (preprocess (pps ppx_expect))
+)
+
+(library
   (name test_djot_table_captions)
   (libraries cmarkit_ cmarkit_commonmark cmarkit_html)
   (modules test_djot_table_captions)

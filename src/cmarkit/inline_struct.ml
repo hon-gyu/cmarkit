@@ -2682,6 +2682,58 @@ let make_col p = function
     let meta = meta_of_metas p ~first ~last in
     Inline.Inlines (is, meta)
 
+(* Fold a djot attribute specifier into the cell being parsed.
+
+   [is] are the cell's inlines so far (most recent first), [k] the byte where
+   its pending text starts and [start] the specifier's first byte. A table row
+   never reaches [last_pass] (see {!parse_table_row}), so a cell has to do
+   [last_pass]'s specifier fold itself, by the same rules: attach to the
+   preceding inline when the specifier is adjacent to it, else to the last word
+   of the pending text, else drop it. *)
+let attach_attribute p line is ~k ~start ~attribute =
+  let text ~first ~last =
+    if first > last then is else
+    Inline.Text (clean_unesc_unref_span p { line with first; last }) :: is
+  in
+  let wrap target =
+    let attrs = Inline.Attributes.make ~specs:[attribute] target in
+    Inline.Ext_attributes (attrs, Inline.meta target)
+  in
+  (* A specifier that has nothing to attach to — at the start of a cell, or
+     after a space — is dropped by djot rather than left as text. *)
+  let unattached is =
+    if Oymarkit_mod.inline_attributes p.oymarkit_mod then is else
+    Inline.Text ("{" ^ Attribute.to_string attribute ^ "}", Meta.none) :: is
+  in
+  if Attribute.is_empty attribute
+  then (* Comment-only (or empty) specifier: djot drops it from the output. *)
+    text ~first:k ~last:(start - 1)
+  else if k >= start then begin (* Adjacent to the preceding inline. *)
+    match is with
+    | Inline.Ext_attributes (a, meta) :: is ->
+        let specs = Inline.Attributes.specs a @ [attribute] in
+        Inline.Ext_attributes
+          (Inline.Attributes.make ~specs (Inline.Attributes.inline a), meta)
+        :: is
+    | (Inline.Break _ | Inline.Inlines _) :: _ | [] -> unattached is
+    | target :: is -> wrap target :: is
+  end else begin
+    let last = start - 1 in
+    let rec target_first i =
+      if i < k then k else
+      match p.i.[i] with
+      | ' ' | '\t' -> i + 1
+      | _ -> target_first (i - 1)
+    in
+    let first = target_first last in
+    if first > last then unattached (text ~first:k ~last) else
+    let is = text ~first:k ~last:(first - 1) in
+    let target =
+      Inline.Text (clean_unesc_unref_span p { line with first; last })
+    in
+    wrap target :: is
+  end
+
 let find_pipe p line ~before k =
   let text p ~first ~last =
     Inline.Text (clean_unesc_unref_span p { line with first; last })
@@ -2709,12 +2761,21 @@ let start_col p line ~before k =
       in
       `Col ((text, (bbefore, bafter)), k)
 
+(* [make_col] has no empty case, but a cell whose only content was a dropped
+   attribute specifier has no inlines: give it the empty inline [start_col]
+   gives an empty cell. *)
+let make_col_at p line ~k = function
+| [] ->
+    let l = textloc_of_span p { line with first = k; last = k - 1 } in
+    Inline.Inlines ([], meta p l)
+| is -> make_col p is
+
 let rec finish_col p line blanks_before is toks k = match toks with
 | [] ->
     begin match find_pipe p line ~before:(line.last + 1) k with
-    | `Found (text, after, k) ->
+    | `Found (text, after, k') ->
         let is = match text with Some t -> t :: is | None -> is in
-        (make_col p is, (blanks_before, after)), [], k
+        (make_col_at p line ~k is, (blanks_before, after)), [], k'
     | `Not_found text ->
         (* The closing [|] that [Match.ext_table_row] saw at block detection was
            consumed during inline parsing -- a djot verbatim span running to the
@@ -2735,11 +2796,26 @@ let rec finish_col p line blanks_before is toks k = match toks with
     | `Not_found text ->
         let is = inline :: text :: is in
         finish_col p line blanks_before is toks next
-    | `Found (text, after, k) ->
+    | `Found (text, after, k') ->
         let is = match text with Some t -> t :: is | None -> is in
-        (make_col p is, (blanks_before, after)), toks', k
+        (make_col_at p line ~k is, (blanks_before, after)), toks', k'
     end
-| (Attribute_spec _ | Backticks _ | Autolink_or_html_start _ | Link_start _ | Right_brack _
+(* A specifier is not a cell boundary: it folds into the cell and the cell
+   continues. A top-level [|] before it still closes the cell first, leaving
+   the specifier to open the next one. *)
+| Attribute_spec { start; attribute; next; _ } :: toks when k >= start ->
+    let is = attach_attribute p line is ~k ~start ~attribute in
+    finish_col p line blanks_before is toks next
+| Attribute_spec { start; attribute; next; _ } :: toks as toks' ->
+    begin match find_pipe p line ~before:start k with
+    | `Not_found _ ->
+        let is = attach_attribute p line is ~k ~start ~attribute in
+        finish_col p line blanks_before is toks next
+    | `Found (text, after, k') ->
+        let is = match text with Some t -> t :: is | None -> is in
+        (make_col_at p line ~k is, (blanks_before, after)), toks', k'
+    end
+| (Backticks _ | Autolink_or_html_start _ | Link_start _ | Right_brack _
   | Emphasis_marks _ | Right_paren _ | Strikethrough_marks _
   | Extra_inline_container_marks _ | Quoted_marks _ | Math_span_marks _ | Newline _
   | Wikilink_start _ | Jsx_expr_start _ | Jsx_element_start _ | Jsx_open _ | Jsx_close _ ) :: _ ->
@@ -2760,7 +2836,19 @@ let rec parse_cols p line acc toks k = match toks with
         let col, toks, k = finish_col p line before is toks next in
         parse_cols p line (col :: acc) toks k
     end
-| (Attribute_spec _ | Backticks _ | Autolink_or_html_start _ | Link_start _ | Right_brack _
+| Attribute_spec { start; attribute; next; _ } :: toks as toks' ->
+    begin match start_col p line ~before:start k with
+    | `Col (col, k) -> parse_cols p line (col :: acc) toks' k
+    | `Start (before, _) ->
+        (* The cell starts here. [start_col] already turned the bytes before
+           the specifier into a [Text]; drop it and let [attach_attribute]
+           redo them, it needs the raw bytes to find the word to attach to. *)
+        let _, k = get_blanks p line ~before:start k in
+        let is = attach_attribute p line [] ~k ~start ~attribute in
+        let col, toks, k = finish_col p line before is toks next in
+        parse_cols p line (col :: acc) toks k
+    end
+| (Backticks _ | Autolink_or_html_start _ | Link_start _ | Right_brack _
   | Emphasis_marks _ | Right_paren _ | Strikethrough_marks _
   | Extra_inline_container_marks _ | Quoted_marks _ | Math_span_marks _ | Newline _
   | Wikilink_start _ | Jsx_expr_start _ | Jsx_element_start _ | Jsx_open _ | Jsx_close _ ) :: _ ->
@@ -2791,10 +2879,14 @@ let second_pass_cells p first_line toks =
         if has_pipe ~lo:k ~hi:(s - 1) then [], List.rev seg :: segs
         else seg, segs
       in
-      (* Advance past [Inline] content (a code span may hold a [|]); for a bare
+      (* Advance past [Inline] and [Attribute_spec] content (a code span may
+         hold a [|], so may an attribute value: [ {k="a|b"} ]); for a bare
          marker, keeping [k] at its start is enough -- its own bytes are never a
          [|], so the next gap scan cannot false-trip on them. *)
-      let k = match t with Inline { next; _ } -> next | _ -> s in
+      let k = match t with
+      | Inline { next; _ } | Attribute_spec { next; _ } -> next
+      | _ -> s
+      in
       split k (t :: seg) segs toks
   in
   let segs = split first_line.first [] [] toks in

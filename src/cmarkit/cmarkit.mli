@@ -2142,7 +2142,10 @@ module Doc : sig
       which preserves CommonMark behavior.}
    {- If [inline_attributes] is [true], Djot [{...}] attribute
       specifiers immediately following inline content are represented by
-      {!Inline.Ext_attributes}.}
+      {!Inline.Ext_attributes}. A specifier that follows a space or opens its
+      content attaches to nothing and is dropped; an empty or comment-only
+      specifier is likewise dropped. This holds in table cells as it does in
+      paragraphs.}
    {- If [block_attributes] is [true], Djot attribute lines immediately
       preceding a block are represented by {!Block.Ext_attributes}. Continued
       lines inside a block attribute must be indented.}
