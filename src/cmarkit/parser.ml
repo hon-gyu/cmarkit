@@ -160,7 +160,11 @@ module Block_struct = struct
   | Html_block of html_block
   | List of list'
   | Linkref_def of Link_definition.t node
-  | Attribute_specs of Attribute.t list
+  | Attribute_specs of Attribute.t list * Meta.t
+    (* The specifier lines' own location. The [Ext_attributes] they end up on
+       spans them and the block they attribute, so an attribute line is
+       locatable; without this it would only be found through the block, whose
+       location it shares. *)
   | Paragraph of paragraph
   | Thematic_break of Layout.indent * line_span (* including trailing blanks *)
   | Ext_table of
@@ -874,16 +878,18 @@ module Block_struct = struct
         match Attribute.of_string spec with
         | None -> None
         | Some a ->
+            let span = current_line_span p ~first:start ~last:close in
+            let meta = meta p (textloc_of_span p span) in
             accept_cols p ~count:(last - p.current_char + 1);
             (* Comment-only or empty specifiers convey nothing and are dropped,
                as djot does. *)
-            if Attribute.is_empty a then Some [] else Some [a]
+            if Attribute.is_empty a then Some ([], meta) else Some ([a], meta)
 
   and add_open_blocks p bs =
     let indent_start = p.current_char and indent = current_indent p in
     match match_block_attribute p with
-    | Some [] -> bs
-    | Some specs -> Attribute_specs specs :: bs
+    | Some ([], _) -> bs
+    | Some (specs, meta) -> Attribute_specs (specs, meta) :: bs
     | None ->
         let ltype = match_line_type ~no_setext:true ~indent p in
         add_open_blocks_with_line_class p ~indent_start ~indent bs ltype
@@ -1753,7 +1759,7 @@ let split_attribute_paragraph p (par : Block_struct.paragraph) =
             if after <= line.last then None else
             begin match Attribute.of_string (Buffer.contents b) with
             | None -> None
-            | Some spec -> Some (spec, lines)
+            | Some spec -> Some (spec, line, lines)
             end
         | c ->
             Buffer.add_char b c;
@@ -1764,26 +1770,38 @@ let split_attribute_paragraph p (par : Block_struct.paragraph) =
     | line :: lines ->
         let first = first_non_blank_in_span p line in
         if first > line.last || p.i.[first] <> '{' then None else
-        scan line lines (first + 1) false false false
+        match scan line lines (first + 1) false false false with
+        | None -> None
+        | Some (spec, last_line, lines) -> Some (spec, line, last_line, lines)
   in
-  let rec take acc = function
+  (* [first_line] and [last_line] bound the run of specifier lines taken, so
+     the [Attribute_specs] below carries where it was written. *)
+  let rec take acc first_line last_line = function
   | _ :: _ as lines ->
       begin match parse_spec lines with
-      | Some (spec, lines) -> take (spec :: acc) lines
-      | None -> List.rev acc, lines
+      | Some (spec, spec_first, spec_last, lines) ->
+          let first_line = match first_line with
+          | None -> Some spec_first | some -> some
+          in
+          take (spec :: acc) first_line (Some spec_last) lines
+      | None -> List.rev acc, first_line, last_line, lines
       end
-  | [] -> List.rev acc, []
+  | [] -> List.rev acc, first_line, last_line, []
   in
-  match take [] lines with
-  | [], _ -> [Block_struct.Paragraph par]
-  | specs, lines ->
+  match take [] None None lines with
+  | [], _, _, _ -> [Block_struct.Paragraph par]
+  | specs, first_line, last_line, lines ->
+      let specs_meta = match first_line, last_line with
+      | Some first, Some last -> meta_of_spans p ~first ~last
+      | _ -> Meta.none
+      in
       (* Comment-only (or empty) specifiers are dropped, per Djot. A block
          made up solely of them disappears entirely. *)
       let specs = List.filter (fun s -> not (Attribute.is_empty s)) specs in
       match specs, lines with
       | [], [] -> []
       | [], lines -> [Block_struct.Paragraph { par with lines = List.rev lines }]
-      | specs, [] -> [Block_struct.Attribute_specs specs]
+      | specs, [] -> [Block_struct.Attribute_specs (specs, specs_meta)]
       | specs, lines ->
           (* The lines under the specifier were never offered to link reference
              definition parsing: the paragraph they were part of started with
@@ -1806,7 +1824,7 @@ let split_attribute_paragraph p (par : Block_struct.paragraph) =
               attach_specs_to_ref_def p ld specs
           | _ -> ()
           end;
-          Block_struct.Attribute_specs specs :: List.rev rest
+          Block_struct.Attribute_specs (specs, specs_meta) :: List.rev rest
 
 let rec prepare_block_struct p = function
 | Block_struct.Block_quote (indent, marker, bs) ->
@@ -2189,9 +2207,8 @@ and block_struct_to_block p = function
 | Block_struct.Html_block html -> block_struct_to_html_block p html
 | Block_struct.Blank_line (pad, span) -> block_struct_to_blank_line p pad span
 | Block_struct.Linkref_def r -> Block.Link_reference_definition r
-| Block_struct.Attribute_specs specs ->
-    Block.Ext_attributes
-      (Block.Attributes.make ~specs Block.empty, Meta.none)
+| Block_struct.Attribute_specs (specs, meta) ->
+    Block.Ext_attributes (Block.Attributes.make ~specs Block.empty, meta)
 | Block_struct.Ext_table (i, rows, caption, _) ->
     block_struct_to_table p i rows caption
 | Block_struct.Ext_div (fence, bs) -> block_struct_to_div p fence bs
@@ -2290,7 +2307,7 @@ let assign_heading_ids p (doc : Block_struct.t list) =
      an attribute line that precedes a block in the source precedes it here. *)
   let rec blocks (bs : Block_struct.t list) = walk (List.rev bs)
   and walk (bs : Block_struct.t list) = match bs with
-  | Attribute_specs specs :: bs ->
+  | Attribute_specs (specs, _) :: bs ->
       let attr_id = attr_id specs in
       (match attr_id with Some id -> use_id id | None -> ());
       (match bs with
@@ -2322,7 +2339,7 @@ let assign_heading_ids p (doc : Block_struct.t list) =
 let attach_ref_def_attributes p (doc : Block_struct.t list) =
   if not (Oymarkit_mod.block_attributes p.oymarkit_mod) then () else
   let rec walk (bs : Block_struct.t list) = match bs with
-  | Linkref_def ld :: (Attribute_specs specs :: _ as bs) ->
+  | Linkref_def ld :: (Attribute_specs (specs, _) :: _ as bs) ->
       attach_specs_to_ref_def p ld specs; walk bs
   | b :: bs -> block b; walk bs
   | [] -> ()
@@ -2361,10 +2378,22 @@ let block_struct_to_doc p (doc, meta) =
     let is_linkref_def = function
     | Block.Link_reference_definition _ -> true | _ -> false
     in
-    let rec loop pending acc = function
-    | Block.Ext_attributes (a, _) :: bs
+    (* [pending_meta] is where the pending specifiers were written — the first
+       of them, since they stack downwards. The wrapper spans from there to the
+       end of the block they attribute, so that the [ {#id} ] line has a
+       location of its own; taking the block's meta alone would make the
+       wrapper positionally identical to its child, which is how an attribute
+       line used to be unfindable. *)
+    let span_meta first last =
+      if Textloc.is_none (Meta.textloc first) then last else
+      if Textloc.is_none (Meta.textloc last) then first else
+      meta_of_metas p ~first ~last
+    in
+    let rec loop pending pending_meta acc = function
+    | Block.Ext_attributes (a, m) :: bs
       when is_empty (Block.Attributes.block a) ->
-        loop (pending @ Block.Attributes.specs a) acc bs
+        let pending_meta = if pending = [] then m else pending_meta in
+        loop (pending @ Block.Attributes.specs a) pending_meta acc bs
     | Block.Blank_line _ as blank :: bs when pending <> [] ->
         (* Attributes must come right before a block, so a blank line detaches
            them. They are still kept as an empty [Ext_attributes] so that the
@@ -2372,9 +2401,9 @@ let block_struct_to_doc p (doc, meta) =
            no output. *)
         let marker =
           Block.Ext_attributes
-            (Block.Attributes.make ~specs:pending Block.empty, Meta.none)
+            (Block.Attributes.make ~specs:pending Block.empty, pending_meta)
         in
-        loop [] (blank :: marker :: acc) bs
+        loop [] Meta.none (blank :: marker :: acc) bs
     | b :: bs ->
         let b = resolve_block b in
         let b =
@@ -2388,21 +2417,22 @@ let block_struct_to_doc p (doc, meta) =
               b
           | specs ->
               Block.Ext_attributes
-                (Block.Attributes.make ~specs b, Block.meta b)
+                (Block.Attributes.make ~specs b,
+                 span_meta pending_meta (Block.meta b))
         in
-        loop [] (b :: acc) bs
+        loop [] Meta.none (b :: acc) bs
     | [] ->
         let acc =
           match pending with
           | [] -> acc
           | specs ->
               Block.Ext_attributes
-                (Block.Attributes.make ~specs Block.empty, Meta.none)
+                (Block.Attributes.make ~specs Block.empty, pending_meta)
               :: acc
         in
         List.rev acc
     in
-    loop [] [] bs
+    loop [] Meta.none [] bs
   in
   let doc = prepare_block_structs p doc in
   match resolve_blocks (List.rev_map (block_struct_to_block p) doc) with

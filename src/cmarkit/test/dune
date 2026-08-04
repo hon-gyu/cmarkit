@@ -164,3 +164,11 @@
   (inline_tests)
   (preprocess (pps ppx_expect ppx_sexp_conv))
 )
+
+(library
+  (name test_djot_block_attribute_locs)
+  (libraries cmarkit_ cmarkit_commonmark cmarkit_html)
+  (modules test_djot_block_attribute_locs)
+  (inline_tests)
+  (preprocess (pps ppx_expect))
+)

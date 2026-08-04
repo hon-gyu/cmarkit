@@ -2148,7 +2148,11 @@ module Doc : sig
       paragraphs.}
    {- If [block_attributes] is [true], Djot attribute lines immediately
       preceding a block are represented by {!Block.Ext_attributes}. Continued
-      lines inside a block attribute must be indented.}
+      lines inside a block attribute must be indented. The wrapper's text
+      location spans the specifier lines {e and} the block they attribute, so
+      an attribute line can be located; a specifier detached from any block
+      keeps the location it was written at. Its inline counterpart likewise
+      covers the specifier.}
    {- If [underscore_thematic_break] is [true], [_] may delimit a thematic
       break, as it does in CommonMark. If [false], only [*] and [-] may delimit
       one. The default is [true]; the [djot] preset disables it. Arbitrary
