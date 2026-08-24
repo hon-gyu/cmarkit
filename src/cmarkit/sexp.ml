@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+   Copyright (c) 2026 The oymarkit programmers. All rights reserved.
+   SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 open Sexplib0
 open Common_
 

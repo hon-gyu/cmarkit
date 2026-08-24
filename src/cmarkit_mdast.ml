@@ -1,4 +1,9 @@
 (*---------------------------------------------------------------------------
+   Copyright (c) 2026 The oymarkit programmers. All rights reserved.
+   SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
+(*---------------------------------------------------------------------------
    mdast renderer: Cmarkit.Doc.t -> mdast JSON (a `root` node).
 
    Unlike the HTML/CommonMark backends this does not use the buffer-based

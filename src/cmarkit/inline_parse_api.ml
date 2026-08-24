@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+   Copyright (c) 2026 The oymarkit programmers. All rights reserved.
+   SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 (** Inline-level parsing API.
 
     {@meta[

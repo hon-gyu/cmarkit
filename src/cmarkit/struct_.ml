@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+   Copyright (c) 2026 The oymarkit programmers. All rights reserved.
+   SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 (* Oymarkit: Struct -- colon-keyed tree restructuring.
 
    A dedicated, self-contained pass that rewrites an already-parsed [Doc.t] so

@@ -4,7 +4,7 @@ synopsis: "Oymarkit: extended cmarkit"
 description: ""
 maintainer: ["Maintainer Name <maintainer@example.com>"]
 authors: ["Author Name <author@example.com>"]
-license: "LICENSE"
+license: "ISC"
 homepage: "https://github.com/username/reponame"
 doc: "https://url/to/documentation"
 bug-reports: "https://github.com/username/reponame/issues"

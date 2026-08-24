@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+   Copyright (c) 2026 The oymarkit programmers. All rights reserved.
+   SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 (** Render a {!Cmarkit.Doc.t} to an {{:https://github.com/syntax-tree/mdast}
     mdast} JSON string.
 

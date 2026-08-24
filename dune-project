@@ -11,7 +11,7 @@
 
 (maintainers "Maintainer Name <maintainer@example.com>")
 
-(license LICENSE)
+(license ISC)
 
 (documentation https://url/to/documentation)
 
