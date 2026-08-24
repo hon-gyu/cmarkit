@@ -26,7 +26,7 @@ let gen_blank_line : Block.t G.t =
 (* Generate a thematic break with a varied but valid layout: a run of >= 3
    matching [-], [*] or [_], each optionally followed by spaces/tabs, with an
    optional 0-3 indent. [exclude] removes characters from the candidate set,
-   used to avoid the bullet-marker collision (see {!Typing.no_marker_colliding_
+   used to avoid the bullet-marker collision (see {!Rules.no_marker_colliding_
    thematic_break}): e.g. [- ---] is a uniform [-] run and reparses as a
    thematic break, not a list item. *)
 let gen_thematic_break ?(exclude = []) () : Block.t G.t =
@@ -63,40 +63,8 @@ let code_block_egs : Block.t list =
     ]
   |> List.map (fun cb -> Block.(Code_block (cb, Meta.none)))
 
-(* Render-order peeling for the html-block absorption rule
-   ({!Typing.no_html_block_absorbing_successor}). Absorption only crosses
-   [Blocks] siblings; a [Block_quote]/[List] boundary stops it, so we peel
-   [Blocks] tails/heads but no further. *)
-let rec trailing_absorbing : Block.t -> bool = function
-  | Block.Blocks (bs, _) -> (
-      match List.rev bs with
-      | last :: _ -> trailing_absorbing last
-      | [] -> false)
-  | Block.Html_block (lines, _) -> Common_.html_block_absorbs lines
-  | _ -> false
-
-let rec leads_with_blank : Block.t -> bool = function
-  | Block.Blocks (b0 :: _, _) -> leads_with_blank b0
-  | Block.Blank_line _ -> true
-  | _ -> false
-
-(* Insert a [Blank_line] between any two consecutive siblings where the first's
-   render-order trailing leaf is an absorbing html block and the second does not
-   already start with a blank line. Never appends after the last element, so a
-   genuinely-final html block keeps no trailing blank. *)
-let separate_absorbing_html (bs : Block.t list) : Block.t list =
-  let blank = Block.Blank_line ("", Meta.none) in
-  let rec go = function
-    | a :: (b :: _ as rest) ->
-        if trailing_absorbing a && not (leads_with_blank b) then
-          a :: blank :: go rest
-        else a :: go rest
-    | last -> last
-  in
-  go bs
-
 (** Fence indented code blocks in the render-order context rejected by
-    {!Typing.no_ambiguous_indented_code_after_list}.
+    {!Rules.no_ambiguous_indented_code_after_list}.
 
     The traversal carries one bit of sibling state: whether the last non-blank
     block at the current container level was a list whose final item accepts a
@@ -178,73 +146,6 @@ let fence_ambiguous_indented_code (block : Block.t) : Block.t =
   in
   snd (rewrite false block)
 
-(** Insert an outside blank line between adjacent block-quote siblings.
-
-    Nested [Blocks] are transparent in render order, so the traversal carries
-    adjacency state through them. Actual containers are rewritten independently.
-    This preserves the two quote nodes and their inner block boundaries.
-
-    TODO: this is quite complicated and I am not entirely sure if this is the
-    best way *)
-let separate_adjacent_block_quotes (block : Block.t) : Block.t =
-  let blank = Block.Blank_line ("", Meta.none) in
-  let rec rewrite = function
-    | Block.Blocks (bs, meta) ->
-        let _, bs = rewrite_blocks false bs in
-        Block.Blocks (bs, meta)
-    | Block.Block_quote (bq, meta) ->
-        let block = rewrite (Block.Block_quote.block bq) in
-        let bq =
-          Block.Block_quote.make ~indent:(Block.Block_quote.indent bq) block
-        in
-        Block.Block_quote (bq, meta)
-    | Block.List (l, meta) ->
-        let rewrite_item (item, item_meta) =
-          let block = rewrite (Block.List_item.block item) in
-          let item =
-            Block.List_item.make
-              ~before_marker:(Block.List_item.before_marker item)
-              ~marker:(Block.List_item.marker item)
-              ~after_marker:(Block.List_item.after_marker item)
-              ?ext_task_marker:(Block.List_item.ext_task_marker item)
-              block
-          in
-          (item, item_meta)
-        in
-        let items = List.map rewrite_item (Block.List'.items l) in
-        let l =
-          Block.List'.make ~tight:(Block.List'.tight l) (Block.List'.type' l)
-            items
-        in
-        Block.List (l, meta)
-    | Block.Ext_footnote_definition (fn, meta) ->
-        let block = rewrite (Block.Footnote.block fn) in
-        let fn =
-          Block.Footnote.make ~indent:(Block.Footnote.indent fn)
-            ~defined_label:(Block.Footnote.defined_label fn)
-            (Block.Footnote.label fn) block
-        in
-        Block.Ext_footnote_definition (fn, meta)
-    | block -> block
-  and rewrite_blocks after_quote = function
-    | [] -> (after_quote, [])
-    | Block.Blocks (bs, meta) :: rest ->
-        let after_quote, bs = rewrite_blocks after_quote bs in
-        let block = Block.Blocks (bs, meta) in
-        let after_quote, rest = rewrite_blocks after_quote rest in
-        (after_quote, block :: rest)
-    | (Block.Block_quote _ as quote) :: rest ->
-        let quote = rewrite quote in
-        let prefix = if after_quote then [ blank; quote ] else [ quote ] in
-        let after_quote, rest = rewrite_blocks true rest in
-        (after_quote, prefix @ rest)
-    | block :: rest ->
-        let block = rewrite block in
-        let after_quote, rest = rewrite_blocks false rest in
-        (after_quote, block :: rest)
-  in
-  rewrite block
-
 let html_block_egs : Block.t list =
   [
     [ ("<div>", Meta.none) ];
@@ -285,7 +186,7 @@ module Bconfig = struct
         (** Adjacent quote-marker runs parse as one block quote. Insert an
             outside blank line to preserve two sibling quote containers. *)
     (* inline <-> block interaction rules
-    -------------------- *)
+    -------------------------------------- *)
     no_html_block_starting_paragraph : bool;
         (** A html tag at the start of a paragraph will be parsed to a HTML
             block. *)
@@ -405,13 +306,131 @@ let gen_heading (config : Bconfig.t) : Block.t G.t =
       Block.(Heading (Block.Heading.make ~level inline, Meta.none)))
     G.(pair (int_range 1 6) (gen_inline ic))
 
-type block_gen_state = { foo : int }
+(* Generation context
+   =================== *)
 
-let init_state : block_gen_state = { foo = 0 }
+(** The generator threads {!Typing.ctx} — the attributes a rule may consult —
+    alongside the two things a rule must {e not} see: which rules are switched
+    on, and the weights. A rule says what it forbids; {!Bconfig} says whether it
+    is asked. *)
+type ctx = {
+  attrs : Typing.ctx;
+  config : Bconfig.t;
+  rules : Typing.t list;  (** Enabled rules, resolved once from [config]. *)
+}
 
-(* [lead_exclude] are characters a thematic break may not use here, because this
-   leaf sits at the leading (marker) line of a list item; see
-   {!gen_thematic_break}. *)
+(** Each {!Typing.t} paired with the {!Bconfig} field that switches it on: a
+    getter for reading a config, a setter so a test can toggle one rule at a
+    time. This is the only place that maps between the two ways a rule is named
+    — as a [Typing.t] value below this module, and as a [bool] field of
+    [Bconfig.t] above it. Everywhere else works in one or the other. *)
+let rule_knobs :
+    (Typing.t * (Bconfig.t -> bool) * (bool -> Bconfig.t -> Bconfig.t)) list =
+  [
+    ( Rules.no_trailing_blank_line_in_blocks,
+      (fun c -> c.no_trailing_blank_line_in_blocks),
+      fun v c -> { c with no_trailing_blank_line_in_blocks = v } );
+    ( Rules.no_empty_paragraph,
+      (fun c -> c.no_empty_paragraph),
+      fun v c -> { c with no_empty_paragraph = v } );
+    ( Rules.no_empty_blocks,
+      (fun c -> c.no_empty_blocks),
+      fun v c -> { c with no_empty_blocks = v } );
+    ( Rules.no_empty_list,
+      (fun c -> c.no_empty_list),
+      fun v c -> { c with no_empty_list = v } );
+    ( Rules.no_list_item_leading_blank_prefix,
+      (fun c -> c.no_list_item_leading_blank_prefix),
+      fun v c -> { c with no_list_item_leading_blank_prefix = v } );
+    ( Rules.no_marker_colliding_thematic_break,
+      (fun c -> c.no_marker_colliding_thematic_break),
+      fun v c -> { c with no_marker_colliding_thematic_break = v } );
+    ( Rules.no_html_block_absorbing_successor,
+      (fun c -> c.no_html_block_absorbing_successor),
+      fun v c -> { c with no_html_block_absorbing_successor = v } );
+    ( Rules.no_ambiguous_indented_code_after_list,
+      (fun c -> c.no_ambiguous_indented_code_after_list),
+      fun v c -> { c with no_ambiguous_indented_code_after_list = v } );
+    ( Rules.no_adjacent_block_quotes,
+      (fun c -> c.no_adjacent_block_quotes),
+      fun v c -> { c with no_adjacent_block_quotes = v } );
+    ( Rules.no_html_block_starting_paragraph,
+      (fun c -> c.no_html_block_starting_paragraph),
+      fun v c -> { c with no_html_block_starting_paragraph = v } );
+  ]
+
+let enabled_rules (c : Bconfig.t) : Typing.t list =
+  List.filter_map (fun (r, get, _) -> if get c then Some r else None) rule_knobs
+
+(** Does [b] satisfy every rule [config] switches on? The checking side of the
+    same list the guards consult. *)
+let satisfies_enabled_rules (config : Bconfig.t) (b : Block.t) : bool =
+  List.for_all (fun r -> Typing.check r b = None) (enabled_rules config)
+
+let init_ctx ?(lead_exclude = []) (config : Bconfig.t) : ctx =
+  {
+    attrs = Typing.init_ctx ~lead_exclude ();
+    config;
+    rules = enabled_rules config;
+  }
+
+let enter_container (ctx : ctx) : ctx =
+  { ctx with attrs = Typing.enter_container ctx.attrs }
+
+(* Guards
+   ------ *)
+
+(** How often each rule removed each candidate, keyed by [(rule, choice)].
+
+    Filtering a candidate reallocates its weight to the survivors, so a guard
+    bends the distribution declared in {!Bconfig} exactly as a repair pass did.
+    The difference is that a guard can say so, and this table is where it says
+    it: without a per-rule count we would have traded one invisible distortion
+    for another. {!Pp_distr} measures the distribution that came out; this
+    measures which rule bent it. *)
+let rejections : (string * string, int) Hashtbl.t = Hashtbl.create 16
+
+let reset_rejections () = Hashtbl.reset rejections
+
+let record_rejection ~(rule : string) ~(choice : Typing.choice) =
+  let key = (rule, Typing.string_of_choice choice) in
+  let n = Option.value ~default:0 (Hashtbl.find_opt rejections key) in
+  Hashtbl.replace rejections key (n + 1)
+
+let pp_rejections ppf () =
+  let rows =
+    Hashtbl.fold (fun (r, c) n acc -> (r, c, n) :: acc) rejections []
+    |> List.sort compare
+  in
+  match rows with
+  | [] -> Format.fprintf ppf "no candidate was rejected@."
+  | rows ->
+      List.iter
+        (fun (r, c, n) -> Format.fprintf ppf "%-28s %-12s %6d@." r c n)
+        rows
+
+(** Drop the candidates the enabled rules forbid.
+
+    [`Leaf] is the guaranteed candidate and no rule may forbid it: it is a
+    single leaf block, so no adjacency or containment rule has anything to say
+    about it. That is what keeps the list from going empty — repairs can never
+    get stuck, guards can, and the fallback is the price of the trade. If a
+    future rule does need to forbid a leaf, it belongs inside
+    {!gen_leaf_block_}'s weights, where the per-constructor choice still leaves
+    somewhere to go. *)
+let keep_allowed (ctx : ctx) (cands : (int * Typing.choice) list) :
+    (int * Typing.choice) list =
+  let allowed (_, c) =
+    match Typing.first_forbidding ctx.rules ctx.attrs c with
+    | None -> true
+    | Some r ->
+        record_rejection ~rule:r.Typing.name ~choice:c;
+        false
+  in
+  match List.filter allowed cands with
+  | [] -> [ (1, `Leaf) ]
+  | kept -> kept
+
 let gen_leaf_block_ ?(config = Bconfig.default) ?(rule_lead_exclude_chars = [])
     ?(w_blank_line = 1) ?(w_thematic_break = 1) ?(w_code_block = 1)
     ?(w_html_block = 1) ?(w_paragraph = 1) ?(w_heading = 1) () : Block.t G.t =
@@ -426,9 +445,35 @@ let gen_leaf_block_ ?(config = Bconfig.default) ?(rule_lead_exclude_chars = [])
   |> List.filter (fun (w, _) -> w > 0)
   |> G.oneof_weighted
 
-let gen_leaf_block ?(rule_lead_exclude_chars = []) (config : Bconfig.t) st =
-  let w_blank_line = if config.no_direct_blank_line then Some 0 else None in
-  gen_leaf_block_ ~config ~rule_lead_exclude_chars ?w_blank_line ()
+let gen_leaf_block (ctx : ctx) : (Block.t * Typing.summary) G.t =
+  let config = ctx.config in
+  (* When a preceding absorbing html block would swallow this leaf, the only
+     leaf that closes it is a blank line. This is the leaf half of
+     {!Rules.no_html_block_absorbing_successor}, which its guard cannot reach:
+     [choice] does not distinguish a blank leaf from a paragraph.
+
+     It yields to [no_direct_blank_line] rather than overriding it. The two
+     collide only at a trailing position of a nested [Blocks] with
+     [no_trailing_blank_line_in_blocks] on: closing the html demands a blank
+     there, the trailing rule forbids one, and no single block satisfies both.
+     That is a genuine over-constraint, not something a forward force can fix —
+     the real fix is to not place an absorbing html block there in the first
+     place, which needs a finer leading-edge attribute than [choice] offers.
+     [typed_md] never enables the trailing rule, so the collision does not arise
+     there; when it is enabled, this yields and the html rule is the one left
+     unsatisfied, visibly. *)
+  let must_blank =
+    config.no_html_block_absorbing_successor
+    && Rules.must_lead_blank ctx.attrs
+    && not config.no_direct_blank_line
+  in
+  if must_blank then G.map (fun b -> (b, Typing.summarize b)) gen_blank_line
+  else
+    let w_blank_line = if config.no_direct_blank_line then Some 0 else None in
+    G.map
+      (fun b -> (b, Typing.summarize b))
+      (gen_leaf_block_ ~config
+         ~rule_lead_exclude_chars:ctx.attrs.Typing.lead_exclude ?w_blank_line ())
 
 let limit_list_item_leading_blank_prefix (block : Block.t) : Block.t =
   let blank = function
@@ -446,28 +491,33 @@ let limit_list_item_leading_blank_prefix (block : Block.t) : Block.t =
       | _ -> block)
   | _ -> block
 
-let rec gen_block ?(rule_lead_exclude_chars = []) config st n =
+let rec gen_block (ctx : ctx) n : (Block.t * Typing.summary) G.t =
   let open G in
   match n with
-  | 0 -> gen_leaf_block ~rule_lead_exclude_chars config st
+  | 0 -> gen_leaf_block ctx
   | n ->
-      let block_quote_of_b b =
-        Block.(Block_quote (Block.Block_quote.make b, Meta.none))
+      let block_quote_of_b (b, _) =
+        let bq = Block.(Block_quote (Block.Block_quote.make b, Meta.none)) in
+        (bq, { Typing.summary_opaque with trailing_block_quote = true })
       in
-      oneof_weighted
-        [
-          (2, gen_leaf_block ~rule_lead_exclude_chars config st);
-          (* The first child of [Blocks] inherits the leading position. *)
-          (1, gen_blocks ~rule_lead_exclude_chars config st (n / 2));
-          (* A block quote's [>] absorbs the leading position, so the marker
-             collision cannot reach inside; drop [lead_exclude]. *)
-          (1, map block_quote_of_b (gen_block config st (n / 2)));
-          (* A list is never a thematic break, so the leading position never
-             reaches it; it manages its own items' leading position. *)
-          (1, gen_list config st n);
-        ]
+      let gen_of : Typing.choice -> (Block.t * Typing.summary) G.t = function
+        | `Leaf -> gen_leaf_block ctx
+        (* The first child of [Blocks] inherits the leading position, and its
+           predecessor in render order, so [ctx] passes through unchanged. *)
+        | `Blocks -> gen_blocks ctx (n / 2)
+        | `Block_quote ->
+            map block_quote_of_b (gen_block (enter_container ctx) (n / 2))
+        (* A list is never a thematic break, so the leading position never
+           reaches it; it manages its own items' leading position. *)
+        | `List -> gen_list (enter_container ctx) n
+      in
+      [ (2, `Leaf); (1, `Blocks); (1, `Block_quote); (1, `List) ]
+      |> keep_allowed ctx
+      |> List.map (fun (w, c) -> (w, gen_of c))
+      |> oneof_weighted
 
-and gen_list config st n : Block.t G.t =
+and gen_list (ctx : ctx) n : (Block.t * Typing.summary) G.t =
+  let config = ctx.config in
   let open G in
   (* Start integer for ordered lists; the renderer only keeps the first item's
      value, so a small spread is enough. *)
@@ -492,61 +542,95 @@ and gen_list config st n : Block.t G.t =
     | `Unordered c when config.no_marker_colliding_thematic_break -> [ c ]
     | _ -> []
   in
+  let item_ctx =
+    let c = enter_container ctx in
+    { c with attrs = { c.attrs with Typing.lead_exclude = item_lead_exclude } }
+  in
   let gen_item =
     map
-      (fun block ->
+      (fun (block, _) ->
         let block =
           if config.no_list_item_leading_blank_prefix then
             limit_list_item_leading_blank_prefix block
           else block
         in
         (Block.List_item.make block, Meta.none))
-      (gen_block ~rule_lead_exclude_chars:item_lead_exclude config st (n / 2))
+      (gen_block item_ctx (n / 2))
   in
   let gen_len =
     if config.no_empty_list then int_range 1 (max 1 (n / 2))
     else int_bound (n / 2)
   in
   map
-    (fun items -> Block.(List (Block.List'.make type' items, Meta.none)))
+    (fun items ->
+      let l = Block.List'.make type' items in
+      let summary =
+        {
+          Typing.summary_opaque with
+          list_continuation_indent =
+            Common_.list_last_item_continuation_indent l;
+        }
+      in
+      (Block.(List (l, Meta.none)), summary))
     (list_size gen_len gen_item)
 
-and gen_blocks ?(rule_lead_exclude_chars = []) config st n : Block.t G.t =
+and gen_blocks (ctx : ctx) n : (Block.t * Typing.summary) G.t =
   let open G in
+  let config = ctx.config in
   let gen_len =
     if config.no_empty_blocks then int_range 1 (max 1 n) else int_bound n
   in
-  let config' =
+  let ctx =
     if config.no_trailing_blank_line_in_blocks then
-      { config with no_direct_blank_line = true }
-    else config
+      { ctx with config = { config with no_direct_blank_line = true } }
+    else ctx
   in
-  (* Only the head sits at the leading position; the rest start fresh lines. *)
   let* len = gen_len in
-  let* blocks =
-    if len = 0 then return []
+  (* Left-to-right fold: each child is generated in a context that knows its
+     predecessor's summary and whether it closes the sequence. A [list_size]
+     cannot express this, because its elements are independent — and it is what
+     lets the adjacency rules be guards.
+
+     The per-child context comes from {!Typing.enter_nth_child} and the
+     accumulator from {!Typing.advance}, the same pair {!Typing.check} uses to
+     walk a finished tree, so the generator and the checker cannot disagree
+     about what "the previous sibling" means. *)
+  let rec fold i prev acc =
+    if i >= len then return (List.rev acc)
     else
-      let* head = gen_block ~rule_lead_exclude_chars config' st n in
-      let* tail = list_size (return (len - 1)) (gen_block config' st n) in
-      return (head :: tail)
+      let child_ctx =
+        { ctx with attrs = Typing.enter_nth_child ctx.attrs ~i ~len ~prev }
+      in
+      let* b, s = gen_block child_ctx n in
+      fold (i + 1) (Typing.advance prev s) (b :: acc)
   in
-  let blocks =
-    if config.no_html_block_absorbing_successor then
-      separate_absorbing_html blocks
-    else blocks
-  in
-  return (Block.Blocks (blocks, Meta.none))
+  let* blocks = fold 0 ctx.attrs.Typing.prev [] in
+  (* No repair pass runs on [blocks], so the children the fold saw are exactly
+     the children of the result. *)
+  let block = Block.Blocks (blocks, Meta.none) in
+  return (block, Typing.summarize block)
 
 let mk_gen_block ?(config = Bconfig.default) () : Block.t G.t =
-  let gen = G.(sized_size nat_small @@ gen_block config init_state) in
+  let gen =
+    G.(sized_size nat_small @@ fun n -> map fst (gen_block (init_ctx config) n))
+  in
+  (* [no_adjacent_block_quotes] is absent here on purpose: it is a guard in
+     {!gen_block}, not a repair. *)
   let gen =
     if config.no_ambiguous_indented_code_after_list then
       G.map fence_ambiguous_indented_code gen
     else gen
   in
-  if config.no_adjacent_block_quotes then
-    G.map separate_adjacent_block_quotes gen
-  else gen
+  (* Keep shrinking inside the language. A regression guard, not a fix: rules
+     enforced inside the generator are preserved by shrinking already, because
+     QCheck2 re-runs the bind continuations — where the guards live — on the
+     shrunk random tree (measured: over 300 failing properties under [typed_md],
+     this invariant rejected nothing). It protects against a future rule
+     enforced *outside* the generator (a post-hoc [G.filter], a check on the
+     finished value), which shrinking would route around, letting minimal
+     counterexamples leave the language. Costs one [Typing.check] per shrink
+     candidate, paid only after a property has failed. *)
+  G.add_shrink_invariant (satisfies_enabled_rules config) gen
 
 let%expect_test "Default config should give a sensible distribution" =
   Pp_distr.pp_gen ~display:`Boxplot () Format.std_formatter (mk_gen_block ())
@@ -555,33 +639,60 @@ let%expect_test "Default config should give a sensible distribution" =
     {|
                                             Boxplot
     ┌─────────────────────────┬────────────────────────────────────────────────────────────┐
-    │n=1000                   │↓0                                                        8↓│
+    │n=1000                   │↓0                                                       10↓│
     ├─────────────────────────┼────────────────────────────────────────────────────────────┤
-    │blank_line               │[------------------+------------------------]               │
-    │p5=0.00|p95=6.00|mu=2.58 │                                                            │
+    │blank_line               │[-------------+--------------------------]                  │
+    │p5=0.00|p95=7.00|mu=2.50 │                                                            │
     ├─────────────────────────┼────────────────────────────────────────────────────────────┤
-    │block_quote              │[-----------------------------------------------------+----~│
-    │p5=0.00|p95=15.00|mu=7.35│                                                            │
+    │block_quote              │[----------------------------------------+-----------------~│
+    │p5=0.00|p95=19.00|mu=7.11│                                                            │
     ├─────────────────────────┼────────────────────────────────────────────────────────────┤
-    │blocks                   │[----------------------------------------------------+-----~│
-    │p5=0.00|p95=15.00|mu=7.30│                                                            │
+    │blocks                   │[----------------------------------------+-----------------~│
+    │p5=0.00|p95=20.00|mu=7.11│                                                            │
     ├─────────────────────────┼────────────────────────────────────────────────────────────┤
-    │code_block               │[------------------+------------------------]               │
-    │p5=0.00|p95=6.00|mu=2.64 │                                                            │
+    │code_block               │[--------------+-------------------]                        │
+    │p5=0.00|p95=6.00|mu=2.59 │                                                            │
     ├─────────────────────────┼────────────────────────────────────────────────────────────┤
-    │heading                  │[-----------------+-----------------]                       │
-    │p5=0.00|p95=5.00|mu=2.49 │                                                            │
+    │heading                  │[-------------+--------------------]                        │
+    │p5=0.00|p95=6.00|mu=2.45 │                                                            │
     ├─────────────────────────┼────────────────────────────────────────────────────────────┤
-    │html_block               │[-----------------+-------------------------]               │
-    │p5=0.00|p95=6.00|mu=2.51 │                                                            │
+    │html_block               │[-------------+--------------------------]                  │
+    │p5=0.00|p95=7.00|mu=2.48 │                                                            │
     ├─────────────────────────┼────────────────────────────────────────────────────────────┤
-    │list                     │[------------------------------------------------------+---~│
-    │p5=0.00|p95=16.00|mu=7.51│                                                            │
+    │list                     │[-----------------------------------------+----------------~│
+    │p5=0.00|p95=19.00|mu=7.23│                                                            │
     ├─────────────────────────┼────────────────────────────────────────────────────────────┤
-    │paragraph                │[------------------+------------------------]               │
-    │p5=0.00|p95=6.00|mu=2.60 │                                                            │
+    │paragraph                │[--------------+-------------------------]                  │
+    │p5=0.00|p95=7.00|mu=2.55 │                                                            │
     ├─────────────────────────┼────────────────────────────────────────────────────────────┤
-    │thematic_break           │[-----------------+-------------------------]               │
-    │p5=0.00|p95=6.00|mu=2.56 │                                                            │
+    │thematic_break           │[-------------+--------------------]                        │
+    │p5=0.00|p95=6.00|mu=2.48 │                                                            │
     └─────────────────────────┴────────────────────────────────────────────────────────────┘
+    |}]
+
+(* How much a guard bends the declared weights.
+
+   [typed_md] enables [no_adjacent_block_quotes], so a `Block_quote` candidate
+   is dropped whenever the previous sibling in render order is already a quote.
+   The count below is that deviation, made legible: it is the number of times
+   the generator wanted a quote and the rule said no. Under the old repair pass
+   the same situation produced a silently-inserted [Blank_line] and no number at
+   all. *)
+let%expect_test "guards report how often they rejected a candidate" =
+  let sample config =
+    reset_rejections ();
+    let gen = mk_gen_block ~config () in
+    let rand = Random.State.make [| 42 |] in
+    for _ = 1 to 1000 do
+      ignore (QCheck2.Gen.generate1 ~rand gen)
+    done;
+    Format.printf "%a" pp_rejections ()
+  in
+  sample Bconfig.default;
+  [%expect {| no candidate was rejected |}];
+  sample Bconfig.typed_md;
+  [%expect {|
+    no adjacent block quotes     block_quote    2658
+    no html block absorbing successor block_quote     840
+    no html block absorbing successor list            840
     |}]

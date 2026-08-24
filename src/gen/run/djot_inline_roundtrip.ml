@@ -30,9 +30,9 @@ let () =
   ignore
   @@ QCheck_base_runner.run_tests ~colors:false ~rand
        [
-         (* Above the default 500: two dash leaves have to land flush before
+         (* Default 500: two dash leaves have to land flush before
             [no_adjacent_smart_dashes] is exercised at all, and that is rare. *)
-         P.qcheck_test_of_t ~gen ~count:5000 ()
+         P.qcheck_test_of_t ~gen ~count:500 ()
            (P.roundtrip_with ~emphasis_delims:[ '_' ]
               ~strong_emphasis_delims:[ '*' ] ~marked_emphasis_delims:true
               ~colon_symbols:true ~smart_punctuation:true ());

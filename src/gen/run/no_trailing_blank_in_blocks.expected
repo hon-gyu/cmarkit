@@ -3,12 +3,14 @@
 
 Test no trailing blank line in blocks failed (36 shrink steps):
 
-{ block: (Blocks Thematic_break Blank_line)
-; cm: ┌────┐
-      │***↵│
-      └────┘
+{ block: (Blocks (Blocks (Block_quote Blank_line)) (Html_block <div>)
+          Blank_line)
+; cm: ┌──────┐
+      │>·↵   │
+      │<div>↵│
+      └──────┘
 ; "blocks":
-  (Blocks Thematic_break Blank_line)
+  (Blocks (Blocks (Block_quote Blank_line)) (Html_block <div>) Blank_line)
 }
 ================================================================================
 failure (1 tests failed, 0 tests errored, ran 1 tests)

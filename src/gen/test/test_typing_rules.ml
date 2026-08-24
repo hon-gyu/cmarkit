@@ -11,7 +11,7 @@
     parser *)
 
 module P = Cmarkit_generator.Property
-module T = Cmarkit_generator.Typing
+module R = Cmarkit_generator.Rules
 module G = Cmarkit_generator.Gen
 open Cmarkit_generator.Common_
 
@@ -24,4 +24,4 @@ let () =
   let rand = Random.State.make [| 0 |] in
   ignore
   @@ QCheck_base_runner.run_tests ~long:true ~colors:false ~rand
-       [ P.qcheck_test_of_t ~gen () T.typed ]
+       [ P.qcheck_test_of_t ~gen () R.typed ]
